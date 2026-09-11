@@ -21,3 +21,5 @@
 - [零代码客户适配设计](docs/ZERO_CODE_ADAPTATION_DESIGN.md)
 - [向量数据库与 BBQ 高速批量匹配设计](docs/VECTOR_INDEX_DESIGN.md)
 - [通用客户 Profile 示例](config/examples/generic_customer.yaml)
+- [13 所 Z001 / Z006 字段映射草案](docs/customers/13_institute_z001_z006_mapping.md)
+- [13 所 Z001 / Z006 Profile 示例](config/examples/institute_13_z001_z006.yaml)
