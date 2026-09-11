@@ -10,8 +10,12 @@
 
 项目目前处于**设计先行**阶段，优先完善业务背景、核心抽象、配置体系、算法边界、评测方案与麒麟 Linux V10 离线部署方案，再进入核心代码实现。
 
+其中一项强制设计目标是：**普通客户差异必须通过 profile / dictionary / mapping 配置完成，新增客户不得要求修改核心程序。**
+
 ## 文档
 
 - [项目背景与设计约束](docs/PROJECT_BACKGROUND.md)
 - [通用匹配引擎开发设计书](docs/DEVELOPMENT_DESIGN.md)
+- [零代码客户适配设计](docs/ZERO_CODE_ADAPTATION_DESIGN.md)
 - [向量数据库与 BBQ 高速批量匹配设计](docs/VECTOR_INDEX_DESIGN.md)
+- [通用客户 Profile 示例](config/examples/generic_customer.yaml)
