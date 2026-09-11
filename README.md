@@ -13,3 +13,5 @@
 ## 文档
 
 - [项目背景与设计约束](docs/PROJECT_BACKGROUND.md)
+- [通用匹配引擎开发设计书](docs/DEVELOPMENT_DESIGN.md)
+- [向量数据库与 BBQ 高速批量匹配设计](docs/VECTOR_INDEX_DESIGN.md)
