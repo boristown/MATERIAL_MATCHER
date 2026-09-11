@@ -1,0 +1,362 @@
+# 13 所 Z001/Z006 首版映射 Profile（设计示例）
+# 注意：公开样例中的类型代码为 A001/A006；生产环境按当前沟通使用 Z001/Z006。
+# 权重为首版工程初值，必须使用已确认集团码样本重新校准。
+
+profile:
+  name: institute_13_z001_z006_draft
+  version: 1
+  status: draft
+
+source:
+  adapter: excel
+  path: ./input/sap.xlsx
+  options:
+    sheet: Sheet1
+    header_row: 1
+    trim_headers: true
+    empty_values: [""]
+
+# 真实集团数据按物料大类使用不同模板，因此 Target 也必须支持多 Catalog 路由，
+# 而不是要求客户先手工整理成同一种 Excel。
+target_catalogs:
+  electronics:
+    adapter: excel
+    path: ./input/group/元器件.xlsx
+    options:
+      sheet: 数据
+      header_row: 1
+    result_code_column: 集团编码
+
+  composites:
+    adapter: excel
+    path: ./input/group/复合材料.xlsx
+    options:
+      sheet: 数据
+      header_row: 1
+    result_code_column: 集团物资编码
+
+routing:
+  by_source_field: material_type
+  routes:
+    - values: [Z001, A001]
+      target_catalog: electronics
+      rule_set: z001_electronics
+    - values: [Z006, A006]
+      target_catalog: composites
+      rule_set: z006_composites
+
+logical_fields:
+  source_id:
+    source:
+      aliases: [MATNR, 物料]
+      required: true
+
+  material_type:
+    source:
+      aliases: [ZWLYX, 物料类型/一层分类]
+      required: true
+
+  level1_name:
+    source:
+      aliases: [ZWLYXT, 一层分类描述]
+
+  level2_name:
+    source:
+      aliases: [ZECFLT, 二层分类描述]
+
+  level3_name:
+    source:
+      aliases: [ZSCFLT, 三层分类描述]
+
+  level4_name:
+    source:
+      aliases: [ZSCFL2T, 四层分类描述]
+
+  level5_name:
+    source:
+      aliases: [ZWCFLT, 五层分类描述]
+
+  material_name:
+    source:
+      aliases: [ZWLMC, 物料名称]
+
+  model:
+    source:
+      aliases: [ZXH, 型号]
+
+  model_spec:
+    source:
+      aliases: [ZXHGG, 型号规格]
+
+  model_grade_fallback:
+    source:
+      aliases: [ZXHPH, 型号(牌号)]
+
+  quality_grade:
+    source:
+      aliases: [ZZLDJ, 质量等级]
+
+  origin:
+    source:
+      aliases: [ZGCJK, 国产/进口]
+
+  general_standard:
+    source:
+      aliases: [ZZGF, 总规范]
+
+  package:
+    source:
+      aliases: [ZFZXS, 封装形式]
+
+  detail_standard:
+    source:
+      aliases: [ZXXGF, 详细规范]
+
+  dimensions:
+    source:
+      aliases: [ZWGCC, 外形尺寸]
+
+  manufacturer:
+    source:
+      aliases: [ZSCCJ, 生产厂家]
+
+  special_note:
+    source:
+      aliases: [ZTSSM, 特殊说明]
+
+  purchase_standard:
+    source:
+      aliases: [ZCGBZ, 采购标准]
+
+  specification_fallback:
+    source:
+      aliases: [ZGG, 规格]
+
+  technical_standard:
+    source:
+      aliases: [ZJSBZ, 技术标准]
+
+  standard_no:
+    source:
+      aliases: [ZBZH, 标准号]
+
+  unit:
+    source:
+      aliases: [MEINS, 计量单位]
+      required: false
+
+normalization:
+  default_pipeline: [trim, normalize_width, collapse_spaces, normalize_punctuation]
+
+  # 公开样例中 SAP 大量使用 88 表示疑似空值；先作为 Profile 级规则，后续再按字段收窄。
+  nullify:
+    source: ["", "88"]
+    target: ["", "<NULL>", "-"]
+
+  value_maps:
+    origin:
+      # 由公开样例推断，正式上线前必须核对 SAP 域值。
+      "10": 国产
+      "11": 进口
+      # "9": TODO
+
+  standard_fields:
+    - general_standard
+    - detail_standard
+    - purchase_standard
+    - technical_standard
+    - standard_no
+    transforms: [uppercase, remove_inner_spaces, normalize_standard_separator]
+
+  dimension_fields:
+    - model_spec
+    - specification_fallback
+    - dimensions
+    transforms: [normalize_diameter_symbol, normalize_multiplication_symbol, normalize_unit]
+
+transforms:
+  source_model_identity:
+    op: concat
+    fields: [model, model_spec, model_grade_fallback]
+    separator: " "
+    skip_empty: true
+    deduplicate: true
+
+  source_model_preferred:
+    op: coalesce
+    fields: [model, model_grade_fallback]
+
+  source_spec_preferred:
+    op: coalesce
+    fields: [model_spec, specification_fallback]
+
+  source_standard_candidates:
+    op: list
+    fields: [purchase_standard, standard_no, technical_standard, general_standard, detail_standard]
+    skip_empty: true
+    deduplicate: true
+
+rule_sets:
+  z001_electronics:
+    target_fields:
+      group_code: 集团编码
+      category_l2: 清洗后大类
+      category_l3: 清洗后中类
+      category_l4: 清洗后小类
+      category_l5: 清洗后细类
+      product_name: 清洗后产品名称
+      model_series: 清洗后型号或系列
+      model_detail: 清洗后详细型号规格
+      quality_grade: 清洗后质量等级
+      package: 清洗后封装形式
+      manufacturer: 清洗后生产厂家
+      detail_standard: 清洗后详细规范号
+      dimensions: 清洗后外形尺寸
+      general_standard: 清洗后通用规范
+      origin: 国产_进口
+      special_note: 特殊说明
+      unit: 计量单位
+      country: 国别
+
+    match_rules:
+      - id: category_path
+        source_fields: [level2_name, level3_name, level4_name, level5_name]
+        target_fields: [category_l2, category_l3, category_l4, category_l5]
+        compose: {source: concat, target: concat, separator: " > "}
+        method: hybrid
+        weight: 0.12
+
+      - id: product_name
+        source_fields: [material_name]
+        target_fields: [product_name]
+        method: hybrid
+        weight: 0.10
+
+      - id: model_identity
+        source_fields: [source_model_identity]
+        target_fields: [model_series, model_detail]
+        compose: {source: concat, target: concat, separator: " "}
+        method: hybrid
+        weight: 0.32
+
+      - id: quality_grade
+        source_fields: [quality_grade]
+        target_fields: [quality_grade]
+        method: normalized_exact
+        weight: 0.08
+
+      - id: package
+        source_fields: [package]
+        target_fields: [package]
+        method: hybrid
+        weight: 0.10
+        critical: true
+
+      - id: manufacturer
+        source_fields: [manufacturer]
+        target_fields: [manufacturer]
+        method: hybrid
+        weight: 0.14
+        dictionary: manufacturer_aliases
+
+      - id: standards
+        source_fields: [detail_standard, general_standard]
+        target_fields: [detail_standard, general_standard]
+        compose: {source: concat, target: concat, separator: " "}
+        method: hybrid
+        weight: 0.10
+
+      - id: dimensions
+        source_fields: [dimensions]
+        target_fields: [dimensions]
+        method: numeric_text
+        weight: 0.04
+
+  z006_composites:
+    target_fields:
+      group_code: 集团物资编码
+      category_l2: 分类Ⅰ级
+      category_l3: 分类Ⅱ级
+      category_l4: 分类Ⅲ级
+      category_l5: 分类Ⅳ级
+      product_name: 名称
+      grade: 牌号
+      status: 状态
+      specification: 规格
+      adopted_standard: 采用标准
+      special_note: 特殊说明
+      unit: 计量单位
+      origin: 国产_进口
+      manufacturer: 生产厂家
+
+    match_rules:
+      - id: category_path
+        source_fields: [level2_name, level3_name, level4_name, level5_name]
+        target_fields: [category_l2, category_l3, category_l4, category_l5]
+        compose: {source: concat, target: concat, separator: " > "}
+        method: hybrid
+        weight: 0.15
+
+      - id: product_name
+        source_fields: [material_name]
+        target_fields: [product_name]
+        method: hybrid
+        weight: 0.15
+
+      - id: grade
+        source_fields: [source_model_preferred]
+        target_fields: [grade]
+        method: hybrid
+        weight: 0.25
+        critical: true
+
+      - id: specification
+        source_fields: [source_spec_preferred]
+        target_fields: [specification]
+        method: numeric_text
+        weight: 0.25
+        critical: true
+
+      - id: standard
+        source_fields: [source_standard_candidates]
+        target_fields: [adopted_standard]
+        compose: {source: best_of, target: scalar}
+        method: normalized_standard
+        weight: 0.15
+
+      - id: origin
+        source_fields: [origin]
+        target_fields: [origin]
+        method: normalized_exact
+        weight: 0.025
+
+      - id: manufacturer
+        source_fields: [manufacturer]
+        target_fields: [manufacturer]
+        method: hybrid
+        weight: 0.025
+        dictionary: manufacturer_aliases
+
+scoring:
+  missing_field_strategy: dynamic_weight
+
+retrieval:
+  backend: auto_bbq
+  top_k: 200
+  batch_size: 256
+  # 向量召回文本也按规则集分别配置，避免把无意义占位字段拼入 embedding。
+  texts:
+    z001_electronics: [level2_name, level3_name, level4_name, level5_name, material_name, source_model_identity, manufacturer]
+    z006_composites: [level2_name, level3_name, level4_name, level5_name, material_name, source_model_preferred, source_spec_preferred, purchase_standard]
+
+decision:
+  calibration_required: true
+  matched_if: gt
+  # success_threshold 在取得已确认集团码样本后校准；不得直接照搬历史重复物料阈值。
+
+output:
+  format: xlsx
+  top_n: 5
+  sheets:
+    matched: {name: 匹配结果}
+    candidates: {name: TopN}
