@@ -20,7 +20,7 @@ MATERIAL_MATCHER 的核心目标不是实现某一种固定格式的“集团码
 - 支持匹配成功阈值配置；
 - 支持相似度结果的显示系数/显示映射调整，但不改变内部原始得分；
 - 输出“正式匹配结果表”和“最相似 Top-N 候选表”；
-- 只有超过配置阈值的候选才被认定为匹配成功；
+- 只有相似度严格超过配置阈值的候选才被认定为匹配成功；
 - 所有关键行为尽量配置化，不在核心代码中硬编码客户字段。
 
 ---
@@ -92,7 +92,7 @@ profiles/
 
 一次匹配任务至少包含两个逻辑数据集：
 
-- `source`：待匹配数据，例如客户物料；
+- `source`：待匹配数据，例如客户 SAP 物料；
 - `target`：基准数据，例如集团物料/集团码主数据。
 
 系统不能假定 source 一定是 SAP，target 一定是集团码表。
@@ -114,7 +114,7 @@ profiles/
 
 ### 4.3 输入格式配置
 
-每个输入数据集通过配置描述：
+每个输入数据集通过配置描述，SAP 表格格式和集团码表格格式分别配置，不把任何列名写死在程序中。
 
 ```yaml
 source:
@@ -124,7 +124,7 @@ source:
   header_row: 1
   id_column: MATNR
 
- target:
+target:
   type: excel
   path: ./data/group.xlsx
   sheet: ZTMM_MARA
@@ -514,11 +514,11 @@ config/
 
 ## 11. 物料组匹配策略
 
-系统必须同时支持两种业务模式。
+系统至少支持以下三种模式。
 
-### 11.1 按物料组分组匹配
+### 11.1 strict：按物料组分组匹配
 
-source 物料仅与 target 中相同或映射后的物料组进行匹配。
+source 物料仅与 target 中相同物料组进行匹配。
 
 例如：
 
@@ -537,11 +537,11 @@ group_matching:
 
 这种模式可显著降低候选规模并降低跨类别误匹配。
 
-### 11.2 不区分集团物料组匹配
+### 11.2 global：不区分集团物料组匹配
 
 SAP 的一个物料组可能对应集团侧多个物料组，或者集团码体系并不按同样的物料组划分。
 
-此时 source 某物料组应允许在 target 全量数据中匹配。
+此时 source 某物料组应允许在 target 全量数据中匹配，不以集团物料组作为候选限制条件。
 
 配置：
 
@@ -550,9 +550,9 @@ group_matching:
   mode: global
 ```
 
-### 11.3 物料组映射模式
+### 11.3 mapped：物料组映射后匹配
 
-建议同时支持中间模式：
+支持 SAP 一个物料组对应集团侧一个或多个物料组。
 
 ```yaml
 group_matching:
@@ -569,7 +569,7 @@ group_matching:
 - 部分物料组全局匹配；
 - 未配置物料组使用默认策略。
 
-建议最终支持：
+建议支持：
 
 ```yaml
 group_matching:
@@ -612,13 +612,13 @@ decision:
   success_threshold: 0.82
 ```
 
-判定规则：
+按“超过阈值才认为匹配成功”的业务规则，判定采用严格大于：
 
 ```text
-best_raw_score >= success_threshold
+best_raw_score > success_threshold
     => MATCHED
 
-best_raw_score < success_threshold
+best_raw_score <= success_threshold
     => UNMATCHED
 ```
 
@@ -644,9 +644,9 @@ best_raw_score < success_threshold
 例如：
 
 ```text
->= 0.90  自动确认
-0.80~0.90 人工复核
-< 0.80   未匹配
+> 0.90      自动确认
+> 0.80~0.90 人工复核
+<= 0.80     未匹配
 ```
 
 第一阶段可以先实现单一 success threshold。
@@ -732,7 +732,7 @@ TopN
 
 ### 16.1 正式匹配结果表
 
-用途：直接作为集团码匹配结果使用。
+用途：作为集团码正式匹配结果。默认保留所有 source 记录，未匹配记录的集团码为空，便于核对覆盖率；后续可增加 `include_unmatched` 控制是否只输出匹配成功记录。
 
 建议字段：
 
@@ -753,7 +753,7 @@ TopN
 严格要求：
 
 ```text
-raw_score < threshold
+raw_score <= threshold
 => group_code 必须为空
 ```
 
@@ -769,7 +769,7 @@ raw_score < threshold
 | A001 | 2 | G3021 | JT455 | 0.82 | 82.0 | ... |
 | A001 | 3 | G8821 | JT811 | 0.79 | 79.0 | ... |
 
-Top-N 表不受 success threshold 限制。
+Top-N 表不受 success threshold 限制，即便所有候选均未达到匹配成功阈值，也应保留候选供人工复核。
 
 ### 16.3 字段级可解释得分
 
@@ -810,7 +810,7 @@ source:
   sheet: Sheet1
   id_column: MATNR
 
- target:
+target:
   type: excel
   path: ./data/target.xlsx
   sheet: ZTMM_MARA
@@ -866,11 +866,11 @@ scoring:
 retrieval:
   top_k: 100
 
- group_matching:
+group_matching:
   mode: mapped
   default: global
 
- decision:
+decision:
   success_threshold: 0.82
 
 score_display:
@@ -882,6 +882,7 @@ score_display:
 
 output:
   top_n: 5
+  include_unmatched: true
   matched_file: ./output/matched.xlsx
   topn_file: ./output/topn.xlsx
 ```
@@ -1087,8 +1088,11 @@ GET  /jobs/{id}/result
 必须验证：
 
 ```text
-score = threshold
+score > threshold
 => MATCHED
+
+score = threshold
+=> UNMATCHED 且 group_code 为空
 
 score < threshold
 => UNMATCHED 且 group_code 为空
@@ -1096,7 +1100,7 @@ score < threshold
 
 ### 输出测试
 
-- 正式匹配表只包含合法集团码；
+- 正式匹配表只为成功记录填写集团码；
 - 未命中记录仍保留最高相似度；
 - Top-N 排序正确；
 - 每个 source 最多 N 条候选；
