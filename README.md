@@ -10,15 +10,16 @@
 
 项目目前处于**设计先行**阶段，优先完善业务背景、核心抽象、配置体系、算法边界、评测方案与麒麟 Linux V10 离线部署方案，再进入核心代码实现。
 
-其中一项强制设计目标是：**普通客户差异必须通过 profile / dictionary / mapping 配置完成，新增客户不得要求修改核心程序。**
+其中一项强制设计目标是：**普通客户差异必须通过 profile / dictionary / mapping / catalog 配置完成，新增客户不得要求修改核心程序。**
 
-这里的“普通客户差异”包括表头/列名、字段数量、字段组合关系、字段权重、匹配算法选择、阈值/敏感性、物料组策略、同义词、Top-N 和输出列等。只有平台从未支持过的新协议、新数据源或全新算法类型，才允许以通用插件形式扩展代码。
+这里的“普通客户差异”包括表头/列名、字段数量、字段组合关系、多数据源 Join、Target Catalog 路由、字段权重、匹配算法选择、阈值/敏感性、物料组策略、同义词、Top-N 和输出列等。只有平台从未支持过的新协议、新数据源驱动或全新算法类型，才允许以通用插件形式扩展代码；插件加入后应可由任意客户 Profile 复用。
 
 ## 文档
 
 - [项目背景与设计约束](docs/PROJECT_BACKGROUND.md)
 - [通用匹配引擎开发设计书](docs/DEVELOPMENT_DESIGN.md)
 - [零代码客户适配设计](docs/ZERO_CODE_ADAPTATION_DESIGN.md)
+- [插件化架构与零代码客户适配契约](docs/PLUGIN_ARCHITECTURE.md)
 - [向量数据库与 BBQ 高速批量匹配设计](docs/VECTOR_INDEX_DESIGN.md)
 - [通用客户 Profile 示例](config/examples/generic_customer.yaml)
 - [13 所 Z001 / Z006 字段映射草案](docs/customers/13_institute_z001_z006_mapping.md)
