@@ -4,17 +4,44 @@
 
 profile:
   name: institute_13_z001_z006_draft
-  version: 1
+  version: 2
   status: draft
 
-source:
-  adapter: excel
-  path: ./input/sap.xlsx
-  options:
-    sheet: Sheet1
-    header_row: 1
-    trim_headers: true
-    empty_values: [""]
+# 9 月 10 日现场笔记同时出现 ZTMM_MARA 与 MARA，因此正式 Schema 不能假定只有一个 Source。
+# 当前公开样例以 ZTMM_MARA 为主；如需要从 MARA/MAKT/其他 Z 表补字段，只通过 datasets + joins 配置扩展。
+datasets:
+  ztmm_mara:
+    adapter: excel
+    path: ./input/sap/ZTMM_MARA.xlsx
+    options:
+      sheet: Sheet1
+      header_row: 1
+      trim_headers: true
+      empty_values: [""]
+
+  # 可选补充源；现场没有提供时可 disabled，不要求修改程序。
+  mara:
+    enabled: false
+    adapter: excel
+    path: ./input/sap/MARA.xlsx
+    options:
+      sheet: Sheet1
+      header_row: 1
+
+joins:
+  - id: enrich_from_mara
+    enabled_if_dataset: mara
+    left: ztmm_mara
+    right: mara
+    type: left
+    keys:
+      - {left: MATNR, right: MATNR}
+    select: [MEINS, MATKL]
+    collision: coalesce_left_first
+
+source_view:
+  dataset: enrich_from_mara
+  fallback_dataset: ztmm_mara
 
 # 真实集团数据按物料大类使用不同模板，因此 Target 也必须支持多 Catalog 路由，
 # 而不是要求客户先手工整理成同一种 Excel。
@@ -48,100 +75,124 @@ routing:
 logical_fields:
   source_id:
     source:
+      dataset: source_view
       aliases: [MATNR, 物料]
       required: true
 
   material_type:
     source:
+      dataset: source_view
       aliases: [ZWLYX, 物料类型/一层分类]
       required: true
 
   level1_name:
     source:
+      dataset: source_view
       aliases: [ZWLYXT, 一层分类描述]
 
   level2_name:
     source:
+      dataset: source_view
       aliases: [ZECFLT, 二层分类描述]
 
   level3_name:
     source:
+      dataset: source_view
       aliases: [ZSCFLT, 三层分类描述]
 
   level4_name:
     source:
+      dataset: source_view
       aliases: [ZSCFL2T, 四层分类描述]
 
   level5_name:
     source:
+      dataset: source_view
       aliases: [ZWCFLT, 五层分类描述]
 
   material_name:
     source:
+      dataset: source_view
       aliases: [ZWLMC, 物料名称]
 
   model:
     source:
+      dataset: source_view
       aliases: [ZXH, 型号]
 
   model_spec:
     source:
+      dataset: source_view
       aliases: [ZXHGG, 型号规格]
 
   model_grade_fallback:
     source:
+      dataset: source_view
       aliases: [ZXHPH, 型号(牌号)]
 
   quality_grade:
     source:
+      dataset: source_view
       aliases: [ZZLDJ, 质量等级]
 
   origin:
     source:
+      dataset: source_view
       aliases: [ZGCJK, 国产/进口]
 
   general_standard:
     source:
+      dataset: source_view
       aliases: [ZZGF, 总规范]
 
   package:
     source:
+      dataset: source_view
       aliases: [ZFZXS, 封装形式]
 
   detail_standard:
     source:
+      dataset: source_view
       aliases: [ZXXGF, 详细规范]
 
   dimensions:
     source:
+      dataset: source_view
       aliases: [ZWGCC, 外形尺寸]
 
   manufacturer:
     source:
+      dataset: source_view
       aliases: [ZSCCJ, 生产厂家]
 
   special_note:
     source:
+      dataset: source_view
       aliases: [ZTSSM, 特殊说明]
 
   purchase_standard:
     source:
+      dataset: source_view
       aliases: [ZCGBZ, 采购标准]
 
   specification_fallback:
     source:
+      dataset: source_view
       aliases: [ZGG, 规格]
 
   technical_standard:
     source:
+      dataset: source_view
       aliases: [ZJSBZ, 技术标准]
 
   standard_no:
     source:
+      dataset: source_view
       aliases: [ZBZH, 标准号]
 
   unit:
     source:
+      dataset: source_view
       aliases: [MEINS, 计量单位]
       required: false
 
