@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import __version__
+from .excel_inspector import inspect_excel
 from .plugins import registry
 from .security import SessionStore, verify_admin_password
 from .settings import Settings
+
+
+MAX_INSPECT_BYTES = 50 * 1024 * 1024
 
 
 class LoginRequest(BaseModel):
@@ -74,6 +76,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "log_dir": str(runtime.log_dir),
             "plugins": registry.list_plugins(),
         }
+
+    @app.post("/api/excel/inspect")
+    async def inspect_excel_file(
+        file: UploadFile = File(...),
+        _: str = Depends(require_admin),
+    ) -> dict[str, object]:
+        filename = file.filename or ""
+        if not filename.lower().endswith((".xlsx", ".xlsm")):
+            raise HTTPException(status_code=400, detail="当前仅支持 .xlsx / .xlsm 文件")
+        payload = await file.read(MAX_INSPECT_BYTES + 1)
+        if len(payload) > MAX_INSPECT_BYTES:
+            raise HTTPException(status_code=413, detail="样表超过 50MB，请使用更小的配置样表")
+        try:
+            inspection = inspect_excel(payload)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"无法解析 Excel：{exc}") from exc
+        return inspection.to_dict()
 
     index_file = runtime.web_root / "index.html"
     assets_dir = runtime.web_root / "assets"
