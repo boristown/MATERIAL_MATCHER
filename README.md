@@ -8,7 +8,7 @@
 
 ## 当前阶段
 
-项目目前处于**设计先行**阶段，优先完善业务背景、核心抽象、配置体系、算法边界、评测方案与麒麟 Linux V10 离线部署方案，再进入核心代码实现。
+项目目前处于**设计先行并开始进入 MVP 实现**阶段，优先完善业务背景、核心抽象、配置体系、算法边界、评测方案与麒麟 Linux V10 离线部署方案，同时启动 Profile/插件基础、B/S 服务和安装器骨架开发。
 
 其中一项强制设计目标是：**普通客户差异必须通过 profile / dictionary / mapping / catalog 配置完成，新增客户不得要求修改核心程序。**
 
@@ -16,12 +16,15 @@
 
 部署侧同样采用统一产品形态：银河麒麟 Linux V10、无 Docker、完全离线一键安装、统一逻辑目录、自动选择大容量数据盘和高位空闲端口、systemd 自启动，以及基于 Vue 3 的 B/S 管理界面。
 
+配置体验侧要求：**普通业务用户默认不接触 YAML、插件 ID、Join、Rule Set 等技术概念**。默认采用向导、自动识别、拖拽映射、重要程度滑块、匹配严格程度滑块、试跑预览和版本回滚；底层技术配置仅在高级/专家模式显示。
+
 ## 文档
 
 - [项目背景与设计约束](docs/PROJECT_BACKGROUND.md)
 - [通用匹配引擎开发设计书](docs/DEVELOPMENT_DESIGN.md)
 - [零代码客户适配设计](docs/ZERO_CODE_ADAPTATION_DESIGN.md)
 - [插件化架构与零代码客户适配契约](docs/PLUGIN_ARCHITECTURE.md)
+- [非技术用户配置体验设计](docs/NON_TECHNICAL_CONFIGURATION_DESIGN.md)
 - [向量数据库与 BBQ 高速批量匹配设计](docs/VECTOR_INDEX_DESIGN.md)
 - [麒麟 V10 一键部署、运行与 B/S UI 设计](docs/DEPLOYMENT_AND_UI_DESIGN.md)
 - [通用客户 Profile 示例](config/examples/generic_customer.yaml)
