@@ -38,6 +38,7 @@ class ProfileDocument(BaseModel):
     match_rules: list[dict[str, Any]] = Field(default_factory=list)
     rule_sets: dict[str, Any] = Field(default_factory=dict)
     scoring: dict[str, Any] = Field(default_factory=dict)
+    group_matching: dict[str, Any] = Field(default_factory=dict)
     retrieval: dict[str, Any] = Field(default_factory=dict)
     decision: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] = Field(default_factory=dict)
