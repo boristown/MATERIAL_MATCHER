@@ -16,11 +16,10 @@ class ProfileMeta(BaseModel):
 
 
 class ProfileDocument(BaseModel):
-    """Loose top-level schema for the first MVP.
+    """Data-driven profile contract.
 
-    Customer-specific fields remain dynamic; this model validates only the
-    structural contract needed by the engine. More detailed section schemas
-    can be introduced without hard-coding customer columns.
+    Customer-specific fields remain dynamic. The core schema validates the
+    reusable engine sections while allowing future plugin-specific options.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -28,16 +27,21 @@ class ProfileDocument(BaseModel):
     profile: ProfileMeta
     source: dict[str, Any] | None = None
     datasets: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    joins: list[dict[str, Any]] = Field(default_factory=list)
     target: dict[str, Any] | None = None
     target_catalogs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     routing: dict[str, Any] | None = None
     logical_fields: dict[str, Any] = Field(default_factory=dict)
     transforms: dict[str, Any] = Field(default_factory=dict)
+    normalization: dict[str, Any] = Field(default_factory=dict)
+    dictionaries: dict[str, Any] = Field(default_factory=dict)
     match_rules: list[dict[str, Any]] = Field(default_factory=list)
     rule_sets: dict[str, Any] = Field(default_factory=dict)
+    scoring: dict[str, Any] = Field(default_factory=dict)
     retrieval: dict[str, Any] = Field(default_factory=dict)
     decision: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] = Field(default_factory=dict)
+    runtime: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_data_endpoints(self) -> "ProfileDocument":
