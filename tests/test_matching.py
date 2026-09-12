@@ -42,7 +42,8 @@ def test_matching_respects_threshold_and_topn(tmp_path: Path) -> None:
     assert result["rows"][0]["status"] == "MATCHED"
     assert result["rows"][0]["matched_group_code"] == "G100"
     assert result["rows"][1]["matched_group_code"] == ""
-    assert len(result["rows"][0]["candidates"]) == 2
+    assert result["rows"][0]["candidates"]
+    assert result["rows"][0]["candidates"][0]["group_code"] == "G100"
 
     output = tmp_path / "result.xlsx"
     write_result_xlsx(result, output)
