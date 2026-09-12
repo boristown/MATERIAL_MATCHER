@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import __version__
 from .excel_inspector import inspect_excel
@@ -52,6 +52,20 @@ class MatchConfigPayload(BaseModel):
     review_threshold: float | None = Field(default=None, ge=0, le=1)
     top_n: int = Field(default=5, ge=1, le=50)
     candidate_limit: int = Field(default=400, ge=20, le=5000)
+    group_mode: str = "global"
+    source_group_column: str | None = None
+    target_group_column: str | None = None
+    group_mapping: dict[str, list[str]] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_group_policy(self) -> "MatchConfigPayload":
+        if self.group_mode not in {"global", "strict", "mapped"}:
+            raise ValueError("group_mode 必须为 global / strict / mapped")
+        if self.group_mode != "global" and (not self.source_group_column or not self.target_group_column):
+            raise ValueError("按物料组匹配时必须指定客户物料组列和集团物料组列")
+        if self.group_mode == "mapped" and not self.group_mapping:
+            raise ValueError("mapped 模式必须配置物料组映射")
+        return self
 
 
 class DryRunRequest(BaseModel):
@@ -66,19 +80,26 @@ class PublishProfileRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     config: MatchConfigPayload
     description: str = ""
+    target_file_id: str | None = None
 
 
 class CreateTaskRequest(BaseModel):
     profile_name: str
     source_file_id: str
-    target_file_id: str
+    target_file_id: str | None = None
 
 
 class CleanupRequest(BaseModel):
     older_than_hours: int | None = Field(default=None, ge=1, le=24 * 365)
 
 
-def _profile_document(name: str, description: str, config: MatchConfigPayload) -> dict[str, Any]:
+def _profile_document(
+    name: str,
+    description: str,
+    config: MatchConfigPayload,
+    *,
+    target_catalog_id: str | None = None,
+) -> dict[str, Any]:
     cfg = config.model_dump()
     logical_fields: dict[str, Any] = {
         "source_id": {"source": {"aliases": [config.source_id_column], "required": True}},
@@ -101,6 +122,17 @@ def _profile_document(name: str, description: str, config: MatchConfigPayload) -
                 "critical": mapping.critical,
             }
         )
+    group_matching: dict[str, Any] = {"mode": config.group_mode}
+    if config.group_mode != "global":
+        group_matching.update(
+            {
+                "source_field": config.source_group_column,
+                "target_field": config.target_group_column,
+            }
+        )
+    if config.group_mode == "mapped":
+        group_matching["mapping"] = config.group_mapping
+
     document = {
         "profile": {"name": name, "version": 1, "status": "published", "description": description},
         "source": {
@@ -112,10 +144,12 @@ def _profile_document(name: str, description: str, config: MatchConfigPayload) -
             "adapter": "excel",
             "options": {"sheet": config.target_sheet, "header_row": config.target_header_row},
             "result_code_column": config.group_code_column,
+            "catalog_id": target_catalog_id,
         },
         "logical_fields": logical_fields,
         "match_rules": match_rules,
         "scoring": {"missing_field_strategy": "dynamic_weight"},
+        "group_matching": group_matching,
         "decision": {
             "mode": "bands" if config.review_threshold is not None else "single_threshold",
             "success_threshold": config.threshold,
@@ -124,7 +158,7 @@ def _profile_document(name: str, description: str, config: MatchConfigPayload) -
         },
         "retrieval": {"backend": "auto", "candidate_limit": config.candidate_limit},
         "output": {"format": "xlsx", "top_n": config.top_n},
-        "runtime": {"match_config": cfg},
+        "runtime": {"match_config": cfg, "target_catalog_id": target_catalog_id},
     }
     ProfileDocument.model_validate(document)
     MatchConfig.from_dict(cfg)
@@ -233,6 +267,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         seconds = payload.older_than_hours * 3600 if payload.older_than_hours is not None else None
         return storage.cleanup_uploads(seconds)
 
+    @app.get("/api/catalogs")
+    def list_catalogs(_: str = Depends(require_admin)) -> list[dict[str, Any]]:
+        return storage.list_catalogs()
+
     @app.post("/api/wizard/dry-run")
     def dry_run(payload: DryRunRequest, _: str = Depends(require_admin)) -> dict[str, Any]:
         source = upload_or_404(payload.source_file_id)
@@ -266,8 +304,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/profiles/publish")
     def publish_profile(payload: PublishProfileRequest, _: str = Depends(require_admin)) -> dict[str, Any]:
         try:
-            document = _profile_document(payload.name, payload.description, payload.config)
-            return storage.publish_profile(payload.name, document)
+            catalog_id = None
+            if payload.target_file_id:
+                target_upload = upload_or_404(payload.target_file_id)
+                catalog = storage.create_catalog_from_upload(payload.name, target_upload)
+                catalog_id = str(catalog["catalog_id"])
+            document = _profile_document(
+                payload.name,
+                payload.description,
+                payload.config,
+                target_catalog_id=catalog_id,
+            )
+            metadata = storage.publish_profile(payload.name, document)
+            metadata["catalog_id"] = catalog_id
+            return metadata
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"配置无法发布：{exc}") from exc
 
@@ -287,18 +339,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="配置版本不存在") from exc
 
+    def resolve_target_path(task: dict[str, Any], profile: dict[str, Any]) -> Path:
+        target_file_id = task.get("target_file_id")
+        if target_file_id:
+            return Path(storage.get_upload(str(target_file_id)).path)
+        catalog_id = profile.get("runtime", {}).get("target_catalog_id")
+        if not catalog_id:
+            raise ValueError("任务未提供集团码文件，且匹配方案没有持久化集团码 Catalog")
+        return Path(storage.get_catalog(str(catalog_id))["path"])
+
     def execute_task(task_id: str) -> None:
         try:
             task = storage.get_task(task_id)
             task["status"] = "RUNNING"
             storage.save_task(task)
             source = storage.get_upload(task["source_file_id"])
-            target = storage.get_upload(task["target_file_id"])
             profile = storage.load_profile_document(task["profile_name"])
             config = profile.get("runtime", {}).get("match_config")
             if not isinstance(config, dict):
                 raise ValueError("该配置缺少可执行 match_config")
-            result = run_matching(Path(source.path), Path(target.path), config)
+            target_path = resolve_target_path(task, profile)
+            result = run_matching(Path(source.path), target_path, config)
             output_path = storage.result_path(task_id)
             write_result_xlsx(result, output_path)
             task["status"] = "COMPLETED"
@@ -317,11 +378,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/tasks")
     def create_task(payload: CreateTaskRequest, background: BackgroundTasks, _: str = Depends(require_admin)) -> dict[str, Any]:
         upload_or_404(payload.source_file_id)
-        upload_or_404(payload.target_file_id)
         try:
-            storage.load_profile_document(payload.profile_name)
+            profile = storage.load_profile_document(payload.profile_name)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="匹配方案不存在") from exc
+        if payload.target_file_id:
+            upload_or_404(payload.target_file_id)
+        elif not profile.get("runtime", {}).get("target_catalog_id"):
+            raise HTTPException(status_code=400, detail="该匹配方案没有持久化集团码数据，请上传集团码文件")
         task = storage.create_task(payload.model_dump())
         background.add_task(execute_task, task["task_id"])
         return task
