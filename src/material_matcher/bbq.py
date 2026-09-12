@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, Iterator
 
 import numpy as np
+from numpy.lib.format import open_memmap
 
 
 POPCOUNT = np.array([int(i).bit_count() for i in range(256)], dtype=np.uint8)
+BatchFactory = Callable[[], Iterator[tuple[list[str], np.ndarray]]]
 
 
 @dataclass
@@ -21,13 +23,10 @@ class SearchHit:
 class EmbeddedBBQFlatIndex:
     """Compact asymmetric binary flat index.
 
-    Target vectors are stored at exactly one bit per dimension (plus small
-    global calibration arrays). Queries remain higher precision and are
-    quantized to signed 4-bit values at search time. The hot path reduces the
-    approximate dot product to packed bitwise AND + popcount operations.
-
-    This is the embedded/offline baseline. A native SIMD implementation can
-    replace the NumPy kernel behind the same public interface later.
+    Target vectors are stored at one bit per dimension. Queries are quantized
+    to signed 4-bit values. The approximate comparison hot path is packed
+    bitwise AND + popcount. The persistent format is mmap-friendly so the
+    target index can be much larger than process memory.
     """
 
     def __init__(
@@ -78,6 +77,84 @@ class EmbeddedBBQFlatIndex:
         rerank = matrix.astype(np.float16) if store_float16_rerank else None
         return cls(packed, center, scale, ids, matrix.shape[1], rerank)
 
+    @classmethod
+    def build_streaming_to_directory(
+        cls,
+        batch_factory: BatchFactory,
+        count: int,
+        dimensions: int,
+        directory: str | Path,
+        *,
+        store_float16_rerank: bool = False,
+    ) -> "EmbeddedBBQFlatIndex":
+        """Build an index with bounded RAM using two streaming passes.
+
+        Pass 1 calculates per-dimension calibration. Pass 2 writes the packed
+        target bits directly into an NPY memmap. No N x D float32 matrix is
+        materialized in memory, which is important for million-row catalogs.
+        """
+        if count <= 0 or dimensions <= 0:
+            raise ValueError("count and dimensions must be positive")
+        root = Path(directory)
+        root.mkdir(parents=True, exist_ok=True)
+
+        total = np.zeros(dimensions, dtype=np.float64)
+        total_sq = np.zeros(dimensions, dtype=np.float64)
+        seen = 0
+        for _, vectors in batch_factory():
+            matrix = np.asarray(vectors, dtype=np.float32)
+            if matrix.ndim != 2 or matrix.shape[1] != dimensions:
+                raise ValueError("streaming batch has unexpected dimensions")
+            total += matrix.sum(axis=0, dtype=np.float64)
+            total_sq += np.square(matrix, dtype=np.float32).sum(axis=0, dtype=np.float64)
+            seen += matrix.shape[0]
+        if seen != count:
+            raise ValueError(f"streaming count mismatch: expected {count}, got {seen}")
+        center = (total / count).astype(np.float32)
+        variance = np.maximum(total_sq / count - np.square(center.astype(np.float64)), 1e-12)
+        scale = np.sqrt(variance).astype(np.float32)
+        scale[scale < 1e-6] = 1.0
+        np.save(root / "center.npy", center, allow_pickle=False)
+        np.save(root / "scale.npy", scale, allow_pickle=False)
+
+        packed_width = (dimensions + 7) // 8
+        packed = open_memmap(root / "packed.npy", mode="w+", dtype=np.uint8, shape=(count, packed_width))
+        rerank = None
+        if store_float16_rerank:
+            rerank = open_memmap(root / "rerank_f16.npy", mode="w+", dtype=np.float16, shape=(count, dimensions))
+
+        ids: list[str] = []
+        offset = 0
+        for batch_ids, vectors in batch_factory():
+            matrix = np.asarray(vectors, dtype=np.float32)
+            batch_count = matrix.shape[0]
+            bits = matrix >= center
+            packed[offset : offset + batch_count] = np.packbits(bits, axis=1, bitorder="little")
+            if rerank is not None:
+                rerank[offset : offset + batch_count] = matrix.astype(np.float16)
+            ids.extend(str(item_id) for item_id in batch_ids)
+            offset += batch_count
+        if offset != count:
+            raise ValueError(f"streaming second pass mismatch: expected {count}, got {offset}")
+        packed.flush()
+        if rerank is not None:
+            rerank.flush()
+        (root / "ids.json").write_text(json.dumps(ids, ensure_ascii=False), encoding="utf-8")
+        (root / "meta.json").write_text(
+            json.dumps(
+                {
+                    "dimensions": dimensions,
+                    "count": count,
+                    "format": "bbq-flat-v1",
+                    "target_bits_per_dimension": 1,
+                    "query_bits_per_dimension": 4,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return cls.load(root, mmap=True)
+
     def _query_int4(self, queries: np.ndarray) -> np.ndarray:
         matrix = np.asarray(queries, dtype=np.float32)
         if matrix.ndim == 1:
@@ -97,10 +174,6 @@ class EmbeddedBBQFlatIndex:
         magnitudes = np.abs(query_int4).astype(np.uint8)
         positive = query_int4 >= 0
         selected_sum = np.zeros(targets.shape[0], dtype=np.int32)
-
-        # q is signed 4-bit. For sign target t in {-1,+1},
-        # dot(t,q) = -sum(q) + 2*sum(q_i where target_bit_i=1).
-        # The second term is decomposed into magnitude bit-planes.
         for bit, weight in ((0, 1), (1, 2), (2, 4)):
             plane = ((magnitudes >> bit) & 1).astype(bool)
             pos_mask = self._pack_mask(plane & positive)
@@ -129,7 +202,10 @@ class EmbeddedBBQFlatIndex:
         if q_float.ndim == 1:
             q_float = q_float[None, :]
         q_int4 = self._query_int4(q_float)
-        top_k = max(1, min(int(top_k), len(candidate_indices) if candidate_indices is not None else self.count))
+        candidate_count = len(candidate_indices) if candidate_indices is not None else self.count
+        if candidate_count == 0:
+            return [[] for _ in range(q_float.shape[0])]
+        top_k = max(1, min(int(top_k), candidate_count))
         results: list[list[SearchHit]] = []
 
         for q_idx, query in enumerate(q_int4):
@@ -173,7 +249,16 @@ class EmbeddedBBQFlatIndex:
             np.save(root / "rerank_f16.npy", self.rerank_vectors, allow_pickle=False)
         (root / "ids.json").write_text(json.dumps(self.item_ids, ensure_ascii=False), encoding="utf-8")
         (root / "meta.json").write_text(
-            json.dumps({"dimensions": self.dimensions, "count": self.count, "format": "bbq-flat-v1"}, indent=2),
+            json.dumps(
+                {
+                    "dimensions": self.dimensions,
+                    "count": self.count,
+                    "format": "bbq-flat-v1",
+                    "target_bits_per_dimension": 1,
+                    "query_bits_per_dimension": 4,
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
