@@ -11,7 +11,13 @@ from .settings import Settings
 
 def _cmd_serve(_: argparse.Namespace) -> int:
     settings = Settings.load()
-    uvicorn.run("material_matcher.api:app", host=settings.host, port=settings.port, workers=1)
+    uvicorn.run(
+        "material_matcher.api:create_app",
+        host=settings.host,
+        port=settings.port,
+        workers=1,
+        factory=True,
+    )
     return 0
 
 
