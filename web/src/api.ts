@@ -103,6 +103,18 @@ export async function listTasks() {
   return data
 }
 
+export async function downloadTaskResult(taskId: string) {
+  const response = await api.get(`/tasks/${encodeURIComponent(taskId)}/result`, { responseType: 'blob' })
+  const url = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `material_matcher_${taskId}.xlsx`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 export async function listFiles() {
   const { data } = await api.get('/files')
   return data
@@ -118,10 +130,6 @@ export async function cleanupFiles(olderThanHours?: number) {
 export async function deleteFile(fileId: string) {
   const { data } = await api.delete(`/files/${fileId}`)
   return data
-}
-
-export function taskResultUrl(taskId: string) {
-  return `/api/tasks/${encodeURIComponent(taskId)}/result`
 }
 
 export default api
