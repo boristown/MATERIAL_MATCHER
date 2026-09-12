@@ -3,10 +3,10 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from openpyxl import Workbook, load_workbook
 
@@ -102,8 +102,8 @@ def score_value(a: Any, b: Any, method: str) -> float:
         na, nb = normalize_text(a), normalize_text(b)
         return 1.0 if na and nb and (na in nb or nb in na) else 0.0
     if method in {"semantic", "hybrid"}:
-        # MVP fallback before the vector/BBQ backend is attached: combine lexical
-        # evidence without changing the public matcher contract.
+        # MVP lexical fallback. The public matcher contract remains unchanged
+        # when semantic/BBQ retrieval is attached later.
         return max(_fuzzy(a, b), _token_score(a, b))
     return _fuzzy(a, b)
 
@@ -131,12 +131,25 @@ class MatchConfig:
     review_threshold: float | None = None
     top_n: int = 5
     candidate_limit: int = 400
+    group_mode: str = "global"
+    source_group_column: str | None = None
+    target_group_column: str | None = None
+    group_mapping: dict[str, list[str]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "MatchConfig":
         mappings = [MappingRule(**item) for item in raw.get("mappings", [])]
         if not mappings:
             raise ValueError("至少需要一个字段映射")
+        group_mode = str(raw.get("group_mode", "global")).lower()
+        if group_mode not in {"global", "strict", "mapped"}:
+            raise ValueError("group_mode 必须为 global / strict / mapped")
+        raw_group_mapping = raw.get("group_mapping") or {}
+        group_mapping = {
+            normalize_text(source_group): [str(target_group) for target_group in target_groups]
+            for source_group, target_groups in raw_group_mapping.items()
+            if isinstance(target_groups, list)
+        }
         return cls(
             source_sheet=raw.get("source_sheet"),
             source_header_row=int(raw.get("source_header_row", 1)),
@@ -149,6 +162,10 @@ class MatchConfig:
             review_threshold=float(raw["review_threshold"]) if raw.get("review_threshold") is not None else None,
             top_n=max(1, min(50, int(raw.get("top_n", 5)))),
             candidate_limit=max(20, min(5000, int(raw.get("candidate_limit", 400)))),
+            group_mode=group_mode,
+            source_group_column=str(raw["source_group_column"]) if raw.get("source_group_column") else None,
+            target_group_column=str(raw["target_group_column"]) if raw.get("target_group_column") else None,
+            group_mapping=group_mapping,
         )
 
 
@@ -175,8 +192,6 @@ def read_excel_rows(path: Path, sheet: str | None, header_row: int, max_rows: in
 
 
 def _combined(row: dict[str, Any], header: str) -> Any:
-    # Wizard currently produces one-to-one physical mappings. Composite fields
-    # can be represented by "A + B" without introducing customer-specific code.
     if " + " not in header:
         return row.get(header)
     values = [normalize_text(row.get(part.strip())) for part in header.split(" + ")]
@@ -223,15 +238,54 @@ def _build_candidate_index(target_rows: list[dict[str, Any]], rules: list[Mappin
     return index
 
 
-def _candidate_ids(source: dict[str, Any], rules: list[MappingRule], index: dict[str, set[int]], target_count: int, limit: int) -> list[int]:
+def _candidate_ids(
+    source: dict[str, Any],
+    rules: list[MappingRule],
+    index: dict[str, set[int]],
+    target_count: int,
+    limit: int,
+    allowed: set[int] | None = None,
+) -> list[int]:
+    if allowed is not None and not allowed:
+        return []
     counts: dict[int, int] = defaultdict(int)
     for rule in rules:
         for token in tokenize(_combined(source, rule.source_header)):
             for idx in index.get(token, ()):
-                counts[idx] += 1
+                if allowed is None or idx in allowed:
+                    counts[idx] += 1
     if not counts:
-        return list(range(min(target_count, limit)))
+        base = range(target_count) if allowed is None else sorted(allowed)
+        return list(base)[:limit]
     return [idx for idx, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+
+
+def _build_group_index(target_rows: list[dict[str, Any]], target_group_column: str | None) -> dict[str, set[int]]:
+    groups: dict[str, set[int]] = defaultdict(set)
+    if not target_group_column:
+        return groups
+    for idx, row in enumerate(target_rows):
+        value = normalize_text(row.get(target_group_column))
+        if value:
+            groups[value].add(idx)
+    return groups
+
+
+def _allowed_by_group(source: dict[str, Any], config: MatchConfig, group_index: dict[str, set[int]]) -> set[int] | None:
+    if config.group_mode == "global":
+        return None
+    if not config.source_group_column or not config.target_group_column:
+        return set()
+    source_group = normalize_text(source.get(config.source_group_column))
+    if not source_group:
+        return set()
+    if config.group_mode == "strict":
+        return set(group_index.get(source_group, set()))
+    mapped_groups = config.group_mapping.get(source_group, [])
+    allowed: set[int] = set()
+    for target_group in mapped_groups:
+        allowed.update(group_index.get(normalize_text(target_group), set()))
+    return allowed
 
 
 def run_matching(
@@ -247,6 +301,11 @@ def run_matching(
     target_headers, target_rows = read_excel_rows(target_path, config.target_sheet, config.target_header_row, max_target_rows)
     if config.group_code_column not in target_headers:
         raise ValueError(f"集团码列不存在：{config.group_code_column}")
+    if config.group_mode != "global":
+        if not config.source_group_column or config.source_group_column not in source_headers:
+            raise ValueError("按物料组匹配时，客户物料组字段不存在或未配置")
+        if not config.target_group_column or config.target_group_column not in target_headers:
+            raise ValueError("按物料组匹配时，集团物料组字段不存在或未配置")
     for rule in config.mappings:
         for header, available, label in (
             (rule.source_header, source_headers, "客户物料"),
@@ -257,11 +316,13 @@ def run_matching(
                     raise ValueError(f"{label}字段不存在：{part}")
 
     candidate_index = _build_candidate_index(target_rows, config.mappings)
+    group_index = _build_group_index(target_rows, config.target_group_column)
     output_rows: list[dict[str, Any]] = []
     matched = review = unmatched = 0
 
     for source_idx, source in enumerate(source_rows, start=1):
-        candidate_ids = _candidate_ids(source, config.mappings, candidate_index, len(target_rows), config.candidate_limit)
+        allowed = _allowed_by_group(source, config, group_index)
+        candidate_ids = _candidate_ids(source, config.mappings, candidate_index, len(target_rows), config.candidate_limit, allowed)
         ranked: list[tuple[float, int, list[dict[str, Any]]]] = []
         for target_idx in candidate_ids:
             score, evidence = _row_score(source, target_rows[target_idx], config.mappings)
@@ -315,6 +376,7 @@ def run_matching(
             "matched_rate": round(matched / total, 6) if total else 0.0,
             "threshold": config.threshold,
             "review_threshold": config.review_threshold,
+            "group_mode": config.group_mode,
         },
         "source_headers": source_headers,
         "rows": output_rows,
@@ -337,9 +399,7 @@ def write_result_xlsx(result: dict[str, Any], path: Path) -> None:
     topn.append(["源行号", "源物料", "排名", "候选集团码", "相似度", "字段证据"])
     for item in result.get("rows", []):
         for candidate in item.get("candidates", []):
-            evidence_text = "; ".join(
-                f"{e['name']}={e['score']:.3f}" for e in candidate.get("evidence", [])
-            )
+            evidence_text = "; ".join(f"{e['name']}={e['score']:.3f}" for e in candidate.get("evidence", []))
             topn.append(
                 [
                     item["source_index"],
