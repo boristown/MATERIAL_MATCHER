@@ -35,3 +35,15 @@ class PluginRegistry:
 
 
 registry = PluginRegistry()
+
+
+def _bbq_factory(config: dict[str, Any]):
+    from .bbq import EmbeddedBBQFlatIndex
+
+    directory = config.get("directory")
+    if not directory:
+        raise ValueError("embedded_bbq_flat requires directory")
+    return EmbeddedBBQFlatIndex.load(directory, mmap=bool(config.get("mmap", True)))
+
+
+registry.register("retriever", "embedded_bbq_flat", _bbq_factory)
