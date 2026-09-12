@@ -31,4 +31,13 @@ export async function getHealth() {
   return data
 }
 
+export async function inspectExcel(file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await api.post('/excel/inspect', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
 export default api
