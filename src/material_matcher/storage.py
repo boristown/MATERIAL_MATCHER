@@ -38,8 +38,10 @@ class RuntimeStorage:
         self.uploads_dir = self.data_dir / "tmp" / "uploads"
         self.tasks_dir = self.data_dir / "tasks"
         self.results_dir = self.data_dir / "results"
+        self.catalogs_dir = self.data_dir / "catalogs"
+        self.indexes_dir = self.data_dir / "indexes"
         self.profiles_dir = self.config_dir / "profiles"
-        for path in (self.uploads_dir, self.tasks_dir, self.results_dir, self.profiles_dir):
+        for path in (self.uploads_dir, self.tasks_dir, self.results_dir, self.catalogs_dir, self.indexes_dir, self.profiles_dir):
             path.mkdir(parents=True, exist_ok=True)
 
     def save_upload(self, original_name: str, payload: bytes, role: str) -> UploadRecord:
@@ -107,6 +109,49 @@ class RuntimeStorage:
                 deleted += 1
         return {"deleted": deleted, "bytes_deleted": bytes_deleted}
 
+    def create_catalog_from_upload(self, name: str, upload: UploadRecord) -> dict[str, Any]:
+        catalog_id = f"{_safe_name(name, 'catalog')}-{int(time.time() * 1000)}"
+        root = self.catalogs_dir / catalog_id
+        root.mkdir(parents=True, exist_ok=False)
+        suffix = Path(upload.original_name).suffix.lower() or ".xlsx"
+        data_path = root / f"source{suffix}"
+        shutil.copy2(upload.path, data_path)
+        metadata = {
+            "catalog_id": catalog_id,
+            "name": name,
+            "original_name": upload.original_name,
+            "size": data_path.stat().st_size,
+            "created_at": time.time(),
+            "path": str(data_path),
+            "index_status": "NOT_BUILT",
+        }
+        self._write_json(root / "catalog.json", metadata)
+        return metadata
+
+    def list_catalogs(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for meta in self.catalogs_dir.glob("*/catalog.json"):
+            try:
+                items.append(json.loads(meta.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+        return sorted(items, key=lambda item: item.get("created_at", 0), reverse=True)
+
+    def get_catalog(self, catalog_id: str) -> dict[str, Any]:
+        path = self.catalogs_dir / _safe_name(catalog_id) / "catalog.json"
+        if not path.exists():
+            raise FileNotFoundError(catalog_id)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not Path(data.get("path", "")).exists():
+            raise FileNotFoundError(data.get("path", ""))
+        return data
+
+    def update_catalog(self, catalog_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        current = self.get_catalog(catalog_id)
+        current.update(changes)
+        self._write_json(self.catalogs_dir / _safe_name(catalog_id) / "catalog.json", current)
+        return current
+
     def publish_profile(self, name: str, document: dict[str, Any]) -> dict[str, Any]:
         profile_name = _safe_name(name, "profile")
         profile_dir = self.profiles_dir / profile_name
@@ -123,6 +168,7 @@ class RuntimeStorage:
             "version": version_name.removesuffix(".yaml"),
             "published_at": time.time(),
             "path": str(current_path),
+            "catalog_id": document.get("runtime", {}).get("target_catalog_id"),
         }
         self._write_json(profile_dir / "current.json", metadata)
         return metadata
