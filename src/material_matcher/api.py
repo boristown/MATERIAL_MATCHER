@@ -124,8 +124,6 @@ def _profile_document(name: str, description: str, config: MatchConfigPayload) -
         },
         "retrieval": {"backend": "auto", "candidate_limit": config.candidate_limit},
         "output": {"format": "xlsx", "top_n": config.top_n},
-        # Transitional executable representation. The engine consumes the same
-        # data-driven rules while the full profile compiler is implemented.
         "runtime": {"match_config": cfg},
     }
     ProfileDocument.model_validate(document)
@@ -366,6 +364,3 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     return app
-
-
-app = create_app()
