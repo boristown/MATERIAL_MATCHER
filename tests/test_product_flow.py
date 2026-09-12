@@ -74,6 +74,7 @@ def test_product_flow(tmp_path: Path) -> None:
         "review_threshold": 0.75,
         "top_n": 5,
         "candidate_limit": 50,
+        "group_mode": "global",
     }
     dry = client.post(
         "/api/wizard/dry-run",
@@ -83,13 +84,23 @@ def test_product_flow(tmp_path: Path) -> None:
     assert dry.status_code == 200
     assert dry.json()["summary"]["matched"] == 1
 
-    published = client.post("/api/profiles/publish", json={"name": "demo", "description": "test", "config": config}, headers=headers)
+    published = client.post(
+        "/api/profiles/publish",
+        json={"name": "demo", "description": "test", "config": config, "target_file_id": target_id},
+        headers=headers,
+    )
     assert published.status_code == 200
     assert published.json()["name"] == "demo"
+    assert published.json()["catalog_id"]
 
+    catalogs = client.get("/api/catalogs", headers=headers)
+    assert catalogs.status_code == 200
+    assert len(catalogs.json()) == 1
+
+    # A published profile must be reusable without re-uploading the target catalog.
     created = client.post(
         "/api/tasks",
-        json={"profile_name": "demo", "source_file_id": source_id, "target_file_id": target_id},
+        json={"profile_name": "demo", "source_file_id": source_id},
         headers=headers,
     )
     assert created.status_code == 200
