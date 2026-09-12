@@ -23,6 +23,10 @@ export type MatchConfig = {
   review_threshold?: number | null
   top_n: number
   candidate_limit: number
+  group_mode: 'global' | 'strict' | 'mapped'
+  source_group_column?: string | null
+  target_group_column?: string | null
+  group_mapping?: Record<string, string[]>
 }
 
 export function setToken(token: string | null) {
@@ -74,8 +78,13 @@ export async function dryRun(sourceFileId: string, targetFileId: string, config:
   return data
 }
 
-export async function publishProfile(name: string, description: string, config: MatchConfig) {
-  const { data } = await api.post('/profiles/publish', { name, description, config })
+export async function publishProfile(name: string, description: string, config: MatchConfig, targetFileId?: string) {
+  const { data } = await api.post('/profiles/publish', {
+    name,
+    description,
+    config,
+    target_file_id: targetFileId ?? null,
+  })
   return data
 }
 
@@ -89,11 +98,16 @@ export async function listProfileVersions(name: string) {
   return data
 }
 
-export async function createTask(profileName: string, sourceFileId: string, targetFileId: string) {
+export async function listCatalogs() {
+  const { data } = await api.get('/catalogs')
+  return data
+}
+
+export async function createTask(profileName: string, sourceFileId: string, targetFileId?: string) {
   const { data } = await api.post('/tasks', {
     profile_name: profileName,
     source_file_id: sourceFileId,
-    target_file_id: targetFileId,
+    target_file_id: targetFileId ?? null,
   })
   return data
 }
