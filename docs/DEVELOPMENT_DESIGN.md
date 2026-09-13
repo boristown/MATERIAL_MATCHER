@@ -1,7 +1,7 @@
 # 物料集团码匹配引擎开发设计书
 
-> 文档版本：2.0（可开发基线）  
-> 日期：2026-09-12  
+> 文档版本：2.2（可开发基线）  
+> 日期：2026-09-13  
 > 文档定位：业务评审、详细设计、前后端开发、测试验收和现场部署的统一入口。  
 > 产品名称：**物料集团码匹配引擎**。
 
@@ -12,7 +12,7 @@
 - [`ACCURACY_AND_DELIVERY_BASELINE.md`](./ACCURACY_AND_DELIVERY_BASELINE.md)：13 所公开样例准确性核对、当前 MVP 与正式规范的差异、开发顺序和完成定义；
 - [`OPERATION_UI_DESIGN.md`](./OPERATION_UI_DESIGN.md)：业务操作界面专项设计。
 
-如有冲突，以强制附件中的定义优先。
+如有冲突，以强制附件中的定义优先。UI 相关定义必须以 `OPERATION_UI_DESIGN.md` 与 `API_UI_DEPLOYMENT_CONTRACT.md` 第 44 章的共同约束为准；两者必须保持一致，禁止开发人员自行选择不同版本。
 
 ## 1. 产品目标
 
@@ -273,25 +273,52 @@ RECOVERING
 
 前端固定使用 Vue 3 + TypeScript + Element Plus，生产包提前构建成静态资源。
 
-必须提供路由：
+### 15.1 一级导航
+
+左侧一级导航**只能有 4 项**：
+
+```text
+匹配任务
+匹配方案
+数据配置
+系统设置
+```
+
+不设置独立首页。登录成功后直接进入 `/tasks`。
+
+以下能力不得做成一级菜单：
+
+```text
+匹配处理
+结果管理
+人工复核记录
+临时文件管理
+集团码目录版本
+试跑记录
+发布管理
+```
+
+### 15.2 正式路由
 
 ```text
 /login
-/
 /tasks
+/tasks/new
 /tasks/:taskId
+/tasks/:taskId/workbench
+/tasks/:taskId/items/:sourceRowId
 /profiles
-/profiles/new
-/profiles/:profileId/edit
-/catalogs
-/catalogs/:catalogId
-/dictionaries
-/reviews
-/temp-files
-/system
+/profiles/new?step=1
+/profiles/:profileId/edit?step=1..7
+/data?tab=catalogs|templates|dictionaries|indexes
+/system?tab=service|storage|temp|diagnostics
 ```
 
-配置向导固定 7 步：
+匹配结果工作台属于具体任务的子页面；候选对比属于工作台下钻页面；临时文件属于系统设置页签；试跑和发布属于方案配置过程。
+
+### 15.3 配置向导
+
+固定 7 步：
 
 ```text
 1 客户物料
@@ -303,16 +330,38 @@ RECOVERING
 7 发布方案
 ```
 
-权重页面只显示数字，不使用“低/中/高/很高”。
+字段对应正式开发采用**可编辑映射表**，不以复杂拖拽连线画布作为强制实现。
 
-字段权重界面必须同时显示：
+字段映射表固定包含：
 
-- 0~100 数字输入；
-- 滑块；
-- 自动归一化占比；
-- 关键字段设置。
+```text
+客户字段组合
+集团字段组合
+组合方式
+匹配方式
+权重
+关键字段
+```
 
-详细 UI 行为见强制附件。
+权重只显示 `0~100` 数字，不使用“低/中/高/很高”。
+
+### 15.4 匹配结果工作台
+
+必须支持老板反馈的高效人工处理流程：
+
+- 第一候选分筛选；
+- 第二候选分筛选；
+- 第一/第二候选分差筛选；
+- 关键字段冲突筛选；
+- 90 分以上且无冲突快捷筛选；
+- 80～90 分快捷筛选；
+- 分差小于 5 快捷筛选；
+- 批量确认第一候选；
+- 已确认记录从“仅看未处理”视图移除。
+
+候选详情默认采用**单候选完整详情 + TopN 标签切换**，不强制三候选横向并排，避免真实字段较多时不可读。
+
+详细 UI 行为以强制附件第 44 章为准。
 
 ## 16. 登录与安全
 
