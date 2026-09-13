@@ -11,6 +11,8 @@
 - 换客户、换表头、换字段、换权重、换阈值、换物料类别，不修改底层程序。
 - 物料类别和各类别的匹配规则属于业务配置，不作为底层固定枚举。
 - 普通业务用户通过图形化向导配置，不直接接触技术配置文件。
+- 日常操作统一为一条五步主流程：`选择数据 → 确认匹配规则 → 比对计算 → 人工处理 → 生成结果`，普通用户只进入“匹配任务”即可完成全过程。
+- 匹配方案只是可复用模板，不是运行任务的强制前置条件。
 - 字段重要程度统一使用 `0～100` 数字权重，并实时显示系统归一化后的实际占比。
 - 采用 B/S 架构，目标服务器为银河麒麟 Linux V10，无 Docker 也可完全离线一键安装。
 - 集团侧百万级数据优先使用单比特向量压缩进行高速候选召回，再结合字段规则进行精排。
@@ -33,12 +35,13 @@
 ## 文档
 
 - [物料集团码匹配引擎开发设计书](docs/DEVELOPMENT_DESIGN.md)
+- [业务操作界面专项设计 v2.5](docs/OPERATION_UI_DESIGN.md)
+- [v2.5 五步任务主流程补充规范](docs/TASK_FLOW_V25_SUPPLEMENT.md)
 - [Embedding 模型与批量性能设计](docs/EMBEDDING_AND_PERFORMANCE_DESIGN.md)
 - [单比特向量索引与高速批量匹配设计](docs/VECTOR_INDEX_DESIGN.md)
 - [开发实施强制规范](docs/IMPLEMENTATION_CONTRACT.md)
 - [v2.4 Embedding 与性能实施补充](docs/IMPLEMENTATION_CONTRACT_V24_SUPPLEMENT.md)
 - [核心函数、接口、UI、部署与验收规范](docs/API_UI_DEPLOYMENT_CONTRACT.md)
-- [业务操作界面专项设计](docs/OPERATION_UI_DESIGN.md)
 - [项目背景与设计约束](docs/PROJECT_BACKGROUND.md)
 - [零代码客户适配设计](docs/ZERO_CODE_ADAPTATION_DESIGN.md)
 - [插件化架构设计](docs/PLUGIN_ARCHITECTURE.md)
