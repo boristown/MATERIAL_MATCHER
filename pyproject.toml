@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "material-matcher"
+version = "0.3.0"
+description = "Configurable material group-code matching engine"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.115,<1","uvicorn>=0.30,<1","pydantic>=2.8,<3","openpyxl>=3.1,<4","python-multipart>=0.0.12,<1"]
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "httpx>=0.27,<1"]
+[project.scripts]
+material-matcher = "material_matcher.cli:main"
+[tool.setuptools]
+package-dir = {"" = "src"}
+[tool.setuptools.packages.find]
+where = ["src"]
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

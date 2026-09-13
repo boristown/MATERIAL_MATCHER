@@ -1,0 +1,36 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import os
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Settings:
+    data_dir: Path
+    config_dir: Path
+    log_dir: Path
+    admin_password: str
+    session_ttl_seconds: int = 28_800
+    max_upload_bytes: int = 120 * 1024 * 1024
+    max_total_upload_bytes: int = 2 * 1024 * 1024 * 1024
+    chunk_size_bytes: int = 8 * 1024 * 1024
+
+    @classmethod
+    def load(cls) -> "Settings":
+        return cls(
+            data_dir=Path(os.getenv("MATERIAL_MATCHER_DATA_DIR", "/var/lib/material_matcher")),
+            config_dir=Path(os.getenv("MATERIAL_MATCHER_CONFIG_DIR", "/etc/material_matcher")),
+            log_dir=Path(os.getenv("MATERIAL_MATCHER_LOG_DIR", "/var/log/material_matcher")),
+            admin_password=os.getenv("MATERIAL_MATCHER_ADMIN_PASSWORD", ""),
+        )
+
+    def ensure_dirs(self) -> None:
+        for path in (
+            self.data_dir / "meta",
+            self.data_dir / "uploads",
+            self.data_dir / "tmp",
+            self.data_dir / "results",
+            self.log_dir,
+        ):
+            path.mkdir(parents=True, exist_ok=True)
