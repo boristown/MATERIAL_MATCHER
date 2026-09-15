@@ -30,6 +30,69 @@ def _preview(value: object) -> str:
     return "" if value is None else str(value)[:120]
 
 
+def _dictionary_map(before: object, options: dict[str, object]) -> object:
+    if before is None:
+        return None
+    mapping_raw = options.get("mapping")
+    if not isinstance(mapping_raw, Mapping):
+        raise DomainError(
+            "DICTIONARY_NOT_MATERIALIZED",
+            "业务字典尚未解析为运行时映射，请检查字典版本配置",
+            status_code=409,
+        )
+    mapping = {str(key): str(value) for key, value in mapping_raw.items()}
+    text = str(before)
+    case_sensitive = bool(options.get("case_sensitive", True))
+    mode = str(options.get("mode", "exact"))
+    on_missing = str(options.get("on_missing", "keep"))
+
+    if mode == "exact":
+        if case_sensitive:
+            if text in mapping:
+                return mapping[text]
+        else:
+            lowered = {key.lower(): value for key, value in mapping.items()}
+            if text.lower() in lowered:
+                return lowered[text.lower()]
+        if on_missing == "keep":
+            return before
+        if on_missing == "null":
+            return None
+        raise DomainError(
+            "PROCESSING_PIPELINE_INVALID",
+            "dictionary_map 的 on_missing 必须为 keep 或 null",
+            status_code=422,
+        )
+
+    if mode == "replace":
+        if not mapping:
+            return before
+        keys = sorted(mapping, key=len, reverse=True)
+        flags = 0 if case_sensitive else re.IGNORECASE
+        pattern = re.compile("|".join(re.escape(key) for key in keys), flags)
+        if case_sensitive:
+            return pattern.sub(lambda match: mapping[match.group(0)], text)
+        lowered = {key.lower(): value for key, value in mapping.items()}
+        return pattern.sub(lambda match: lowered[match.group(0).lower()], text)
+
+    raise DomainError(
+        "PROCESSING_PIPELINE_INVALID",
+        "dictionary_map 的 mode 必须为 exact 或 replace",
+        status_code=422,
+    )
+
+
+def _trace_options(operator: str, options: dict[str, object]) -> dict[str, object]:
+    if operator != "dictionary_map":
+        return options
+    # Do not duplicate a potentially large dictionary in every candidate trace.
+    return {
+        key: value
+        for key, value in options.items()
+        if key not in {"mapping"}
+    }
+
+
 def apply_processing_pipeline(
     input_value: object,
     steps: Sequence[Mapping[str, Any]] | None,
@@ -38,6 +101,9 @@ def apply_processing_pipeline(
 
     An absent/empty pipeline is exactly identity. Text such as ``88`` or
     ``N/A`` is never treated as missing unless a ``nullify`` step asks for it.
+    Dictionary behavior is also explicit: a ``dictionary_map`` step must be
+    present and its referenced immutable version must be materialized by the
+    service layer before matching.
     """
 
     current = ProcessedValue(
@@ -102,6 +168,8 @@ def apply_processing_pipeline(
             start = int(options.get("start", 0))
             end = options.get("end")
             after = None if text is None else text[start : int(end) if end is not None else None]
+        elif operator == "dictionary_map":
+            after = _dictionary_map(before, options)
         else:
             raise DomainError(
                 "PROCESSING_OPERATOR_NOT_FOUND",
@@ -115,7 +183,7 @@ def apply_processing_pipeline(
         current.trace.append(
             TraceItem(
                 operator=operator,
-                options=options,
+                options=_trace_options(operator, options),
                 input_preview=_preview(before),
                 output_preview=_preview(after),
             )
