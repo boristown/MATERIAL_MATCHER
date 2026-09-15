@@ -22,6 +22,7 @@ from material_matcher.ingestion.inspector import inspect_tabular_file
 from material_matcher.security.session import SessionStore
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
+from material_matcher.services.catalog_service import CatalogService
 from material_matcher.services.match_service import MatchService
 from material_matcher.services.profile_service import ProfileService
 from material_matcher.services.task_service import TaskService
@@ -57,6 +58,12 @@ class CatalogCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     source_file_id: str
     group_code_column: str = Field(min_length=1, max_length=200)
+
+
+class CatalogVersionCreate(BaseModel):
+    source_file_id: str
+    group_code_column: str = Field(min_length=1, max_length=200)
+    activate: bool = False
 
 
 class ProfileCreate(BaseModel):
@@ -133,6 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     cfg.ensure_dirs()
     metadata = MetadataRepository(cfg.data_dir / "meta" / "material_matcher.db")
     files = FileRepository(cfg.data_dir, metadata)
+    catalogs = CatalogService(metadata, files)
     tasks = TaskService(metadata)
     profiles = ProfileService(metadata)
     matches = MatchService(metadata, files, cfg)
@@ -154,14 +162,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="MATERIAL_MATCHER", version=__version__, docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
 
     def get_catalog_version(version_id: str) -> dict[str, object]:
-        with metadata.connect() as connection:
-            row = connection.execute(
-                "SELECT c.name, v.* FROM catalog_versions v JOIN catalogs c ON c.catalog_id=v.catalog_id WHERE v.version_id=?",
-                (version_id,),
-            ).fetchone()
-        if row is None:
-            raise DomainError("CATALOG_NOT_FOUND", "集团码目录版本不存在", status_code=404)
-        return dict(row)
+        return catalogs.version(version_id)
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
@@ -277,24 +278,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/catalogs")
     def create_catalog(payload: CatalogCreate) -> dict[str, object]:
-        file_record=files.get(payload.source_file_id)
-        if file_record["role"] != "target": raise DomainError("INVALID_FILE_ROLE", "集团码目录必须使用 target 文件", status_code=422)
-        inspection=inspect_tabular_file(Path(str(file_record["stored_path"])))
-        recommended=next((sheet for sheet in inspection["sheets"] if sheet["sheet_name"] == inspection["recommended_sheet"]),None)
-        headers={column["header"] for column in (recommended or {}).get("columns",[])}
-        if payload.group_code_column not in headers: raise DomainError("COLUMN_NOT_FOUND",f"集团码字段“{payload.group_code_column}”不存在",status_code=422)
-        catalog_id=uuid.uuid4().hex; version_id=uuid.uuid4().hex; created_at=_now()
-        with metadata.connect() as connection:
-            connection.execute("INSERT INTO catalogs VALUES(?,?,?)",(catalog_id,payload.name,created_at)); connection.execute("INSERT INTO catalog_versions VALUES(?,?,?,?,?,?,?)",(version_id,catalog_id,payload.source_file_id,payload.group_code_column,"READY",1,created_at))
-        return get_catalog_version(version_id)
+        return catalogs.create(payload.name, payload.source_file_id, payload.group_code_column)
 
     @app.get("/api/catalogs")
     def list_catalogs() -> list[dict[str, object]]:
-        with metadata.connect() as connection: rows=connection.execute("SELECT c.name, v.* FROM catalog_versions v JOIN catalogs c ON c.catalog_id=v.catalog_id ORDER BY v.created_at DESC").fetchall()
-        return [dict(row) for row in rows]
+        return catalogs.list_versions()
 
     @app.get("/api/catalogs/versions/{version_id}")
-    def get_catalog(version_id: str) -> dict[str, object]: return get_catalog_version(version_id)
+    def get_catalog(version_id: str) -> dict[str, object]:
+        return catalogs.version(version_id)
+
+    @app.get("/api/catalogs/{catalog_id}/versions")
+    def catalog_versions(catalog_id: str) -> list[dict[str, object]]:
+        return catalogs.versions(catalog_id)
+
+    @app.post("/api/catalogs/{catalog_id}/versions")
+    def create_catalog_version(catalog_id: str, payload: CatalogVersionCreate) -> dict[str, object]:
+        return catalogs.add_version(
+            catalog_id,
+            source_file_id=payload.source_file_id,
+            group_code_column=payload.group_code_column,
+            activate=payload.activate,
+        )
+
+    @app.post("/api/catalogs/{catalog_id}/versions/{version_id}/activate")
+    def activate_catalog_version(catalog_id: str, version_id: str) -> dict[str, object]:
+        return catalogs.activate(catalog_id, version_id)
 
     @app.get("/api/profiles")
     def list_profiles() -> list[dict[str, object]]: return profiles.list()
@@ -461,5 +470,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
         }
 
-    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
