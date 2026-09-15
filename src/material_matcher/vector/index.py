@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
@@ -18,6 +18,10 @@ from material_matcher.embedding.base import EmbeddingProvider, normalize_embeddi
 from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.embedding.text import build_retrieval_text, retrieval_text_signature
 
+# Portable popcount table. The target vectors remain packed throughout the coarse
+# scan; this avoids expanding an N x dimensions sign matrix for every query.
+_POPCOUNT_LUT = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).sum(axis=1).astype(np.uint8)
+
 
 @dataclass(frozen=True)
 class VectorHit:
@@ -33,10 +37,13 @@ class BuildStats:
 
 
 class EmbeddedBBQFlatIndex:
-    """1-bit Target + 4-bit Query coarse search with int8 candidate rerank.
+    """1-bit Target + signed 4-bit Query coarse search with int8 rerank.
 
-    The hot path is block-vectorized with NumPy. It never creates a Source×Target
-    matrix and never requires all float32 Target embeddings to exist at once.
+    Target signs are persisted as one packed bit per dimension. Query values are
+    normalized and quantized to signed magnitude [-7, 7] (one sign bit + three
+    magnitude bit-planes). The coarse dot product is evaluated directly against
+    packed Target bytes with XOR/AND + a uint8 popcount LUT. No Target `unpackbits`
+    or Source x Target matrix is created in the query hot path.
     """
 
     METADATA_FILE = "metadata.json"
@@ -45,6 +52,7 @@ class EmbeddedBBQFlatIndex:
     RECORDS_FILE = "records.jsonl"
     OFFSETS_FILE = "records.offsets.u64"
     POSTINGS_FILE = "scope.postings.json"
+    COARSE_KERNEL = "packed_popcount_lut_q4_v1"
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -89,7 +97,9 @@ class EmbeddedBBQFlatIndex:
         target_signature = retrieval_text_signature(config, "target")
         postings: dict[str, list[int]] = {}
         scope_field = config.scope.target_field if config.scope_mode != "GLOBAL" else None
-        row_count = 0; cache_hits = 0; cache_misses = 0
+        row_count = 0
+        cache_hits = 0
+        cache_misses = 0
 
         def flush_batch(batch: list[dict[str, object]], bits_stream, int8_stream, records_stream, offsets_stream) -> None:
             nonlocal row_count, cache_hits, cache_misses
@@ -97,12 +107,11 @@ class EmbeddedBBQFlatIndex:
                 return
             texts = [build_retrieval_text(row, config, "target") for row in batch]
             vectors, stats = cache.get_or_embed(texts, target_signature, embedding_batch_size)
-            cache_hits += stats.hits; cache_misses += stats.misses
+            cache_hits += stats.hits
+            cache_misses += stats.misses
             vectors = normalize_embeddings(vectors)
-            packed = np.packbits(vectors >= 0.0, axis=1, bitorder="little")
-            packed.tofile(bits_stream)
-            quantized = np.clip(np.rint(vectors * 127.0), -127, 127).astype(np.int8)
-            quantized.tofile(int8_stream)
+            np.packbits(vectors >= 0.0, axis=1, bitorder="little").tofile(bits_stream)
+            np.clip(np.rint(vectors * 127.0), -127, 127).astype(np.int8).tofile(int8_stream)
             for row in batch:
                 offsets_stream.write(struct.pack("<Q", records_stream.tell()))
                 records_stream.write((json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
@@ -137,20 +146,21 @@ class EmbeddedBBQFlatIndex:
                     code = row.get(group_code_column)
                     if code is None or str(code) == "":
                         continue
-                    text = build_retrieval_text(row, config, "target")
-                    if text == "":
+                    if build_retrieval_text(row, config, "target") == "":
                         continue
                     batch.append(row)
                     if len(batch) >= embedding_batch_size:
-                        flush_batch(batch, bits_stream, int8_stream, records_stream, offsets_stream); batch = []
+                        flush_batch(batch, bits_stream, int8_stream, records_stream, offsets_stream)
+                        batch = []
                 flush_batch(batch, bits_stream, int8_stream, records_stream, offsets_stream)
             if row_count == 0:
                 raise DomainError("INDEX_EMPTY", "集团目录没有可用于向量索引的有效记录", status_code=422)
             (temporary / cls.POSTINGS_FILE).write_text(json.dumps(postings, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             full_metadata = {
                 **metadata,
-                "format_version": 1,
+                "format_version": 2,
                 "algorithm": "embedded_bbq_flat",
+                "coarse_kernel": cls.COARSE_KERNEL,
                 "row_count": row_count,
                 "dimensions": provider.spec.dimensions,
                 "target_bits": 1,
@@ -173,20 +183,55 @@ class EmbeddedBBQFlatIndex:
             raise
         return cls(final_root), BuildStats(row_count=row_count, cache_hits=cache_hits, cache_misses=cache_misses)
 
+    @staticmethod
+    def quantize_query(query_vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        query = normalize_embeddings(np.asarray(query_vector, dtype=np.float32).reshape(1, -1))[0]
+        scale = max(float(np.max(np.abs(query))), 1e-12)
+        query_q4 = np.clip(np.rint(query / scale * 7.0), -7, 7).astype(np.int8)
+        return query, query_q4
+
+    @staticmethod
+    def _pack_query(query_q4: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        values = np.asarray(query_q4, dtype=np.int8)
+        magnitude = np.abs(values).astype(np.uint8)
+        sign_packed = np.packbits(values >= 0, bitorder="little")
+        planes = np.stack(
+            [np.packbits(((magnitude >> bit) & 1).astype(np.uint8), bitorder="little") for bit in range(3)],
+            axis=0,
+        )
+        active_counts = np.asarray([int(_POPCOUNT_LUT[plane].sum(dtype=np.int64)) for plane in planes], dtype=np.int32)
+        return sign_packed, planes, active_counts
+
+    @staticmethod
+    def _coarse_scores_packed(
+        target_packed: np.ndarray,
+        sign_packed: np.ndarray,
+        magnitude_planes: np.ndarray,
+        active_counts: np.ndarray,
+    ) -> np.ndarray:
+        packed = np.asarray(target_packed, dtype=np.uint8)
+        if packed.ndim != 2:
+            raise ValueError("target packed bits must be a 2D array")
+        sign_diff = np.bitwise_xor(packed, sign_packed)
+        scores = np.zeros(packed.shape[0], dtype=np.int32)
+        for bit in range(3):
+            plane = magnitude_planes[bit]
+            mismatches = _POPCOUNT_LUT[np.bitwise_and(sign_diff, plane)].sum(axis=1, dtype=np.int32)
+            scores += (int(active_counts[bit]) - (mismatches << 1)) * (1 << bit)
+        return scores
+
     def _coarse_scores(self, row_ids: np.ndarray, query_q4: np.ndarray) -> np.ndarray:
+        sign_packed, magnitude_planes, active_counts = self._pack_query(query_q4)
         packed = np.asarray(self._bits[row_ids])
-        unpacked = np.unpackbits(packed, axis=1, count=self.dimensions, bitorder="little").astype(np.int16)
-        signs = unpacked * 2 - 1
-        return signs @ query_q4.astype(np.int16)
+        return self._coarse_scores_packed(packed, sign_packed, magnitude_planes, active_counts)
 
     def search(self, query_vector: np.ndarray, top_k: int, *, candidate_ids: Sequence[int] | None = None, oversample: int | None = None) -> list[VectorHit]:
         if top_k <= 0 or self.row_count <= 0:
             return []
-        query = normalize_embeddings(np.asarray(query_vector, dtype=np.float32).reshape(1, -1))[0]
+        query, query_q4 = self.quantize_query(query_vector)
         if query.shape[0] != self.dimensions:
             raise ValueError("query embedding dimension mismatch")
-        query_scale = max(float(np.max(np.abs(query))), 1e-12)
-        query_q4 = np.clip(np.rint(query / query_scale * 7.0), -7, 7).astype(np.int8)
+        sign_packed, magnitude_planes, active_counts = self._pack_query(query_q4)
         active_oversample = max(1, int(oversample or self.oversample))
         coarse_keep = max(top_k, top_k * active_oversample)
         candidate_chunks: list[np.ndarray] = []
@@ -195,18 +240,24 @@ class EmbeddedBBQFlatIndex:
         total = len(ids_array) if ids_array is not None else self.row_count
         for start in range(0, total, self.block_rows):
             if ids_array is None:
-                block_ids = np.arange(start, min(total, start + self.block_rows), dtype=np.int64)
+                stop = min(total, start + self.block_rows)
+                block_ids = np.arange(start, stop, dtype=np.int64)
+                # Sequential mmap slice avoids a fancy-index copy on global scans.
+                packed = np.asarray(self._bits[start:stop])
             else:
                 block_ids = ids_array[start : start + self.block_rows]
+                packed = np.asarray(self._bits[block_ids])
             if block_ids.size == 0:
                 continue
-            block_scores = self._coarse_scores(block_ids, query_q4)
+            block_scores = self._coarse_scores_packed(packed, sign_packed, magnitude_planes, active_counts)
             keep = min(coarse_keep, block_ids.size)
             local = np.argpartition(block_scores, -keep)[-keep:] if keep < block_ids.size else np.arange(block_ids.size)
-            candidate_chunks.append(block_ids[local]); score_chunks.append(block_scores[local])
+            candidate_chunks.append(block_ids[local])
+            score_chunks.append(block_scores[local])
         if not candidate_chunks:
             return []
-        coarse_ids = np.concatenate(candidate_chunks); coarse_scores = np.concatenate(score_chunks)
+        coarse_ids = np.concatenate(candidate_chunks)
+        coarse_scores = np.concatenate(score_chunks)
         keep = min(coarse_keep, coarse_ids.size)
         if keep < coarse_ids.size:
             selection = np.argpartition(coarse_scores, -keep)[-keep:]
@@ -221,7 +272,8 @@ class EmbeddedBBQFlatIndex:
             raise IndexError(row_id)
         offset = int(self._offsets[row_id])
         with (self.root / self.RECORDS_FILE).open("rb") as stream:
-            stream.seek(offset); line = stream.readline()
+            stream.seek(offset)
+            line = stream.readline()
         return json.loads(line.decode("utf-8"))
 
     def records(self, row_ids: Sequence[int]) -> dict[int, dict[str, object]]:
