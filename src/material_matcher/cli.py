@@ -10,6 +10,7 @@ from material_matcher.api.app import create_app
 from material_matcher.api.frontend import attach_frontend
 from material_matcher.domain.errors import DomainError
 from material_matcher.services.benchmark_service import BenchmarkService
+from material_matcher.services.deployment_service import deployment_diagnostics
 from material_matcher.settings import Settings
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -40,6 +41,11 @@ def main() -> None:
     serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=18080)
 
+    doctor = subparsers.add_parser("doctor", help="检查正式部署目录、版本链、前端与 Embedding readiness")
+    doctor.add_argument("--require-frontend", action="store_true")
+    doctor.add_argument("--require-embedding", action="store_true")
+    doctor.add_argument("--require-release-manifest", action="store_true")
+
     benchmark = subparsers.add_parser("benchmark", help="运行可重复性能基准")
     benchmark_sub = benchmark.add_subparsers(dest="benchmark_kind", required=True)
     embedding = benchmark_sub.add_parser("embedding", help="使用已安装的正式 Embedding Provider 测吞吐")
@@ -56,6 +62,18 @@ def main() -> None:
         host = getattr(args, "host", "0.0.0.0")
         port = getattr(args, "port", 18080)
         _serve(host, port)
+        return
+
+    if args.command == "doctor":
+        result = deployment_diagnostics(
+            Settings.load(),
+            require_frontend=bool(args.require_frontend),
+            require_embedding=bool(args.require_embedding),
+            require_release_manifest=bool(args.require_release_manifest),
+        )
+        _print(result)
+        if not result["ok"]:
+            raise SystemExit(2)
         return
 
     service = _benchmark_service()
