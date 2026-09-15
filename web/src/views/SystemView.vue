@@ -4,7 +4,10 @@ import { ElMessage } from 'element-plus'
 import { api } from '../api'
 
 type VectorStatus = {
-  embedding: { provider: string; model_id: string; dimensions: number; max_length: number; precision: string; model_dir: string; runtime_installed: boolean; model_installed: boolean; ready: boolean }
+  embedding: {
+    provider: string; model_id: string; dimensions: number; max_length: number; precision: string; model_dir: string;
+    runtime_installed: boolean; model_installed: boolean; ready: boolean; batch_size?: number; token_budget?: number
+  }
   indexes: { counts: Record<string, number>; latest: any | null; index_dir: string }
   cache_dir: string
 }
@@ -40,7 +43,8 @@ async function runEmbeddingBenchmark(): Promise<void> {
   embeddingBusy.value = true
   try {
     const response = await api.post('/system/benchmarks/embedding', { sample_count: 1000 })
-    ElMessage.success(`Embedding 基准完成：${response.data.metrics.throughput_rows_per_second} 条/秒`)
+    const profile = response.data.metrics.token_length_profile
+    ElMessage.success(`Embedding：${response.data.metrics.throughput_rows_per_second} 条/秒，建议 max_length=${profile?.recommended_max_length ?? '-'}`)
     await refresh()
   } catch (error) {
     ElMessage.error((error as Error).message)
@@ -89,12 +93,15 @@ onMounted(refresh)
         <el-descriptions-item label="模型">{{ vector.embedding.model_id }}</el-descriptions-item>
         <el-descriptions-item label="维度">{{ vector.embedding.dimensions }}</el-descriptions-item>
         <el-descriptions-item label="最大长度">{{ vector.embedding.max_length }}</el-descriptions-item>
+        <el-descriptions-item label="最大 Batch">{{ vector.embedding.batch_size ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="Token Budget">{{ vector.embedding.token_budget ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="精度">{{ vector.embedding.precision }}</el-descriptions-item>
         <el-descriptions-item label="Runtime">{{ vector.embedding.runtime_installed ? '已安装' : '未安装' }}</el-descriptions-item>
         <el-descriptions-item label="模型文件">{{ vector.embedding.model_installed ? '已安装' : '未安装' }}</el-descriptions-item>
         <el-descriptions-item label="模型目录">{{ vector.embedding.model_dir }}</el-descriptions-item>
       </el-descriptions>
       <el-alert v-if="vector && !vector.embedding.ready" title="向量核心已安装，但正式语义匹配需要离线安装 ONNX Runtime、tokenizers 和 bge-base-zh-v1.5 模型文件。系统不会使用测试向量冒充生产模型。" type="warning" :closable="false"/>
+      <el-alert v-else-if="vector" title="正式 Embedding 基准会统计 token P50/P95/P99/P99.9、不同 max_length 截断率和 padding efficiency，用于现场选择 128/192/256/512，而不是固定拍脑袋。" type="info" :closable="false"/>
       <div class="actions"><el-button :loading="embeddingBusy" :disabled="!vector?.embedding.ready" @click="runEmbeddingBenchmark">运行正式 Embedding 基准</el-button><el-button :loading="vectorBusy" @click="runVectorBenchmark">运行 BBQ 内核基准</el-button></div>
     </div>
 
@@ -118,8 +125,10 @@ onMounted(refresh)
         <el-table-column prop="kind" label="类型" width="140"/>
         <el-table-column prop="status" label="状态" width="100"/>
         <el-table-column prop="started_at" label="时间" min-width="180"/>
-        <el-table-column label="吞吐" min-width="180"><template #default="scope"><span v-if="scope.row.kind==='embedding'">{{ scope.row.metrics?.throughput_rows_per_second ?? '-' }} 条/秒</span><span v-else>{{ scope.row.metrics?.search_queries_per_second ?? '-' }} 查询/秒</span></template></el-table-column>
-        <el-table-column label="预计/范围" min-width="220"><template #default="scope"><span v-if="scope.row.kind==='embedding'">110万条约 {{ scope.row.metrics?.projected_1_100_000_rows_hours ?? '-' }} 小时</span><span v-else>synthetic vector kernel</span></template></el-table-column>
+        <el-table-column label="吞吐" min-width="160"><template #default="scope"><span v-if="scope.row.kind==='embedding'">{{ scope.row.metrics?.throughput_rows_per_second ?? '-' }} 条/秒</span><span v-else>{{ scope.row.metrics?.search_queries_per_second ?? '-' }} 查询/秒</span></template></el-table-column>
+        <el-table-column label="Token P99 / 建议长度" min-width="180"><template #default="scope"><span v-if="scope.row.kind==='embedding'">P99 {{ scope.row.metrics?.token_length_profile?.p99 ?? '-' }} / {{ scope.row.metrics?.token_length_profile?.recommended_max_length ?? '-' }}</span><span v-else>-</span></template></el-table-column>
+        <el-table-column label="Padding效率" width="120"><template #default="scope"><span v-if="scope.row.kind==='embedding' && scope.row.metrics?.padding_efficiency != null">{{ (scope.row.metrics.padding_efficiency*100).toFixed(1) }}%</span><span v-else>-</span></template></el-table-column>
+        <el-table-column label="预计/范围" min-width="200"><template #default="scope"><span v-if="scope.row.kind==='embedding'">110万条约 {{ scope.row.metrics?.projected_1_100_000_rows_hours ?? '-' }} 小时</span><span v-else>synthetic vector kernel</span></template></el-table-column>
         <el-table-column prop="error_message" label="错误" min-width="220" show-overflow-tooltip/>
       </el-table>
     </div>
