@@ -42,3 +42,5 @@ tmp/
 *.gz
 *.7z
 *.rar
+web/src/**/*.js
+web/**/*.tsbuildinfo
