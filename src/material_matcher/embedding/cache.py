@@ -20,14 +20,11 @@ class CacheStats:
 
 
 class EmbeddingCache:
-    """Provider-scoped float16 disk cache with a tiny SQLite offset index.
+    """Provider-scoped float16 disk cache with a tiny SQLite offset index."""
 
-    Vector bytes are kept in an append-only binary file; SQLite stores only hashes and
-    offsets, so the main metadata database never contains million-scale embedding BLOBs.
-    """
-
-    def __init__(self, root: Path, provider: EmbeddingProvider) -> None:
+    def __init__(self, root: Path, provider: EmbeddingProvider, *, token_budget: int = 0) -> None:
         self.provider = provider
+        self.token_budget = max(0, int(token_budget))
         self.root = root / provider.spec.fingerprint
         self.root.mkdir(parents=True, exist_ok=True)
         self.vector_path = self.root / "vectors.f16"
@@ -65,7 +62,6 @@ class EmbeddingCache:
 
     @contextmanager
     def _process_lock(self) -> Iterator[None]:
-        """Serialize append + offset registration across worker/request cache instances."""
         self.lock_path.touch(exist_ok=True)
         with self.lock_path.open("r+b") as lock_stream:
             try:
@@ -114,12 +110,20 @@ class EmbeddingCache:
         cached = self.get_many(unique_order)
         missing = [key for key in unique_order if key not in cached]
         produced: list[tuple[str, np.ndarray]] = []
-        for start in range(0, len(missing), max(1, batch_size)):
-            batch_keys = missing[start : start + max(1, batch_size)]
-            vectors = self.provider.embed([text_by_key[key] for key in batch_keys])
-            if vectors.shape != (len(batch_keys), self.provider.spec.dimensions):
+        if missing:
+            missing_texts = [text_by_key[key] for key in missing]
+            budget = self.token_budget or max(1, int(batch_size)) * self.provider.spec.max_length
+            embed_batched = getattr(self.provider, "embed_batched", None)
+            if callable(embed_batched):
+                vectors = embed_batched(missing_texts, max_batch_size=max(1, int(batch_size)), token_budget=budget)
+            else:
+                parts = []
+                for start in range(0, len(missing_texts), max(1, int(batch_size))):
+                    parts.append(self.provider.embed(missing_texts[start:start + max(1, int(batch_size))]))
+                vectors = np.concatenate(parts, axis=0)
+            if vectors.shape != (len(missing), self.provider.spec.dimensions):
                 raise ValueError("embedding provider returned unexpected shape")
-            for key, vector in zip(batch_keys, vectors):
+            for key, vector in zip(missing, vectors):
                 cached[key] = vector
                 produced.append((key, vector))
         self.put_many(produced)
