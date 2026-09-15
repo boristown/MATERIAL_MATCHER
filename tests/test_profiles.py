@@ -119,3 +119,16 @@ def test_profile_template_source_is_preserved_into_task_snapshot(tmp_path: Path)
     assert task["profile_version"] == 1
     assert task["config_snapshot"]["rules"][0]["weight"] == 72
     assert task["config_snapshot"]["advanced"]["template_source"] == {"profile_id": profile_id, "version_no": 1}
+
+
+def test_task_draft_rejects_forged_profile_template_source(tmp_path: Path) -> None:
+    meta = MetadataRepository(tmp_path / "meta.db")
+    tasks = TaskService(meta)
+    document = _document()
+    document["advanced"] = {
+        "template_source": {"profile_id": "not-a-real-profile", "version_no": 99}
+    }
+    draft = tasks.create_draft("伪造来源")
+    with pytest.raises(DomainError) as exc:
+        tasks.save_rules(str(draft["draft_id"]), document)
+    assert exc.value.code == "PROFILE_VERSION_NOT_FOUND"
