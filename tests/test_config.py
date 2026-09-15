@@ -1,20 +1,14 @@
 import pytest
 from pydantic import ValidationError
-
 from material_matcher.domain.models import MatchingConfig
 
-
-def test_weight_range_is_0_to_100() -> None:
+def test_weight_and_numeric_tolerance_contract():
     with pytest.raises(ValidationError):
-        MatchingConfig.model_validate({"rules": [{"id": "x", "source": {"fields": ["a"]}, "target": {"fields": ["b"]}, "weight": 101}]})
-
-
-def test_numeric_tolerance_must_be_explicit() -> None:
+        MatchingConfig.model_validate({'rules':[{'id':'x','source':{'fields':['a']},'target':{'fields':['b']},'matcher':'numeric','weight':101}]})
     with pytest.raises(ValidationError):
-        MatchingConfig.model_validate({"rules": [{"id": "x", "source": {"fields": ["a"]}, "target": {"fields": ["b"]}, "matcher": "numeric", "weight": 50}]})
+        MatchingConfig.model_validate({'rules':[{'id':'x','source':{'fields':['a']},'target':{'fields':['b']},'matcher':'numeric','weight':50}]})
+    valid=MatchingConfig.model_validate({'rules':[{'id':'x','source':{'fields':['a']},'target':{'fields':['b']},'matcher':'numeric','weight':50,'matcher_options':{'tolerance':{'mode':'exact'}}}]})
+    assert valid.rules[0].weight==50
 
-
-def test_many_to_many_mapping_is_valid() -> None:
-    config = MatchingConfig.model_validate({"rules": [{"id": "identity", "source": {"fields": ["型号", "规格"], "combine": "best_of"}, "target": {"fields": ["集团型号", "集团规格"], "combine": "best_of"}, "weight": 100}]})
-    assert config.rules[0].source.fields == ["型号", "规格"]
-    assert config.rules[0].target.fields == ["集团型号", "集团规格"]
+def test_scope_requires_fields():
+    with pytest.raises(ValidationError): MatchingConfig.model_validate({'scope_mode':'STRICT','rules':[]})

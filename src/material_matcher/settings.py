@@ -15,6 +15,9 @@ class Settings:
     max_upload_bytes: int = 120 * 1024 * 1024
     max_total_upload_bytes: int = 2 * 1024 * 1024 * 1024
     chunk_size_bytes: int = 8 * 1024 * 1024
+    baseline_max_target_rows: int = 20_000
+    worker_poll_seconds: float = 0.1
+    worker_enabled: bool = True
 
     @classmethod
     def load(cls) -> "Settings":
@@ -23,6 +26,7 @@ class Settings:
             config_dir=Path(os.getenv("MATERIAL_MATCHER_CONFIG_DIR", "/etc/material_matcher")),
             log_dir=Path(os.getenv("MATERIAL_MATCHER_LOG_DIR", "/var/log/material_matcher")),
             admin_password=os.getenv("MATERIAL_MATCHER_ADMIN_PASSWORD", ""),
+            baseline_max_target_rows=int(os.getenv("MATERIAL_MATCHER_BASELINE_MAX_TARGET_ROWS", "20000")),
         )
 
     def ensure_dirs(self) -> None:

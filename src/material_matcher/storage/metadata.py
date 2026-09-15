@@ -37,6 +37,22 @@ CREATE TABLE IF NOT EXISTS tasks(
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
   error_code TEXT, error_message TEXT, result_file_id TEXT
 );
+CREATE TABLE IF NOT EXISTS match_items(
+  task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, source_id TEXT NOT NULL,
+  source_payload TEXT NOT NULL, original_status TEXT NOT NULL, current_status TEXT NOT NULL,
+  top1_group_code TEXT, top1_score REAL NOT NULL, second_score REAL NOT NULL,
+  score_gap REAL NOT NULL, critical_conflict INTEGER NOT NULL, final_group_code TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY(task_id, source_row_id),
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+);
+CREATE TABLE IF NOT EXISTS match_candidates(
+  task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, rank INTEGER NOT NULL,
+  target_group_code TEXT NOT NULL, target_payload TEXT NOT NULL,
+  score REAL NOT NULL, field_scores TEXT NOT NULL, critical_conflict INTEGER NOT NULL,
+  PRIMARY KEY(task_id, source_row_id, rank),
+  FOREIGN KEY(task_id, source_row_id) REFERENCES match_items(task_id, source_row_id)
+);
 CREATE TABLE IF NOT EXISTS upload_sessions(
   upload_id TEXT PRIMARY KEY, role TEXT NOT NULL, original_name TEXT NOT NULL,
   expected_size INTEGER NOT NULL, expected_sha256 TEXT, received_bytes INTEGER NOT NULL,
@@ -82,7 +98,7 @@ class MetadataRepository:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         try:
@@ -104,10 +120,7 @@ class MetadataRepository:
             )
 
     @staticmethod
-    def decode(
-        row: sqlite3.Row | None,
-        json_fields: Sequence[str] = (),
-    ) -> dict[str, object] | None:
+    def decode(row: sqlite3.Row | None, json_fields: Sequence[str] = ()) -> dict[str, object] | None:
         if row is None:
             return None
         result: dict[str, object] = dict(row)

@@ -49,14 +49,27 @@ class DecisionConfig(BaseModel):
         return self
 
 
+class ScopeConfig(BaseModel):
+    source_field: str | None = None
+    target_field: str | None = None
+    mapping: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class MatchingConfig(BaseModel):
+    source_id_column: str | None = None
     scope_mode: Literal["GLOBAL", "STRICT", "MAPPED"] = "GLOBAL"
+    scope: ScopeConfig = Field(default_factory=ScopeConfig)
     rules: list[FieldRule] = Field(default_factory=list)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
     advanced: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_weights(self) -> "MatchingConfig":
+    def validate_config(self) -> "MatchingConfig":
         if self.rules and sum(rule.weight for rule in self.rules) <= 0:
             raise ValueError("至少一个字段权重必须大于 0")
+        if self.scope_mode in {"STRICT", "MAPPED"}:
+            if not self.scope.source_field or not self.scope.target_field:
+                raise ValueError("同组/分类映射匹配必须指定客户和集团分类字段")
+        if self.scope_mode == "MAPPED" and not self.scope.mapping:
+            raise ValueError("分类映射匹配必须配置分类映射")
         return self
