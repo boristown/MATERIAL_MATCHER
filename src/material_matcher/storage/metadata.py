@@ -93,6 +93,12 @@ CREATE TABLE IF NOT EXISTS index_versions(
   status TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_index_versions_catalog_status ON index_versions(catalog_version_id, status);
+CREATE TABLE IF NOT EXISTS benchmark_runs(
+  run_id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL,
+  parameters TEXT NOT NULL, metrics TEXT NOT NULL, error_message TEXT,
+  started_at TEXT NOT NULL, finished_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at ON benchmark_runs(started_at DESC);
 """
 
 
