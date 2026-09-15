@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -12,6 +13,23 @@ def _project_version(repo_root: Path) -> str:
         return str(tomllib.load(stream)["project"]["version"])
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree_sha256(root: Path, *, exclude_names: set[str] | None = None) -> str:
+    excluded = exclude_names or set()
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file() and not item.is_symlink()):
+        if path.name in excluded:
+            continue
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_sha256(path).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _write(path: Path, content: bytes, executable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
@@ -21,11 +39,23 @@ def _write(path: Path, content: bytes, executable: bool = False) -> None:
 
 def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
     release = tmp_path / "release-stage"
+    runtime = release / "runtime"
     model = tmp_path / "model-stage"
     wheelhouse = tmp_path / "wheelhouse-stage"
     version = _project_version(repo_root)
-    _write(release / "runtime/bin/python3", b"#!/bin/sh\nexit 0\n", executable=True)
-    _write(release / "runtime/bin/material-matcher", b"#!/bin/sh\nexit 0\n", executable=True)
+    _write(runtime / "bin/python3", b"#!/bin/sh\nexit 0\n", executable=True)
+    _write(runtime / "bin/material-matcher", b"#!/bin/sh\nexit 0\n", executable=True)
+    runtime_manifest = {
+        "format_version": 1,
+        "product": "MATERIAL_MATCHER_PYTHON_RUNTIME",
+        "target_arch": "x86_64",
+        "python_version": "3.11.0",
+        "dependencies": [],
+        "runtime_tree_sha256": _tree_sha256(runtime, exclude_names={"runtime-manifest.json"}),
+    }
+    runtime_manifest_path = runtime / "runtime-manifest.json"
+    runtime_manifest_path.write_text(json.dumps(runtime_manifest), encoding="utf-8")
+
     _write(release / "web/dist/index.html", b"<html>matcher</html>")
     (release / "release-manifest.json").write_text(
         json.dumps(
@@ -35,6 +65,7 @@ def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
                 "release_version": version,
                 "target_arch": "x86_64",
                 "python_version": "3.11.0",
+                "runtime_manifest_sha256": _sha256(runtime_manifest_path),
                 "source_tree_sha256": "a" * 64,
                 "web_tree_sha256": "b" * 64,
             }
@@ -76,6 +107,7 @@ def test_offline_bundle_build_and_verify(tmp_path: Path) -> None:
     assert manifest["release_version"] == version
     assert len(manifest["release_manifest_sha256"]) == 64
     assert "release/release-manifest.json" in paths
+    assert "release/runtime/runtime-manifest.json" in paths
     assert "release/runtime/bin/material-matcher" in paths
     assert "release/web/dist/index.html" in paths
     assert "models/BAAI/bge-base-zh-v1.5/tokenizer.json" in paths
@@ -141,6 +173,30 @@ def test_offline_bundle_rejects_release_version_mismatch(tmp_path: Path) -> None
     )
     assert result.returncode == 2
     assert "版本" in result.stderr
+
+
+def test_offline_bundle_rejects_runtime_manifest_tampering(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    release, model, wheelhouse = _staging(tmp_path, repo_root)
+    runtime_python = release / "runtime/bin/python3"
+    runtime_python.write_bytes(b"#!/bin/sh\nexit 1\n")
+    runtime_python.chmod(0o755)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts/build_offline_bundle.py"),
+            "--release-dir", str(release),
+            "--model-dir", str(model),
+            "--wheelhouse-dir", str(wheelhouse),
+            "--output-dir", str(tmp_path / "tampered-runtime"),
+            "--release-version", _project_version(repo_root),
+            "--target-arch", "x86_64",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "Runtime 文件" in result.stderr or "SHA-256" in result.stderr
 
 
 def test_offline_bundle_rejects_unsafe_model_id_and_arch_wheel(tmp_path: Path) -> None:
