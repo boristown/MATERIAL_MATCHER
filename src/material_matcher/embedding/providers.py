@@ -172,6 +172,8 @@ def embedding_runtime_status(settings: object, model_id: str | None = None) -> d
         "model_id": selected_model,
         "dimensions": int(getattr(settings, "embedding_dimensions")),
         "max_length": int(getattr(settings, "embedding_max_length")),
+        "batch_size": int(getattr(settings, "embedding_batch_size", 128)),
+        "token_budget": int(getattr(settings, "embedding_token_budget", 16_384)),
         "precision": str(getattr(settings, "embedding_precision")),
         "model_dir": str(model_dir),
         "runtime_installed": runtime_installed,
