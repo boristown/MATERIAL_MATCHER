@@ -38,6 +38,22 @@ def _bootstrap(meta: MetadataRepository, settings: Settings) -> None:
     users.ensure_bootstrap_admin(settings.admin_password)
 
 
+def _insert_evaluation_evidence(meta: MetadataRepository, run_id: str, metrics: dict[str, object]) -> None:
+    with meta.connect() as connection:
+        connection.execute(
+            "INSERT INTO files(file_id,role,original_name,stored_path,size_bytes,sha256,status,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            ('truth1', 'supplement', 'truth.csv', '/tmp/truth.csv', 1, 'truth-sha', 'READY', '2026-09-15T11:59:00+00:00'),
+        )
+        connection.execute(
+            "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ('task1', '业务验收任务', 'source', 'catalog', None, None, '{}', 'sha', 'RESULT', 'COMPLETED', 100.0, 100, 100, '2026-09-15T10:00:00+00:00', '2026-09-15T10:00:00+00:00', '2026-09-15T11:00:00+00:00', None, None, None),
+        )
+        connection.execute(
+            "INSERT INTO evaluation_runs(run_id,task_id,truth_file_id,key_mode,key_column,expected_column,metrics,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (run_id, 'task1', 'truth1', 'source_id', '物料号', '集团码', json.dumps(metrics), '2026-09-15T12:00:00+00:00'),
+        )
+
+
 def test_acceptance_distinguishes_code_ready_from_external_production_evidence(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     meta = MetadataRepository(settings.data_dir / 'meta' / 'material_matcher.db')
@@ -95,11 +111,7 @@ def test_acceptance_fails_when_real_gold_metrics_are_below_explicit_policy(tmp_p
         'final_accuracy': 0.96,
         'review_rate': 0.10,
     }
-    with meta.connect() as connection:
-        connection.execute(
-            "INSERT INTO evaluation_runs(run_id,task_id,truth_file_id,key_mode,key_column,expected_column,metrics,created_at) VALUES(?,?,?,?,?,?,?,?)",
-            ('eval-low', 'task1', 'truth1', 'source_id', '物料号', '集团码', json.dumps(metrics), '2026-09-15T12:00:00+00:00'),
-        )
+    _insert_evaluation_evidence(meta, 'eval-low', metrics)
 
     report = AcceptanceService(meta, settings).report()
     gate = next(item for item in report['gates'] if item['name'] == 'business_gold_evaluation')
@@ -119,11 +131,7 @@ def test_acceptance_passes_business_gate_only_when_all_explicit_metrics_pass(tmp
         'final_accuracy': 0.98,
         'review_rate': 0.12,
     }
-    with meta.connect() as connection:
-        connection.execute(
-            "INSERT INTO evaluation_runs(run_id,task_id,truth_file_id,key_mode,key_column,expected_column,metrics,created_at) VALUES(?,?,?,?,?,?,?,?)",
-            ('eval-pass', 'task1', 'truth1', 'source_id', '物料号', '集团码', json.dumps(metrics), '2026-09-15T12:00:00+00:00'),
-        )
+    _insert_evaluation_evidence(meta, 'eval-pass', metrics)
 
     report = AcceptanceService(meta, settings).report()
     gate = next(item for item in report['gates'] if item['name'] == 'business_gold_evaluation')
