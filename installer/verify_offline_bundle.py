@@ -14,9 +14,11 @@ from typing import Iterator
 
 MANIFEST_NAME = "offline-manifest.json"
 RELEASE_MANIFEST_NAME = "release-manifest.json"
+RUNTIME_MANIFEST_NAME = "runtime-manifest.json"
 SUPPORTED_FORMAT_VERSION = 1
 PRODUCT = "MATERIAL_MATCHER"
 RELEASE_PRODUCT = "MATERIAL_MATCHER_RELEASE"
+RUNTIME_PRODUCT = "MATERIAL_MATCHER_PYTHON_RUNTIME"
 SUPPORTED_ARCHES = {"x86_64", "aarch64"}
 RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
@@ -26,6 +28,19 @@ def _sha256(path: Path) -> str:
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tree_sha256(root: Path, *, exclude_names: set[str] | None = None) -> str:
+    excluded = exclude_names or set()
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file() and not item.is_symlink()):
+        if path.name in excluded:
+            continue
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_sha256(path).encode("ascii"))
+        digest.update(b"\n")
     return digest.hexdigest()
 
 
@@ -102,6 +117,29 @@ def _native_wheel_exists(expected: dict[str, dict[str, object]], package_prefix:
     )
 
 
+def _verify_runtime_manifest(root: Path, release_manifest: dict[str, object], target_arch: str) -> dict[str, object]:
+    path = root / "release/runtime" / RUNTIME_MANIFEST_NAME
+    if not path.is_file():
+        raise ValueError(f"离线包缺少 release/runtime/{RUNTIME_MANIFEST_NAME}")
+    runtime_manifest = json.loads(path.read_text(encoding="utf-8"))
+    if runtime_manifest.get("format_version") != 1 or runtime_manifest.get("product") != RUNTIME_PRODUCT:
+        raise ValueError("runtime manifest 产品或格式版本不正确")
+    runtime_arch = _normalize_arch(str(runtime_manifest.get("target_arch") or ""))
+    if runtime_arch != target_arch:
+        raise ValueError("runtime manifest 架构与离线包目标架构不一致")
+    runtime_python = str(runtime_manifest.get("python_version") or "").strip()
+    if not runtime_python or runtime_python != str(release_manifest.get("python_version") or "").strip():
+        raise ValueError("runtime manifest Python 版本与 release manifest 不一致")
+    expected_manifest_sha = str(release_manifest.get("runtime_manifest_sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha) or _sha256(path) != expected_manifest_sha:
+        raise ValueError("runtime manifest SHA-256 与 release manifest 记录不一致")
+    expected_tree_sha = str(runtime_manifest.get("runtime_tree_sha256") or "").lower()
+    actual_tree_sha = _tree_sha256(root / "release/runtime", exclude_names={RUNTIME_MANIFEST_NAME})
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_tree_sha) or actual_tree_sha != expected_tree_sha:
+        raise ValueError("Runtime 文件与 runtime manifest 摘要不一致")
+    return runtime_manifest
+
+
 def _verify_release_manifest(root: Path, manifest: dict[str, object], release_version: str, target_arch: str) -> dict[str, object]:
     path = root / "release" / RELEASE_MANIFEST_NAME
     if not path.is_file():
@@ -119,8 +157,15 @@ def _verify_release_manifest(root: Path, manifest: dict[str, object], release_ve
     python_version = str(release_manifest.get("python_version") or "").strip()
     source_sha = str(release_manifest.get("source_tree_sha256") or "").lower()
     web_sha = str(release_manifest.get("web_tree_sha256") or "").lower()
-    if not python_version or not re.fullmatch(r"[0-9a-f]{64}", source_sha) or not re.fullmatch(r"[0-9a-f]{64}", web_sha):
-        raise ValueError("release manifest 缺少 Python 版本或源码/前端摘要")
+    runtime_manifest_sha = str(release_manifest.get("runtime_manifest_sha256") or "").lower()
+    if (
+        not python_version
+        or not re.fullmatch(r"[0-9a-f]{64}", source_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", web_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", runtime_manifest_sha)
+    ):
+        raise ValueError("release manifest 缺少 Python 版本或 Runtime/源码/前端摘要")
+    _verify_runtime_manifest(root, release_manifest, target_arch)
     return release_manifest
 
 
@@ -191,6 +236,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "install.sh",
         "verify_offline_bundle.py",
         "release/release-manifest.json",
+        "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
         "release/web/dist/index.html",
