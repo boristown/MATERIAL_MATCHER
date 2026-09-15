@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import stat
 import subprocess
@@ -15,6 +16,8 @@ import sys
 MANIFEST_NAME = "offline-manifest.json"
 PRODUCT = "MATERIAL_MATCHER"
 FORMAT_VERSION = 1
+SUPPORTED_ARCHES = {"x86_64", "aarch64"}
+RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 
 def _sha256(path: Path) -> str:
@@ -23,6 +26,15 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _safe_relative(value: str, label: str) -> PurePosixPath:
+    if "\\" in value:
+        raise ValueError(f"{label} 不是安全的相对路径：{value!r}")
+    path = PurePosixPath(value)
+    if not value or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"{label} 不是安全的相对路径：{value!r}")
+    return path
 
 
 def _copy_tree(source: Path, target: Path) -> None:
@@ -55,14 +67,8 @@ def _iter_entries(root: Path):
 def _entry(relative: str, path: Path, kind: str) -> dict[str, object]:
     if kind == "symlink":
         target = os.readlink(path)
-        if PurePosixPath(target).is_absolute():
-            raise ValueError(f"禁止绝对符号链接：{relative}")
-        resolved = (path.parent / target).resolve(strict=False)
-        try:
-            resolved.relative_to(path.parents[len(PurePosixPath(relative).parts) - 1].resolve())
-        except (ValueError, IndexError):
-            # Full containment is verified again by verify_offline_bundle.py.
-            pass
+        if not target or "\\" in target or PurePosixPath(target).is_absolute():
+            raise ValueError(f"禁止空目标、反斜杠或绝对符号链接：{relative}")
         return {"path": relative, "type": "symlink", "target": target}
     mode = stat.S_IMODE(path.stat().st_mode)
     return {
@@ -72,6 +78,10 @@ def _entry(relative: str, path: Path, kind: str) -> dict[str, object]:
         "sha256": _sha256(path),
         "executable": bool(mode & 0o111),
     }
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    return first == second or first in second.parents or second in first.parents
 
 
 def build_bundle(
@@ -85,6 +95,12 @@ def build_bundle(
     model_id: str,
     force: bool = False,
 ) -> Path:
+    if not RELEASE_VERSION_RE.fullmatch(release_version):
+        raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
+    if target_arch not in SUPPORTED_ARCHES:
+        raise ValueError(f"不支持的目标 CPU 架构：{target_arch}")
+    model_path = _safe_relative(model_id, "model_id")
+
     release_dir = release_dir.resolve()
     model_dir = model_dir.resolve()
     wheelhouse_dir = wheelhouse_dir.resolve()
@@ -92,17 +108,16 @@ def build_bundle(
     repo_root = Path(__file__).resolve().parents[1]
 
     for source in (release_dir, model_dir, wheelhouse_dir):
-        if output_dir == source or output_dir in source.parents:
-            raise ValueError("输出目录不能覆盖输入目录")
-    if output_dir.exists():
-        if any(output_dir.iterdir()):
-            if not force:
-                raise ValueError(f"输出目录非空：{output_dir}；如确认覆盖请使用 --force")
-            shutil.rmtree(output_dir)
+        if _paths_overlap(output_dir, source):
+            raise ValueError(f"输出目录不能与输入目录重叠：{output_dir} / {source}")
+    if output_dir.exists() and any(output_dir.iterdir()):
+        if not force:
+            raise ValueError(f"输出目录非空：{output_dir}；如确认覆盖请使用 --force")
+        shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     _copy_tree(release_dir, output_dir / "release")
-    model_target = output_dir / "models" / Path(*PurePosixPath(model_id).parts)
+    model_target = output_dir / "models" / Path(*model_path.parts)
     model_target.parent.mkdir(parents=True, exist_ok=True)
     _copy_tree(model_dir, model_target)
     _copy_tree(wheelhouse_dir, output_dir / "wheelhouse")
@@ -117,7 +132,7 @@ def build_bundle(
         "product": PRODUCT,
         "release_version": release_version,
         "target_arch": target_arch,
-        "model_id": model_id,
+        "model_id": model_path.as_posix(),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "files": files,
     }
