@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
+from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
 
@@ -34,6 +35,7 @@ class ProfileService:
 
     def __init__(self, metadata: MetadataRepository) -> None:
         self.meta = metadata
+        self.dictionaries = DictionaryService(metadata)
 
     def _profile(self, profile_id: str) -> dict[str, object]:
         with self.meta.connect() as connection:
@@ -44,7 +46,10 @@ class ProfileService:
 
     def _validate(self, document: dict[str, object]) -> MatchingConfig:
         try:
-            config = MatchingConfig.model_validate(document)
+            bound = self.dictionaries.bind_references(document)
+            config = MatchingConfig.model_validate(bound)
+        except DomainError:
+            raise
         except ValidationError as exc:
             message = exc.errors()[0].get("msg", "匹配方案格式不正确") if exc.errors() else "匹配方案格式不正确"
             raise DomainError("INVALID_PROFILE", str(message).replace("Value error, ", ""), status_code=422) from exc
