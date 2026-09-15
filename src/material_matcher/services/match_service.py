@@ -12,10 +12,13 @@ from openpyxl import Workbook
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
-from material_matcher.matching.engine import RowResult, match_rows, summarize
+from material_matcher.embedding.cache import EmbeddingCache
+from material_matcher.ingestion.reader import detect_layout
+from material_matcher.matching.engine import RowResult, match_rows, match_rows_indexed, summarize
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
+from material_matcher.vector.service import VectorIndexService
 
 
 def _now() -> str:
@@ -27,80 +30,217 @@ def _json(value: object) -> str:
 
 
 class MatchService:
-    def __init__(self, metadata: MetadataRepository, files: FileRepository, settings: Settings) -> None:
-        self.meta=metadata; self.files=files; self.settings=settings
+    def __init__(self, metadata: MetadataRepository, files: FileRepository, settings: Settings, indexes: VectorIndexService | None = None) -> None:
+        self.meta = metadata
+        self.files = files
+        self.settings = settings
+        self.indexes = indexes or VectorIndexService(metadata, files, settings)
+
+    def _set_runtime(self, task_id: str, execution_mode: str, phase: str, index_id: str | None = None) -> None:
+        with self.meta.connect() as connection:
+            connection.execute(
+                "INSERT INTO task_runtime(task_id,execution_mode,current_phase,index_id,updated_at) VALUES(?,?,?,?,?) "
+                "ON CONFLICT(task_id) DO UPDATE SET execution_mode=excluded.execution_mode,current_phase=excluded.current_phase,index_id=COALESCE(excluded.index_id,task_runtime.index_id),updated_at=excluded.updated_at",
+                (task_id, execution_mode, phase, index_id, _now()),
+            )
+
+    def runtime_status(self, task_id: str) -> dict[str, object]:
+        with self.meta.connect() as connection:
+            row = connection.execute("SELECT * FROM task_runtime WHERE task_id=?", (task_id,)).fetchone()
+        return dict(row) if row is not None else {"task_id": task_id, "execution_mode": "unknown", "current_phase": "WAITING", "index_id": None}
 
     def _catalog(self, version_id: str) -> dict[str, object]:
         with self.meta.connect() as connection:
-            row=connection.execute("SELECT c.name, v.* FROM catalog_versions v JOIN catalogs c ON c.catalog_id=v.catalog_id WHERE v.version_id=?",(version_id,)).fetchone()
-        if row is None: raise DomainError("CATALOG_NOT_FOUND","集团码目录版本不存在",status_code=404)
+            row = connection.execute("SELECT c.name, v.* FROM catalog_versions v JOIN catalogs c ON c.catalog_id=v.catalog_id WHERE v.version_id=?", (version_id,)).fetchone()
+        if row is None:
+            raise DomainError("CATALOG_NOT_FOUND", "集团码目录版本不存在", status_code=404)
         return dict(row)
 
     def _draft_context(self, draft_id: str) -> tuple[dict[str, object], MatchingConfig, dict[str, object], dict[str, object]]:
         with self.meta.connect() as connection:
-            row=connection.execute("SELECT * FROM task_drafts WHERE draft_id=?",(draft_id,)).fetchone()
-        if row is None: raise DomainError("TASK_DRAFT_NOT_FOUND","任务草稿不存在",status_code=404)
-        draft=dict(row); config=MatchingConfig.model_validate(json.loads(str(draft["config_document"] or "{}")))
+            row = connection.execute("SELECT * FROM task_drafts WHERE draft_id=?", (draft_id,)).fetchone()
+        if row is None:
+            raise DomainError("TASK_DRAFT_NOT_FOUND", "任务草稿不存在", status_code=404)
+        draft = dict(row)
+        config = MatchingConfig.model_validate(json.loads(str(draft["config_document"] or "{}")))
         if not draft.get("source_file_id") or not draft.get("catalog_version_id") or not config.rules:
-            raise DomainError("TASK_DRAFT_INCOMPLETE","请先完成数据选择和匹配规则配置",status_code=422)
-        source=self.files.get(str(draft["source_file_id"])); catalog=self._catalog(str(draft["catalog_version_id"])); target=self.files.get(str(catalog["source_file_id"]))
-        return draft, config, source, {**catalog,"file":target}
+            raise DomainError("TASK_DRAFT_INCOMPLETE", "请先完成数据选择和匹配规则配置", status_code=422)
+        source = self.files.get(str(draft["source_file_id"]))
+        catalog = self._catalog(str(draft["catalog_version_id"]))
+        target = self.files.get(str(catalog["source_file_id"]))
+        return draft, config, source, {**catalog, "file": target}
+
+    def _use_vector(self, config: MatchingConfig, target_path: Path) -> bool:
+        if config.retrieval.mode == "vector":
+            return True
+        if config.retrieval.mode == "scan":
+            return False
+        if any(rule.matcher == "semantic" or (rule.matcher == "hybrid" and bool(rule.matcher_options.get("include_semantic"))) for rule in config.rules):
+            return True
+        return detect_layout(target_path).row_count_estimate > self.settings.baseline_max_target_rows
+
+    def _run_rows(
+        self,
+        *,
+        source: dict[str, object],
+        target: dict[str, object],
+        catalog: dict[str, object],
+        config: MatchingConfig,
+        max_source_rows: int | None = None,
+        on_progress=None,
+        on_index_progress=None,
+        on_index_ready=None,
+    ) -> list[RowResult]:
+        source_path = Path(str(source["stored_path"]))
+        target_path = Path(str(target["stored_path"]))
+        if not self._use_vector(config, target_path):
+            return match_rows(
+                source_path,
+                target_path,
+                config=config,
+                group_code_column=str(catalog["group_code_column"]),
+                max_target_rows=self.settings.baseline_max_target_rows,
+                max_source_rows=max_source_rows,
+                on_progress=on_progress,
+            )
+        index, provider, index_info = self.indexes.ensure_index(
+            catalog_version_id=str(catalog["version_id"]),
+            target_file=target,
+            group_code_column=str(catalog["group_code_column"]),
+            config=config,
+            on_progress=on_index_progress,
+        )
+        if on_index_ready:
+            on_index_ready(str(index_info.get("index_id") or index.metadata.get("fingerprint") or ""))
+        cache = EmbeddingCache(self.settings.embedding_cache_dir, provider)
+        return match_rows_indexed(
+            source_path,
+            index=index,
+            provider=provider,
+            cache=cache,
+            config=config,
+            group_code_column=str(catalog["group_code_column"]),
+            query_batch_size=self.settings.query_batch_size,
+            max_source_rows=max_source_rows,
+            on_progress=on_progress,
+        )
 
     def dry_run(self, draft_id: str, sample_rows: int = 100) -> dict[str, object]:
-        _, config, source, catalog=self._draft_context(draft_id)
-        rows=match_rows(Path(str(source["stored_path"])),Path(str(catalog["file"]["stored_path"])),config=config,group_code_column=str(catalog["group_code_column"]),max_target_rows=self.settings.baseline_max_target_rows,max_source_rows=sample_rows)
-        return {"summary":summarize(rows),"rows":[self._row_response(row) for row in rows]}
+        _, config, source, catalog = self._draft_context(draft_id)
+        rows = self._run_rows(
+            source=source,
+            target=dict(catalog["file"]),
+            catalog=catalog,
+            config=config,
+            max_source_rows=sample_rows,
+        )
+        return {"summary": summarize(rows), "rows": [self._row_response(row) for row in rows]}
 
     @staticmethod
     def _row_response(row: RowResult) -> dict[str, object]:
         return {
-            "source_row_id":row.source_row_id,"source_id":row.source_id,"status":row.status,"final_group_code":row.final_group_code,
-            "first_score":row.first_score,"second_score":row.second_score,"score_gap":row.score_gap,"critical_conflict":row.critical_conflict,
-            "candidates":[asdict(candidate) for candidate in row.candidates],
+            "source_row_id": row.source_row_id,
+            "source_id": row.source_id,
+            "status": row.status,
+            "final_group_code": row.final_group_code,
+            "first_score": row.first_score,
+            "second_score": row.second_score,
+            "score_gap": row.score_gap,
+            "critical_conflict": row.critical_conflict,
+            "candidates": [asdict(candidate) for candidate in row.candidates],
         }
 
     def claim_next_task(self) -> str | None:
         with self.meta.connect() as connection:
-            row=connection.execute("SELECT task_id FROM tasks WHERE status IN ('PENDING','RECOVERING') ORDER BY created_at LIMIT 1").fetchone()
-            if row is None: return None
-            task_id=str(row["task_id"])
-            updated=connection.execute("UPDATE tasks SET status='PREPARING', started_at=COALESCE(started_at,?), error_code=NULL, error_message=NULL WHERE task_id=? AND status IN ('PENDING','RECOVERING')",(_now(),task_id)).rowcount
+            row = connection.execute("SELECT task_id FROM tasks WHERE status IN ('PENDING','RECOVERING') ORDER BY created_at LIMIT 1").fetchone()
+            if row is None:
+                return None
+            task_id = str(row["task_id"])
+            updated = connection.execute(
+                "UPDATE tasks SET status='PREPARING', started_at=COALESCE(started_at,?), error_code=NULL, error_message=NULL WHERE task_id=? AND status IN ('PENDING','RECOVERING')",
+                (_now(), task_id),
+            ).rowcount
         return task_id if updated else None
 
     def execute_task(self, task_id: str) -> None:
         try:
             with self.meta.connect() as connection:
-                row=connection.execute("SELECT * FROM tasks WHERE task_id=?",(task_id,)).fetchone()
-            if row is None: raise DomainError("TASK_NOT_FOUND","任务不存在",status_code=404)
-            task=dict(row); config=MatchingConfig.model_validate(json.loads(str(task["config_snapshot"]))); source=self.files.get(str(task["source_file_id"])); catalog=self._catalog(str(task["catalog_version_id"])); target=self.files.get(str(catalog["source_file_id"]))
+                row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if row is None:
+                raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
+            task = dict(row)
+            config = MatchingConfig.model_validate(json.loads(str(task["config_snapshot"])))
+            source = self.files.get(str(task["source_file_id"]))
+            catalog = self._catalog(str(task["catalog_version_id"]))
+            target = self.files.get(str(catalog["source_file_id"]))
             with self.meta.connect() as connection:
-                connection.execute("DELETE FROM match_candidates WHERE task_id=?",(task_id,)); connection.execute("DELETE FROM match_items WHERE task_id=?",(task_id,)); connection.execute("UPDATE tasks SET status='RUNNING', progress=2 WHERE task_id=?",(task_id,))
-            def progress(done:int,total:int)->None:
-                pct=5.0 + 90.0*(done/max(total,1))
+                connection.execute("DELETE FROM match_candidates WHERE task_id=?", (task_id,))
+                connection.execute("DELETE FROM match_items WHERE task_id=?", (task_id,))
+                connection.execute("UPDATE tasks SET status='RUNNING', progress=2, processed_rows=0, total_rows=0 WHERE task_id=?", (task_id,))
+
+            vector_mode = self._use_vector(config, Path(str(target["stored_path"])))
+            execution_mode = "vector" if vector_mode else "scan"
+            self._set_runtime(task_id, execution_mode, "INDEX" if vector_mode else "RETRIEVE")
+
+            def index_progress(done: int, total: int) -> None:
+                pct = 3.0 + 27.0 * (done / max(total, 1))
                 with self.meta.connect() as connection:
-                    connection.execute("UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",(done,total,min(95.0,pct),task_id))
-            rows=match_rows(Path(str(source["stored_path"])),Path(str(target["stored_path"])),config=config,group_code_column=str(catalog["group_code_column"]),max_target_rows=self.settings.baseline_max_target_rows,on_progress=progress)
-            now=_now()
+                    connection.execute("UPDATE tasks SET progress=? WHERE task_id=?", (min(30.0, pct), task_id))
+
+            def progress(done: int, total: int) -> None:
+                if done == 1:
+                    self._set_runtime(task_id, execution_mode, "RERANK")
+                base = 32.0 if vector_mode else 5.0
+                span = 63.0 if vector_mode else 90.0
+                pct = base + span * (done / max(total, 1))
+                with self.meta.connect() as connection:
+                    connection.execute("UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?", (done, total, min(95.0, pct), task_id))
+
+            def index_ready(index_id: str) -> None:
+                self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
+
+            rows = self._run_rows(
+                source=source,
+                target=target,
+                catalog=catalog,
+                config=config,
+                on_progress=progress,
+                on_index_progress=index_progress,
+                on_index_ready=index_ready if vector_mode else None,
+            )
+            self._set_runtime(task_id, execution_mode, "PERSIST")
+            now = _now()
             with self.meta.connect() as connection:
                 for item in rows:
-                    connection.execute("INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(task_id,item.source_row_id,item.source_id,_json(item.source_payload),item.status,item.status,item.candidates[0].group_code if item.candidates else None,item.first_score,item.second_score,item.score_gap,1 if item.critical_conflict else 0,item.final_group_code,now,now))
+                    connection.execute(
+                        "INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (task_id, item.source_row_id, item.source_id, _json(item.source_payload), item.status, item.status, item.candidates[0].group_code if item.candidates else None, item.first_score, item.second_score, item.score_gap, 1 if item.critical_conflict else 0, item.final_group_code, now, now),
+                    )
                     for candidate in item.candidates:
-                        connection.execute("INSERT INTO match_candidates VALUES(?,?,?,?,?,?,?,?)",(task_id,item.source_row_id,candidate.rank,candidate.group_code,_json(candidate.target_payload),candidate.score,_json(candidate.field_scores),1 if candidate.critical_conflict else 0))
-                review_count=connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",(task_id,)).fetchone()[0]
-                stage="REVIEW" if review_count else "RESULT"
-                connection.execute("UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?",(stage,len(rows),len(rows),now,task_id))
+                        connection.execute(
+                            "INSERT INTO match_candidates VALUES(?,?,?,?,?,?,?,?)",
+                            (task_id, item.source_row_id, candidate.rank, candidate.group_code, _json(candidate.target_payload), candidate.score, _json(candidate.field_scores), 1 if candidate.critical_conflict else 0),
+                        )
+                review_count = connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0]
+                stage = "REVIEW" if review_count else "RESULT"
+                connection.execute("UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?", (stage, len(rows), len(rows), now, task_id))
+            self._set_runtime(task_id, execution_mode, "DONE")
         except Exception as exc:
-            code=exc.code if isinstance(exc,DomainError) else "INTERNAL_ERROR"; message=exc.message if isinstance(exc,DomainError) else str(exc)
+            code = exc.code if isinstance(exc, DomainError) else "INTERNAL_ERROR"
+            message = exc.message if isinstance(exc, DomainError) else str(exc)
             with self.meta.connect() as connection:
-                connection.execute("UPDATE tasks SET status='FAILED', error_code=?, error_message=?, finished_at=? WHERE task_id=?",(code,message,_now(),task_id))
-            if isinstance(exc,DomainError): return
+                connection.execute("UPDATE tasks SET status='FAILED', error_code=?, error_message=?, finished_at=? WHERE task_id=?", (code, message, _now(), task_id))
+            current_mode = self.runtime_status(task_id).get("execution_mode", "unknown")
+            self._set_runtime(task_id, str(current_mode), "FAILED")
+            if isinstance(exc, DomainError):
+                return
             raise
 
     def summary(self, task_id: str) -> dict[str, int]:
         with self.meta.connect() as connection:
-            rows=connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status",(task_id,)).fetchall()
-        counts={str(row["current_status"]):int(row["count"]) for row in rows}
-        return {"pending_review":counts.get("REVIEW",0),"confirmed":counts.get("CONFIRMED",0),"unmatched":counts.get("UNMATCHED",0),"automatic_matched":counts.get("MATCHED",0)}
+            rows = connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
+        counts = {str(row["current_status"]): int(row["count"]) for row in rows}
+        return {"pending_review": counts.get("REVIEW",0), "confirmed": counts.get("CONFIRMED",0), "unmatched": counts.get("UNMATCHED",0), "automatic_matched": counts.get("MATCHED",0)}
 
     def workbench_items(self, task_id: str, *, first_score_min: float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, page:int=1, page_size:int=50) -> dict[str, object]:
         conditions=["task_id=?","current_status='REVIEW'"]; params:list[object]=[task_id]
