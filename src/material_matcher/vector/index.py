@@ -21,6 +21,94 @@ from material_matcher.embedding.text import build_retrieval_text, retrieval_text
 # Portable popcount table. The target vectors remain packed throughout the coarse
 # scan; this avoids expanding an N x dimensions sign matrix for every query.
 _POPCOUNT_LUT = np.unpackbits(np.arange(256, dtype=np.uint8)[:, None], axis=1).sum(axis=1).astype(np.uint8)
+_BYTE_VALUES = np.arange(256, dtype=np.uint8)
+_BYTE_BITS = np.unpackbits(_BYTE_VALUES[:, None], axis=1, bitorder="little").astype(np.int16)
+
+
+def _build_query_score_table(query_q4: np.ndarray, packed_dimensions: int) -> np.ndarray:
+    """Per byte position x byte value XNOR-weight table, mathematically equal to
+    sum_k 2^k * popcount(sign_diff & plane_k) up to the positive affine transform
+    (old = 2 * new - total_weight), so candidate ordering is preserved exactly.
+    """
+    weights = np.abs(np.asarray(query_q4, dtype=np.int8)).astype(np.int16)
+    sign_bits = np.unpackbits(np.packbits(np.asarray(query_q4) >= 0, bitorder="little"), bitorder="little").astype(np.int16)
+    padded_length = packed_dimensions * 8
+    if weights.shape[0] < padded_length:
+        weights = np.pad(weights, (0, padded_length - weights.shape[0]))
+    sign_groups = sign_bits[: padded_length].reshape(packed_dimensions, 8)
+    weight_groups = weights[: padded_length].reshape(packed_dimensions, 8)
+    xnor = 1 - (_BYTE_BITS[:, None, :] ^ sign_groups[None, :, :])
+    table = (xnor * weight_groups[None, :, :]).sum(axis=2, dtype=np.int16)
+    return np.ascontiguousarray(table.T).ravel()
+
+
+def _coarse_scores_table(target_packed: np.ndarray, table: np.ndarray) -> np.ndarray:
+    packed = np.asarray(target_packed, dtype=np.uint8)
+    if packed.ndim != 2:
+        raise ValueError("target packed bits must be a 2D array")
+    positions = packed.shape[1]
+    index = packed.astype(np.uint16) | (np.arange(positions, dtype=np.uint16) << np.uint16(8))
+    return table[index].sum(axis=1, dtype=np.int32)
+
+
+_SCAN_WORKER: dict[str, object] = {}
+
+
+def _init_scan_worker(root_str: str, dimensions: int, packed_dimensions: int, row_count: int, block_rows: int) -> None:
+    from pathlib import Path as _Path
+
+    root = _Path(root_str)
+    _SCAN_WORKER["bits"] = np.memmap(root / EmbeddedBBQFlatIndex.BITS_FILE, dtype=np.uint8, mode="r", shape=(row_count, packed_dimensions))
+    _SCAN_WORKER["dimensions"] = dimensions
+    _SCAN_WORKER["packed_dimensions"] = packed_dimensions
+    _SCAN_WORKER["row_count"] = row_count
+    _SCAN_WORKER["block_rows"] = block_rows
+
+
+def _scan_shard(payload: tuple[int, int, int, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-query partial top-k (ids int64, scores int32) for one row shard."""
+    start_row, stop_row, keep, queries = payload
+    bits = _SCAN_WORKER["bits"]
+    packed_dimensions = int(_SCAN_WORKER["packed_dimensions"])
+    block_rows = int(_SCAN_WORKER["block_rows"])
+    query_count = int(queries.shape[0])
+    ids_out = np.full((query_count, keep), -1, dtype=np.int64)
+    scores_out = np.full((query_count, keep), np.iinfo(np.int32).min, dtype=np.int32)
+    for q_index in range(query_count):
+        query = np.asarray(queries[q_index], dtype=np.float32)
+        norm = float(np.linalg.norm(query))
+        if norm <= 0:
+            continue
+        normalized = query / norm
+        scale = max(float(np.max(np.abs(normalized))), 1e-12)
+        query_q4 = np.clip(np.rint(normalized / scale * 7.0), -7, 7).astype(np.int8)
+        table = _build_query_score_table(query_q4, packed_dimensions)
+        collected_ids: list[np.ndarray] = []
+        collected_scores: list[np.ndarray] = []
+        for block_start in range(start_row, stop_row, block_rows):
+            block_stop = min(stop_row, block_start + block_rows)
+            packed = np.asarray(bits[block_start:block_stop])
+            block_scores = _coarse_scores_table(packed, table)
+            local_keep = min(keep, block_scores.shape[0])
+            local = np.argpartition(block_scores, -local_keep)[-local_keep:] if local_keep < block_scores.shape[0] else np.arange(block_scores.shape[0])
+            collected_ids.append(block_start + local.astype(np.int64))
+            collected_scores.append(block_scores[local])
+        if not collected_ids:
+            continue
+        ids = np.concatenate(collected_ids)
+        scores = np.concatenate(collected_scores)
+        top = min(keep, ids.shape[0])
+        selection = _stable_top(scores, ids, top)
+        ids_out[q_index, :top] = ids[selection]
+        scores_out[q_index, :top] = scores[selection]
+    return ids_out, scores_out
+
+
+def _stable_top(scores: np.ndarray, ids: np.ndarray, top: int) -> np.ndarray:
+    """Deterministic top-`top` by (score desc, row id asc) so sharded and sequential
+    scans return byte-identical candidate sets."""
+    order = np.lexsort((ids, -scores.astype(np.int64)))
+    return order[:top]
 
 
 @dataclass(frozen=True)
@@ -52,7 +140,7 @@ class EmbeddedBBQFlatIndex:
     RECORDS_FILE = "records.jsonl"
     OFFSETS_FILE = "records.offsets.u64"
     POSTINGS_FILE = "scope.postings.json"
-    COARSE_KERNEL = "packed_popcount_lut_q4_v1"
+    COARSE_KERNEL = "packed_weighted_byte_lut_q4_v2"
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -70,6 +158,8 @@ class EmbeddedBBQFlatIndex:
         self._postings: dict[str, list[int]] = json.loads(postings_path.read_text(encoding="utf-8")) if postings_path.exists() else {}
         self.block_rows = int(self.metadata.get("scan_block_rows", 8192))
         self.oversample = int(self.metadata.get("oversample", 4))
+        self._scan_pool = None
+        self._scan_pool_workers = 0
 
     @classmethod
     def build(
@@ -221,17 +311,20 @@ class EmbeddedBBQFlatIndex:
         return scores
 
     def _coarse_scores(self, row_ids: np.ndarray, query_q4: np.ndarray) -> np.ndarray:
-        sign_packed, magnitude_planes, active_counts = self._pack_query(query_q4)
+        table = _build_query_score_table(query_q4, self.packed_dimensions)
         packed = np.asarray(self._bits[row_ids])
-        return self._coarse_scores_packed(packed, sign_packed, magnitude_planes, active_counts)
+        return _coarse_scores_table(packed, table)
+
+    def _quantized(self, query_vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return self.quantize_query(query_vector)
 
     def search(self, query_vector: np.ndarray, top_k: int, *, candidate_ids: Sequence[int] | None = None, oversample: int | None = None) -> list[VectorHit]:
         if top_k <= 0 or self.row_count <= 0:
             return []
-        query, query_q4 = self.quantize_query(query_vector)
+        query, query_q4 = self._quantized(query_vector)
         if query.shape[0] != self.dimensions:
             raise ValueError("query embedding dimension mismatch")
-        sign_packed, magnitude_planes, active_counts = self._pack_query(query_q4)
+        table = _build_query_score_table(query_q4, self.packed_dimensions)
         active_oversample = max(1, int(oversample or self.oversample))
         coarse_keep = max(top_k, top_k * active_oversample)
         candidate_chunks: list[np.ndarray] = []
@@ -249,9 +342,9 @@ class EmbeddedBBQFlatIndex:
                 packed = np.asarray(self._bits[block_ids])
             if block_ids.size == 0:
                 continue
-            block_scores = self._coarse_scores_packed(packed, sign_packed, magnitude_planes, active_counts)
+            block_scores = _coarse_scores_table(packed, table)
             keep = min(coarse_keep, block_ids.size)
-            local = np.argpartition(block_scores, -keep)[-keep:] if keep < block_ids.size else np.arange(block_ids.size)
+            local = np.argpartition(block_scores, -keep)[-keep:] if keep < block_ids.size else np.arange(block_scores.size)
             candidate_chunks.append(block_ids[local])
             score_chunks.append(block_scores[local])
         if not candidate_chunks:
@@ -260,12 +353,78 @@ class EmbeddedBBQFlatIndex:
         coarse_scores = np.concatenate(score_chunks)
         keep = min(coarse_keep, coarse_ids.size)
         if keep < coarse_ids.size:
-            selection = np.argpartition(coarse_scores, -keep)[-keep:]
-            coarse_ids = coarse_ids[selection]
+            coarse_ids = coarse_ids[_stable_top(coarse_scores, coarse_ids, keep)]
         target_vectors = np.asarray(self._int8[coarse_ids], dtype=np.float32) / 127.0
         rerank_scores = target_vectors @ query
         order = np.argsort(rerank_scores)[::-1][: min(top_k, rerank_scores.size)]
         return [VectorHit(row_id=int(coarse_ids[index]), score=float(rerank_scores[index])) for index in order]
+
+    def close(self) -> None:
+        pool = getattr(self, "_scan_pool", None)
+        if pool is not None:
+            self._scan_pool = None
+            pool.shutdown(wait=False)
+
+    def search_many(self, queries: np.ndarray, top_k: int, *, oversample: int | None = None, scan_workers: int = 0) -> list[list[VectorHit]]:
+        """Batched global search. Uses a forked process pool over row shards when
+        scan_workers > 1; results are equivalent to repeated search() calls."""
+        matrix = np.asarray(queries, dtype=np.float32)
+        if matrix.ndim != 2 or matrix.shape[1] != self.dimensions:
+            raise ValueError("query matrix dimension mismatch")
+        workers = max(0, int(scan_workers))
+        if workers <= 1 or self.row_count <= 0 or top_k <= 0 or matrix.shape[0] == 0:
+            return [self.search(matrix[index], top_k, oversample=oversample) for index in range(matrix.shape[0])]
+        active_oversample = max(1, int(oversample or self.oversample))
+        coarse_keep = max(top_k, top_k * active_oversample)
+        workers = min(workers, max(1, matrix.shape[0]), self.row_count // max(self.block_rows, 1) or 1)
+        shard_blocks = max(1, (self.row_count + self.block_rows - 1) // self.block_rows)
+        bounds: list[tuple[int, int]] = []
+        for shard in range(workers):
+            first_block = shard * shard_blocks // workers
+            last_block = (shard + 1) * shard_blocks // workers
+            start = min(first_block * self.block_rows, self.row_count)
+            stop = min(last_block * self.block_rows, self.row_count)
+            if stop > start:
+                bounds.append((start, stop))
+        pool = getattr(self, "_scan_pool", None)
+        if pool is None or self._scan_pool_workers < len(bounds):
+            if pool is not None:
+                pool.shutdown(wait=False)
+            from concurrent.futures import ProcessPoolExecutor
+
+            pool = ProcessPoolExecutor(
+                max_workers=len(bounds),
+                initializer=_init_scan_worker,
+                initargs=(str(self.root), self.dimensions, self.packed_dimensions, self.row_count, self.block_rows),
+            )
+            self._scan_pool = pool
+            self._scan_pool_workers = len(bounds)
+        futures = [pool.submit(_scan_shard, (start, stop, coarse_keep, matrix)) for start, stop in bounds]
+        shards = [future.result() for future in futures]
+        results: list[list[VectorHit]] = []
+        for q_index in range(matrix.shape[0]):
+            ids = np.concatenate([shard_ids[q_index] for shard_ids, _ in shards])
+            scores = np.concatenate([shard_scores[q_index] for _, shard_scores in shards])
+            valid = ids >= 0
+            ids = ids[valid]
+            scores = scores[valid]
+            if ids.size == 0:
+                results.append([])
+                continue
+            keep = min(coarse_keep, ids.size)
+            if ids.size > keep:
+                ids = ids[_stable_top(scores, ids, keep)]
+            query = matrix[q_index]
+            norm = float(np.linalg.norm(query))
+            if norm <= 0:
+                results.append([])
+                continue
+            query = query / norm
+            target_vectors = np.asarray(self._int8[ids], dtype=np.float32) / 127.0
+            rerank_scores = target_vectors @ query
+            order = np.argsort(rerank_scores)[::-1][: min(top_k, rerank_scores.size)]
+            results.append([VectorHit(row_id=int(ids[index]), score=float(rerank_scores[index])) for index in order])
+        return results
 
     def record(self, row_id: int) -> dict[str, object]:
         if row_id < 0 or row_id >= self.row_count:
@@ -277,7 +436,15 @@ class EmbeddedBBQFlatIndex:
         return json.loads(line.decode("utf-8"))
 
     def records(self, row_ids: Sequence[int]) -> dict[int, dict[str, object]]:
-        return {row_id: self.record(row_id) for row_id in row_ids}
+        unique = sorted(set(int(row_id) for row_id in row_ids))
+        if not unique:
+            return {}
+        result: dict[int, dict[str, object]] = {}
+        with (self.root / self.RECORDS_FILE).open("rb") as stream:
+            for row_id in unique:
+                stream.seek(int(self._offsets[row_id]))
+                result[row_id] = json.loads(stream.readline().decode("utf-8"))
+        return result
 
     def candidate_ids_for_scope(self, source_row: Mapping[str, object], config: MatchingConfig) -> list[int] | None:
         if config.scope_mode == "GLOBAL":

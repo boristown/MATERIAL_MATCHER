@@ -42,6 +42,7 @@ class Settings:
     embedding_token_budget: int = 16_384
     embedding_intra_threads: int = 0
     index_scan_block_rows: int = 8192
+    index_scan_workers: int = 0
     query_batch_size: int = 64
     index_lock_stale_seconds: int = 21_600
     web_dist_dir: Path = Path("/opt/material_matcher/current/web/dist")
@@ -89,6 +90,7 @@ class Settings:
             embedding_token_budget=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_TOKEN_BUDGET", "16384")),
             embedding_intra_threads=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_INTRA_THREADS", "0")),
             index_scan_block_rows=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_BLOCK_ROWS", "8192")),
+            index_scan_workers=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_WORKERS", "0")),
             query_batch_size=int(os.getenv("MATERIAL_MATCHER_QUERY_BATCH_SIZE", "64")),
             index_lock_stale_seconds=int(os.getenv("MATERIAL_MATCHER_INDEX_LOCK_STALE_SECONDS", "21600")),
             web_dist_dir=Path(os.getenv("MATERIAL_MATCHER_WEB_DIST_DIR", "/opt/material_matcher/current/web/dist")),
