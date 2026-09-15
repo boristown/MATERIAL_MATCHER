@@ -129,19 +129,6 @@ def _verify_imports(python: Path, app_dir: Path) -> None:
     subprocess.run([str(python), "-c", code], check=True, env=env)
 
 
-def _write_launcher(path: Path) -> None:
-    path.write_text(
-        "#!/bin/sh\n"
-        "set -eu\n"
-        "BIN_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
-        "RELEASE_ROOT=$(CDPATH= cd -- \"$BIN_DIR/../..\" && pwd)\n"
-        "export PYTHONPATH=\"$RELEASE_ROOT/app${PYTHONPATH:+:$PYTHONPATH}\"\n"
-        "exec \"$BIN_DIR/python3\" -m material_matcher.cli \"$@\"\n",
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
-
-
 def build_release(
     *,
     runtime_dir: Path,
@@ -190,10 +177,11 @@ def build_release(
     shutil.copytree(web_dist_dir, output_dir / "web/dist", symlinks=False)
 
     python = output_dir / "runtime/bin/python3"
+    launcher = output_dir / "runtime/bin/material-matcher"
     if not python.is_file() or not os.access(python, os.X_OK):
         raise ValueError("自包含 runtime 缺少可执行 runtime/bin/python3")
-    launcher = output_dir / "runtime/bin/material-matcher"
-    _write_launcher(launcher)
+    if not launcher.is_file() or not os.access(launcher, os.X_OK):
+        raise ValueError("自包含 runtime 缺少可执行 runtime/bin/material-matcher")
 
     _verify_imports(python, output_dir / "app")
     runtime_info = _runtime_info(python, output_dir / "app")
@@ -205,7 +193,7 @@ def build_release(
     if runtime_info["version"] != release_version:
         raise ValueError(f"release runtime 版本 {runtime_info['version']} 与 {release_version} 不一致")
 
-    subprocess.run([str(launcher), "--help"], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run([str(launcher), "--help"], check=True, stdout=subprocess.DEVNULL, env={**os.environ, "PYTHONPATH": str(output_dir / "app")})
 
     runtime_manifest_path = output_dir / "runtime" / RUNTIME_MANIFEST
     manifest = {
