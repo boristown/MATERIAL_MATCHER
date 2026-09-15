@@ -292,9 +292,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prepare="DONE" if status not in {"PENDING","PREPARING","RECOVERING"} else "RUNNING" if status in {"PREPARING","RECOVERING"} else "WAITING"
         computation_done=status in {"COMPLETED","FAILED"}
         running=status=="RUNNING"
+        rules=list((task.get("config_snapshot") or {}).get("rules") or [])
+        uses_semantic=any(str(rule.get("matcher"))=="semantic" for rule in rules if isinstance(rule,dict))
+        embedding_status=("DONE" if computation_done or running else "WAITING") if uses_semantic else "SKIPPED"
         return {"task_id":task_id,"stage":stage,"status":status,"progress":task["progress"],"processed_rows":task["processed_rows"],"total_rows":task["total_rows"],"error_code":task.get("error_code"),"error_message":task.get("error_message"),"steps":[
             {"key":"prepare","label":"数据准备","status":prepare},
-            {"key":"embedding","label":"向量化处理","status":"DONE" if computation_done or running else "WAITING"},
+            {"key":"embedding","label":"向量化处理","status":embedding_status},
             {"key":"retrieve","label":"候选比对","status":"DONE" if computation_done else "RUNNING" if running else "WAITING"},
             {"key":"rerank","label":"精细评分","status":"DONE" if computation_done else "RUNNING" if running and float(task["progress"])>40 else "WAITING"},
             {"key":"prepare_result","label":"结果整理","status":"DONE" if computation_done else "WAITING"},

@@ -166,6 +166,10 @@ class MatchService:
         with self.meta.connect() as connection:
             task=connection.execute("SELECT * FROM tasks WHERE task_id=?",(task_id,)).fetchone()
             if task is None: raise DomainError("TASK_NOT_FOUND","任务不存在",status_code=404)
+            if task["status"] != "COMPLETED" or task["stage"] not in {"REVIEW", "RESULT"}:
+                raise DomainError("TASK_STATE_CONFLICT","比对计算尚未完成，暂不能生成最终结果",status_code=409)
+            if task["result_file_id"]:
+                return {"task_id":task_id,"result_file_id":task["result_file_id"],"unresolved_review":0,"summary":self.summary(task_id)}
             unresolved=int(connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",(task_id,)).fetchone()[0])
         if unresolved and not allow_unresolved_review:
             raise DomainError("TASK_STATE_CONFLICT",f"仍有 {unresolved} 条待人工处理记录，请确认是否保留为空后继续生成",status_code=409,details={"unresolved_review":unresolved})
