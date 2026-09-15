@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 
@@ -7,6 +8,7 @@ type Rule = { id: string; source_field: string; target_field: string; matcher: s
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; has_draft: number; updated_at?: string }
 type VersionRow = { version_no: number; status: string; sha256: string; created_at: string; document: any }
 
+const router = useRouter()
 const rows = ref<ProfileRow[]>([])
 const loading = ref(false)
 const editorVisible = ref(false)
@@ -14,6 +16,7 @@ const historyVisible = ref(false)
 const activeProfile = ref<any>(null)
 const versions = ref<VersionRow[]>([])
 const saving = ref(false)
+const startingProfileId = ref('')
 const form = reactive({
   name: '',
   source_id_column: '物料号',
@@ -139,6 +142,29 @@ async function rollback(version: VersionRow): Promise<void> {
     await refresh()
   } catch (error) { ElMessage.error((error as Error).message) }
 }
+async function startTaskFromProfile(row: ProfileRow): Promise<void> {
+  if (!row.latest_published_version) {
+    ElMessage.warning('请先发布至少一个方案版本')
+    return
+  }
+  startingProfileId.value = row.profile_id
+  try {
+    const allVersions = (await api.get(`/profiles/${row.profile_id}/versions`)).data as VersionRow[]
+    const versionNo = Number(row.latest_published_version)
+    const published = allVersions.find(item => item.status === 'PUBLISHED' && Number(item.version_no) === versionNo)
+    if (!published) throw new Error(`未找到已发布版本 v${versionNo}`)
+    const document = JSON.parse(JSON.stringify(published.document ?? {}))
+    document.advanced = {
+      ...(document.advanced ?? {}),
+      template_source: { profile_id: row.profile_id, version_no: versionNo },
+    }
+    const draft = (await api.post('/task-drafts', { name: `${row.name}-匹配任务` })).data
+    await api.put(`/task-drafts/${draft.draft_id}/rules`, document)
+    ElMessage.success(`已按 ${row.name} v${versionNo} 创建任务草稿`)
+    await router.push({ path: '/tasks/new', query: { draft: draft.draft_id } })
+  } catch (error) { ElMessage.error((error as Error).message) }
+  finally { startingProfileId.value = '' }
+}
 onMounted(refresh)
 </script>
 
@@ -154,7 +180,7 @@ onMounted(refresh)
         <el-table-column label="最新发布版本" width="140"><template #default="scope">{{ scope.row.latest_published_version ? `v${scope.row.latest_published_version}` : '未发布' }}</template></el-table-column>
         <el-table-column label="草稿" width="100"><template #default="scope"><el-tag :type="scope.row.has_draft ? 'warning' : 'info'">{{ scope.row.has_draft ? '有草稿' : '无' }}</el-tag></template></el-table-column>
         <el-table-column prop="updated_at" label="更新时间" min-width="190" />
-        <el-table-column label="操作" width="180"><template #default="scope"><el-button link type="primary" @click="editProfile(scope.row)">编辑</el-button><el-button link @click="showHistory(scope.row)">版本</el-button></template></el-table-column>
+        <el-table-column label="操作" min-width="300"><template #default="scope"><el-button link type="primary" @click="editProfile(scope.row)">编辑</el-button><el-button link @click="showHistory(scope.row)">版本</el-button><el-button link type="success" :disabled="!scope.row.latest_published_version" :loading="startingProfileId===scope.row.profile_id" @click="startTaskFromProfile(scope.row)">用此方案新建任务</el-button></template></el-table-column>
       </el-table>
     </div>
 
