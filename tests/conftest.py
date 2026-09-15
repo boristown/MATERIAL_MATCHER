@@ -5,11 +5,18 @@ from fastapi.testclient import TestClient
 from material_matcher.api.app import create_app
 from material_matcher.settings import Settings
 
+BOOTSTRAP_ADMIN_PASSWORD = 'Ab3dEf7Gh9'
+TEST_ADMIN_PASSWORD = 'ChangedAdmin123'
+
 @pytest.fixture()
 def client(tmp_path: Path):
-    settings=Settings(data_dir=tmp_path/'data',config_dir=tmp_path/'etc',log_dir=tmp_path/'log',admin_password='Ab3dEf7Gh9',worker_poll_seconds=0.01)
+    settings=Settings(data_dir=tmp_path/'data',config_dir=tmp_path/'etc',log_dir=tmp_path/'log',admin_password=BOOTSTRAP_ADMIN_PASSWORD,worker_poll_seconds=0.01)
     with TestClient(create_app(settings)) as test_client: yield test_client
 
 @pytest.fixture()
 def authed(client: TestClient)->TestClient:
-    response=client.post('/api/auth/login',json={'username':'admin','password':'Ab3dEf7Gh9'}); assert response.status_code==200; return client
+    response=client.post('/api/auth/login',json={'username':'admin','password':BOOTSTRAP_ADMIN_PASSWORD}); assert response.status_code==200
+    if response.json()['user']['must_change_password']:
+        changed=client.post('/api/auth/change-password',json={'current_password':BOOTSTRAP_ADMIN_PASSWORD,'new_password':TEST_ADMIN_PASSWORD}); assert changed.status_code==200
+        response=client.post('/api/auth/login',json={'username':'admin','password':TEST_ADMIN_PASSWORD}); assert response.status_code==200
+    return client
