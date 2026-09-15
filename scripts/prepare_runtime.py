@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
-import platform
 import shutil
 import subprocess
 import sys
@@ -87,6 +86,19 @@ def _runtime_info(python: Path) -> dict[str, str]:
     return json.loads(result.stdout.strip())
 
 
+def _write_launcher(path: Path) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "BIN_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "RELEASE_ROOT=$(CDPATH= cd -- \"$BIN_DIR/../..\" && pwd)\n"
+        "export PYTHONPATH=\"$RELEASE_ROOT/app${PYTHONPATH:+:$PYTHONPATH}\"\n"
+        "exec \"$BIN_DIR/python3\" -m material_matcher.cli \"$@\"\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
 def prepare_runtime(
     *,
     base_runtime_dir: Path,
@@ -141,6 +153,9 @@ def prepare_runtime(
         raise ValueError(f"不支持的目标 CPU 架构：{expected_arch}")
     if runtime_arch != expected_arch:
         raise ValueError(f"Runtime 架构 {runtime_arch} 与目标架构 {expected_arch} 不一致")
+
+    # 启动器属于 Runtime，不允许 build_release 再修改 Runtime 内容。
+    _write_launcher(output_dir / "bin/material-matcher")
 
     manifest = {
         "format_version": 1,
