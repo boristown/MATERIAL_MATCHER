@@ -23,6 +23,20 @@ class TaskService:
     def __init__(self, repository: MetadataRepository) -> None:
         self.repo = repository
 
+    def _validate_template_source(self, profile_id: str, version_no: int) -> None:
+        with self.repo.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM profile_versions WHERE profile_id=? AND version_no=?",
+                (profile_id, version_no),
+            ).fetchone()
+        if row is None or str(row["status"]) != "PUBLISHED":
+            raise DomainError(
+                "PROFILE_VERSION_NOT_FOUND",
+                "任务引用的匹配方案发布版本不存在",
+                status_code=422,
+                details={"profile_id": profile_id, "version_no": version_no},
+            )
+
     def create_draft(
         self,
         name: str,
@@ -36,6 +50,10 @@ class TaskService:
         document = config_document or {}
         if config_document is not None:
             MatchingConfig.model_validate(document)
+        if template_profile_id is not None or template_profile_version is not None:
+            if template_profile_id is None or template_profile_version is None:
+                raise DomainError("PROFILE_VERSION_NOT_FOUND", "匹配方案来源必须同时包含方案和版本", status_code=422)
+            self._validate_template_source(str(template_profile_id), int(template_profile_version))
         with self.repo.connect() as connection:
             connection.execute(
                 "INSERT INTO task_drafts VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -114,6 +132,7 @@ class TaskService:
                 if source_profile_id and source_version is not None:
                     template_profile_id = str(source_profile_id)
                     template_profile_version = int(source_version)
+                    self._validate_template_source(template_profile_id, template_profile_version)
         with self.repo.connect() as connection:
             connection.execute(
                 "UPDATE task_drafts SET config_document=?, template_profile_id=?, template_profile_version=?, current_step=2, updated_at=? WHERE draft_id=?",
