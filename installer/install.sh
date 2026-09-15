@@ -259,7 +259,17 @@ fi
 
 systemctl daemon-reload
 if [[ -x "$OPT/current/runtime/bin/material-matcher" ]]; then
-  if ! systemctl enable --now material_matcher.service; then
+  if ! systemctl enable material_matcher.service; then
+    [[ -n "$BUNDLE_ROOT" ]] && rollback_activation
+    fail "systemd 服务启用失败"
+  fi
+  # 旧版 systemd(如 SLES12 的 228)会把与 stop 任务并发的 start 任务取消,
+  # 因此先等停止任务彻底落定,再显式 start,而不是依赖 enable --now。
+  for _ in $(seq 1 60); do
+    [[ "$(systemctl is-active material_matcher.service 2>/dev/null || true)" == "inactive" ]] && break
+    sleep 1
+  done
+  if ! systemctl start material_matcher.service; then
     [[ -n "$BUNDLE_ROOT" ]] && rollback_activation
     fail "systemd 服务启动失败"
   fi
