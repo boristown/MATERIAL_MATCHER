@@ -13,8 +13,10 @@ import sys
 from typing import Iterator
 
 MANIFEST_NAME = "offline-manifest.json"
+RELEASE_MANIFEST_NAME = "release-manifest.json"
 SUPPORTED_FORMAT_VERSION = 1
 PRODUCT = "MATERIAL_MATCHER"
+RELEASE_PRODUCT = "MATERIAL_MATCHER_RELEASE"
 SUPPORTED_ARCHES = {"x86_64", "aarch64"}
 RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
@@ -100,6 +102,28 @@ def _native_wheel_exists(expected: dict[str, dict[str, object]], package_prefix:
     )
 
 
+def _verify_release_manifest(root: Path, manifest: dict[str, object], release_version: str, target_arch: str) -> dict[str, object]:
+    path = root / "release" / RELEASE_MANIFEST_NAME
+    if not path.is_file():
+        raise ValueError(f"离线包缺少 release/{RELEASE_MANIFEST_NAME}")
+    release_manifest = json.loads(path.read_text(encoding="utf-8"))
+    if release_manifest.get("format_version") != 1 or release_manifest.get("product") != RELEASE_PRODUCT:
+        raise ValueError("release manifest 产品或格式版本不正确")
+    if str(release_manifest.get("release_version") or "") != release_version:
+        raise ValueError("release manifest 版本与离线包版本不一致")
+    if _normalize_arch(str(release_manifest.get("target_arch") or "")) != target_arch:
+        raise ValueError("release manifest 架构与离线包目标架构不一致")
+    expected_sha = str(manifest.get("release_manifest_sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha) or _sha256(path) != expected_sha:
+        raise ValueError("release manifest SHA-256 与离线包记录不一致")
+    python_version = str(release_manifest.get("python_version") or "").strip()
+    source_sha = str(release_manifest.get("source_tree_sha256") or "").lower()
+    web_sha = str(release_manifest.get("web_tree_sha256") or "").lower()
+    if not python_version or not re.fullmatch(r"[0-9a-f]{64}", source_sha) or not re.fullmatch(r"[0-9a-f]{64}", web_sha):
+        raise ValueError("release manifest 缺少 Python 版本或源码/前端摘要")
+    return release_manifest
+
+
 def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     root = root.resolve()
     if not root.is_dir():
@@ -166,6 +190,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     required_exact = {
         "install.sh",
         "verify_offline_bundle.py",
+        "release/release-manifest.json",
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
         "release/web/dist/index.html",
@@ -176,6 +201,8 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         raise ValueError(f"离线包缺少必需组件：{', '.join(missing_required)}")
     for executable in ("install.sh", "release/runtime/bin/python3", "release/runtime/bin/material-matcher"):
         _require_executable(actual, executable)
+
+    release_manifest = _verify_release_manifest(root, manifest, release_version, target_arch)
 
     if not any(path in expected for path in (f"models/{model_id}/model_int8.onnx", f"models/{model_id}/model.onnx")):
         raise ValueError(f"离线包缺少 {model_prefix} 下的 ONNX 模型")
@@ -189,6 +216,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "release_version": release_version,
         "target_arch": target_arch,
         "model_id": model_id,
+        "python_version": release_manifest["python_version"],
         "file_count": len(expected),
     }
 
