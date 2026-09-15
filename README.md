@@ -79,26 +79,50 @@
 - `benchmark embedding` 使用**实际配置的生产 Embedding Provider / 模型**测量吞吐、P50/P95 batch latency、token 长度画像和 110 万条向量化预计时长；
 - `benchmark vector` 使用确定性测试向量测量实际 BBQ build/search 内核，只用于内核基准，明确不作为生产模型端到端性能承诺。
 
+### v0.7：真实任务语料画像
+
+任务规则页已经可以直接基于当前 Source / Target 和当前 retrieval 配置分析真实业务文本，而不是只依赖 synthetic benchmark 文本：
+
+- 使用与正式向量执行相同的 `build_retrieval_text` 逻辑生成 Source / Target 检索文本；
+- 使用当前正式 `EmbeddingProvider` 的 tokenizer 统计真实 token 长度，模型/Runtime 未就绪时不会用测试 tokenizer 冒充生产结果；
+- 文件按行流式读取，并使用确定性 bounded reservoir 抽样，默认最多保留 4096 条文本，避免百万行文件整体载入内存；
+- 同步预检默认最多扫描 10 万行，同时明确返回 `scan_complete`、扫描行数和可用时的覆盖率；无法可靠估算大 CSV 总行数时不会伪造 100% 覆盖；
+- 分别统计 Source / Target 的 P50 / P95 / P99 / P99.9 / maximum、128 / 192 / 256 / 512 截断率；
+- 同时统计当前 `max_length` 截断率、空文本率、重复文本率、去重文本 token 分布；
+- 按当前 Batch Size / Token Budget 估算 micro-batches 与 padding efficiency；
+- 总体建议值取 Source / Target 两侧推荐 `max_length` 的较大值；
+- 建议值只用于提示，**不会隐藏修改草稿**；用户必须在 UI 中点击“采用建议值”，正式任务启动后该值才随不可变 `config_snapshot` 冻结；
+- 修改 `max_length` 时保留已有 retrieval 高级配置，避免把 provider、模型或自定义 Source/Target retrieval 配置意外覆盖为默认值。
+
+对应接口：
+
+```text
+POST /api/task-drafts/{draft_id}/text-profile
+```
+
+任务第 2 步“高级处理”可直接查看 Source / Target 的扫描覆盖、样本数、P99/P99.9、当前截断率、重复率、空文本率和 Padding 效率，并显式采用推荐的 128 / 192 / 256 / 512。
+
 ## 当前性能边界
 
-v0.6 已具备大规模向量路径和 token-aware 推理调度结构，但**尚不能声明已经达到 100 万 Target / 10 万 Source 的生产性能目标**：
+v0.7 已具备大规模向量路径、token-aware 推理调度以及真实任务语料预检能力，但**尚不能声明已经达到 100 万 Target / 10 万 Source 的生产性能目标**：
 
-- 本仓库不提交 `bge-base-zh-v1.5` 模型文件，也没有在 GitHub CI 中运行真实模型推理；
-- 当前 Benchmark 的 token 画像功能已经完成，但还需要在真实业务 Source/Target 检索文本上采样，而不是只看 synthetic benchmark 文本；
+- 本仓库不提交 `bge-base-zh-v1.5` 模型文件，GitHub CI 也不使用测试向量冒充真实模型推理；
+- 真实语料画像能力已经接通，但真实 token 分布仍需要在客户实际 Source/Target + 正式模型安装完成后采集；
+- 当前同步画像默认限制扫描 10 万行；如果后续需要对百万 Target 做全量画像，应转为可恢复的异步任务，而不是阻塞 HTTP 请求；
 - 尚未在目标银河麒麟 Linux V10 服务器安装正式 ONNX 模型并执行现场 Benchmark；
 - 尚未完成 100 万 Target / 10 万 Source 的真实 Recall@K、端到端阶段耗时和内存/磁盘实测；
 - 当前 `EmbeddedBBQFlatIndex` 已使用 portable packed-popcount 热路径，但仍是 NumPy/LUT 实现，尚不是最终 native SIMD/POPCNT、HNSW 或 Block/Disk 路由实现。
 
-因此当前状态应理解为：**业务闭环已完成，向量执行核心和 token-aware 推理调度已接通，正在进入真实模型、真实语料和生产规模验收阶段。**
+因此当前状态应理解为：**业务闭环已完成，向量执行核心、token-aware 调度和真实业务文本预检已接通，下一阶段进入正式模型离线交付、准确率回归与生产规模性能验收。**
 
 ## 下一里程碑
 
-1. 对真实任务的 Source/Target retrieval text 进行流式采样，生成实际业务 token P50/P95/P99/P99.9、截断率和推荐 max_length。
-2. 正式离线交付 `bge-base-zh-v1.5` ONNX / tokenizer 与 `onnxruntime + tokenizers` wheelhouse，不将模型二进制提交到 Git。
-3. 在目标 CPU 上 Benchmark portable packed-popcount、native SIMD/POPCNT、HNSW/Block/Disk 路径，形成 `AutoBBQIndex` 选择策略。
-4. 使用真实业务样本验证 Recall@10 / Recall@50 / Recall@100、TopN 排序和最终集团码准确率。
-5. 完成 100 万 Target / 10 万 Source 首次建库与索引复用后的端到端 Benchmark，再决定是否满足 2～4 小时和 20～90 分钟产品目标。
-6. 完成自包含 Python Runtime、前端 dist、wheelhouse、模型和 Native 组件的正式离线安装介质，并在真实银河麒麟 V10 验收。
+1. 正式离线交付 `bge-base-zh-v1.5` ONNX / tokenizer 与 `onnxruntime + tokenizers` wheelhouse，不将模型二进制提交到 Git。
+2. 在目标 CPU 上 Benchmark portable packed-popcount、native SIMD/POPCNT、HNSW/Block/Disk 路径，形成 `AutoBBQIndex` 选择策略。
+3. 使用真实业务样本验证 Recall@10 / Recall@50 / Recall@100、TopN 排序和最终集团码准确率。
+4. 完成 100 万 Target / 10 万 Source 首次建库与索引复用后的端到端 Benchmark，再决定是否满足 2～4 小时和 20～90 分钟产品目标。
+5. 完成自包含 Python Runtime、前端 dist、wheelhouse、模型和 Native 组件的正式离线安装介质，并在真实银河麒麟 V10 验收。
+6. 如现场确有需要，将百万级全量 token 画像升级为持久化、可恢复、可显示进度的异步预检任务。
 
 ## 当前 13 所业务样例
 
