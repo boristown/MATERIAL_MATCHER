@@ -7,15 +7,14 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
-import platform
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tomllib
 
 RELEASE_MANIFEST = "release-manifest.json"
+RUNTIME_MANIFEST = "runtime-manifest.json"
 RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 SUPPORTED_ARCHES = {"x86_64", "aarch64"}
 REQUIRED_IMPORTS = (
@@ -47,9 +46,12 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _tree_sha256(root: Path) -> str:
+def _tree_sha256(root: Path, *, exclude_names: set[str] | None = None) -> str:
+    excluded = exclude_names or set()
     digest = hashlib.sha256()
     for path in sorted(item for item in root.rglob("*") if item.is_file() and not item.is_symlink()):
+        if path.name in excluded:
+            continue
         relative = path.relative_to(root).as_posix().encode("utf-8")
         digest.update(relative)
         digest.update(b"\0")
@@ -91,9 +93,26 @@ def _project_version(repo_root: Path) -> str:
     return project_version
 
 
+def _load_runtime_manifest(runtime_dir: Path) -> dict[str, object]:
+    path = runtime_dir / RUNTIME_MANIFEST
+    if not path.is_file():
+        raise ValueError(f"Runtime 缺少 {RUNTIME_MANIFEST}，请先使用 scripts/prepare_runtime.py 准备")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("format_version") != 1 or payload.get("product") != "MATERIAL_MATCHER_PYTHON_RUNTIME":
+        raise ValueError("Runtime manifest 产品或格式版本不正确")
+    target_arch = _normalize_arch(str(payload.get("target_arch") or ""))
+    if target_arch not in SUPPORTED_ARCHES:
+        raise ValueError(f"Runtime manifest 架构不受支持：{target_arch or 'empty'}")
+    expected_tree = str(payload.get("runtime_tree_sha256") or "").lower()
+    actual_tree = _tree_sha256(runtime_dir, exclude_names={RUNTIME_MANIFEST})
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_tree) or actual_tree != expected_tree:
+        raise ValueError("Runtime 文件与 runtime-manifest.json 摘要不一致")
+    return payload
+
+
 def _runtime_info(python: Path, app_dir: Path) -> dict[str, str]:
     code = (
-        "import json,platform,sys; import material_matcher; "
+        "import json,platform; import material_matcher; "
         "print(json.dumps({'version': material_matcher.__version__, "
         "'arch': platform.machine(), 'python': platform.python_version()}))"
     )
@@ -104,8 +123,7 @@ def _runtime_info(python: Path, app_dir: Path) -> dict[str, str]:
 
 
 def _verify_imports(python: Path, app_dir: Path) -> None:
-    imports = ", ".join(REQUIRED_IMPORTS)
-    code = f"import {imports}; import material_matcher"
+    code = f"import {', '.join(REQUIRED_IMPORTS)}; import material_matcher"
     env = os.environ.copy()
     env["PYTHONPATH"] = str(app_dir) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     subprocess.run([str(python), "-c", code], check=True, env=env)
@@ -152,6 +170,14 @@ def build_release(
     if not (web_dist_dir / "index.html").is_file():
         raise ValueError("web dist 缺少 index.html，请先执行前端 production build")
     _validate_tree_symlinks(runtime_dir)
+    runtime_manifest = _load_runtime_manifest(runtime_dir)
+
+    runtime_manifest_arch = _normalize_arch(str(runtime_manifest["target_arch"]))
+    expected_arch = _normalize_arch(target_arch or runtime_manifest_arch)
+    if expected_arch not in SUPPORTED_ARCHES:
+        raise ValueError(f"不支持的目标 CPU 架构：{expected_arch}")
+    if runtime_manifest_arch != expected_arch:
+        raise ValueError(f"Runtime manifest 架构 {runtime_manifest_arch} 与目标架构 {expected_arch} 不一致")
 
     if output_dir.exists() and any(output_dir.iterdir()):
         if not force:
@@ -172,22 +198,23 @@ def build_release(
     _verify_imports(python, output_dir / "app")
     runtime_info = _runtime_info(python, output_dir / "app")
     runtime_arch = _normalize_arch(runtime_info["arch"])
-    expected_arch = _normalize_arch(target_arch or runtime_arch)
-    if expected_arch not in SUPPORTED_ARCHES:
-        raise ValueError(f"不支持的目标 CPU 架构：{expected_arch}")
     if runtime_arch != expected_arch:
-        raise ValueError(f"runtime 架构 {runtime_arch} 与目标架构 {expected_arch} 不一致")
+        raise ValueError(f"runtime 实际架构 {runtime_arch} 与目标架构 {expected_arch} 不一致")
+    if str(runtime_manifest.get("python_version") or "") != runtime_info["python"]:
+        raise ValueError("Runtime 实际 Python 版本与 runtime manifest 不一致")
     if runtime_info["version"] != release_version:
         raise ValueError(f"release runtime 版本 {runtime_info['version']} 与 {release_version} 不一致")
 
     subprocess.run([str(launcher), "--help"], check=True, stdout=subprocess.DEVNULL)
 
+    runtime_manifest_path = output_dir / "runtime" / RUNTIME_MANIFEST
     manifest = {
         "format_version": 1,
         "product": "MATERIAL_MATCHER_RELEASE",
         "release_version": release_version,
         "target_arch": expected_arch,
         "python_version": runtime_info["python"],
+        "runtime_manifest_sha256": _sha256(runtime_manifest_path),
         "source_tree_sha256": _tree_sha256(output_dir / "app"),
         "web_tree_sha256": _tree_sha256(output_dir / "web/dist"),
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -199,7 +226,7 @@ def build_release(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="组装 MATERIAL_MATCHER 自包含 release；不联网、不下载依赖")
-    parser.add_argument("--runtime-dir", type=Path, required=True, help="已预装正式依赖的自包含 Python runtime")
+    parser.add_argument("--runtime-dir", type=Path, required=True, help="scripts/prepare_runtime.py 生成的正式 Python runtime")
     parser.add_argument("--web-dist-dir", type=Path, required=True, help="Vue production build 输出目录")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--release-version", required=True)
