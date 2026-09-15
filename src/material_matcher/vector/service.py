@@ -70,7 +70,8 @@ class VectorIndexService:
             "provider": asdict(provider.spec),
             "target_text_signature": retrieval_text_signature(config, "target"),
             "scope_target_field": config.scope.target_field if config.scope_mode != "GLOBAL" else None,
-            "algorithm": "embedded_bbq_flat_v1",
+            "algorithm": "embedded_bbq_flat_v2",
+            "coarse_kernel": EmbeddedBBQFlatIndex.COARSE_KERNEL,
         }
         return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
@@ -138,6 +139,8 @@ class VectorIndexService:
             "catalog_version_id": catalog_version_id,
             "target_file_sha256": target_file["sha256"],
             "group_code_column": group_code_column,
+            "algorithm_version": "embedded_bbq_flat_v2",
+            "coarse_kernel": EmbeddedBBQFlatIndex.COARSE_KERNEL,
         }
         with self.meta.connect() as connection:
             connection.execute(
