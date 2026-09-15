@@ -165,6 +165,14 @@ def _verify_release_manifest(root: Path, manifest: dict[str, object], release_ve
         or not re.fullmatch(r"[0-9a-f]{64}", runtime_manifest_sha)
     ):
         raise ValueError("release manifest 缺少 Python 版本或 Runtime/源码/前端摘要")
+    source_root = root / "release/app"
+    web_root = root / "release/web/dist"
+    if not source_root.is_dir() or not web_root.is_dir():
+        raise ValueError("release 缺少 app 源码或 web/dist")
+    if _tree_sha256(source_root) != source_sha:
+        raise ValueError("Release 源码与 release manifest 摘要不一致")
+    if _tree_sha256(web_root) != web_sha:
+        raise ValueError("Release 前端与 release manifest 摘要不一致")
     _verify_runtime_manifest(root, release_manifest, target_arch)
     return release_manifest
 
@@ -239,6 +247,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
+        "release/app/material_matcher/__init__.py",
         "release/web/dist/index.html",
         f"models/{model_id}/tokenizer.json",
     }
