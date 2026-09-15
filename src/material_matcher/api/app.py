@@ -3,10 +3,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime
 import hashlib
-import hmac
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Any
 import uuid
 
@@ -20,6 +20,7 @@ from material_matcher.domain.errors import DomainError
 from material_matcher.embedding.providers import embedding_runtime_status
 from material_matcher.ingestion.inspector import inspect_tabular_file
 from material_matcher.security.session import SessionStore
+from material_matcher.security.users import ROLES, UserService
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.catalog_service import CatalogService
@@ -42,6 +43,27 @@ _ALLOWED_SUFFIXES = {".xlsx", ".xlsm", ".csv"}
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=10, max_length=200)
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=10, max_length=200)
+    role: str = Field(pattern="^(admin|operator|reviewer|viewer)$")
+
+
+class UserUpdate(BaseModel):
+    role: str | None = Field(default=None, pattern="^(admin|operator|reviewer|viewer)$")
+    enabled: bool | None = None
+
+
+class UserPasswordReset(BaseModel):
+    password: str = Field(min_length=10, max_length=200)
+    must_change_password: bool = True
 
 
 class DraftCreate(BaseModel):
@@ -147,6 +169,15 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _reviewer_mutation_allowed(path: str) -> bool:
+    return bool(
+        re.fullmatch(r"/api/tasks/[^/]+/items/[^/]+/(confirm|reject)", path)
+        or re.fullmatch(r"/api/tasks/[^/]+/workbench/(batch-confirm-top1|batch-reject)", path)
+        or re.fullmatch(r"/api/tasks/[^/]+/finalize", path)
+        or re.fullmatch(r"/api/tasks/[^/]+/evaluations", path)
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings.load()
     cfg.ensure_dirs()
@@ -154,6 +185,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     files = FileRepository(cfg.data_dir, metadata)
     catalogs = CatalogService(metadata, files)
     dictionaries = DictionaryService(metadata)
+    users = UserService(metadata)
+    users.ensure_bootstrap_admin(cfg.admin_password)
     tasks = TaskService(metadata)
     profiles = ProfileService(metadata)
     matches = MatchService(metadata, files, cfg)
@@ -198,8 +231,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def auth_middleware(request: Request, call_next: Any) -> Response:
         request.state.request_id = uuid.uuid4().hex[:12]
         public_paths = {"/api/health", "/api/health/ready", "/api/auth/login", "/api/docs", "/api/openapi.json"}
-        if request.url.path.startswith("/api/") and request.url.path not in public_paths and not sessions.validate(request.cookies.get(COOKIE_NAME)):
-            return JSONResponse(status_code=401, content={"error": {"code": "AUTH_REQUIRED", "message": "登录已失效，请重新登录", "details": {}, "request_id": request.state.request_id}})
+        path = request.url.path
+        if path.startswith("/api/") and path not in public_paths:
+            session = sessions.get(request.cookies.get(COOKIE_NAME))
+            if session is None:
+                return JSONResponse(status_code=401, content={"error": {"code": "AUTH_REQUIRED", "message": "登录已失效，请重新登录", "details": {}, "request_id": request.state.request_id}})
+            try:
+                principal = users.get(session.username)
+            except DomainError:
+                sessions.revoke(request.cookies.get(COOKIE_NAME))
+                return JSONResponse(status_code=401, content={"error": {"code": "AUTH_REQUIRED", "message": "账号已失效，请重新登录", "details": {}, "request_id": request.state.request_id}})
+            if not principal["enabled"]:
+                sessions.revoke_user(session.username)
+                return JSONResponse(status_code=401, content={"error": {"code": "AUTH_REQUIRED", "message": "账号已停用", "details": {}, "request_id": request.state.request_id}})
+            request.state.username = session.username
+            request.state.role = str(principal["role"])
+            if principal["must_change_password"] and path not in {"/api/auth/me", "/api/auth/change-password", "/api/auth/logout"}:
+                return JSONResponse(status_code=403, content={"error": {"code": "PASSWORD_CHANGE_REQUIRED", "message": "管理员已重置密码，请先修改密码", "details": {}, "request_id": request.state.request_id}})
+            if request.method.upper() not in {"GET", "HEAD", "OPTIONS"} and path not in {"/api/auth/logout", "/api/auth/change-password"}:
+                role = str(principal["role"])
+                allowed = role == "admin" or (role == "operator" and not path.startswith("/api/users")) or (role == "reviewer" and _reviewer_mutation_allowed(path))
+                if not allowed:
+                    return JSONResponse(status_code=403, content={"error": {"code": "PERMISSION_DENIED", "message": "当前账号没有执行此操作的权限", "details": {"role": role}, "request_id": request.state.request_id}})
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         return response
@@ -210,8 +263,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health/ready")
     def ready() -> dict[str, object]:
+        with metadata.connect() as connection:
+            admin_count = int(connection.execute("SELECT COUNT(*) AS count FROM users WHERE role='admin' AND enabled=1").fetchone()["count"])
         checks = {
-            "admin_password_configured": bool(cfg.admin_password),
+            "admin_account": admin_count > 0,
             "database": os.access(metadata.db_path, os.R_OK | os.W_OK),
             "data_dir": os.access(cfg.data_dir, os.W_OK),
             "tmp_dir": os.access(cfg.data_dir / "tmp", os.W_OK),
@@ -220,15 +275,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/auth/login")
     def login(payload: LoginRequest, response: Response) -> dict[str, object]:
-        if payload.username != "admin" or not cfg.admin_password or not hmac.compare_digest(payload.password, cfg.admin_password):
-            raise DomainError("AUTH_FAILED", "用户名或密码错误", status_code=401)
-        session = sessions.create()
+        principal = users.authenticate(payload.username, payload.password)
+        session = sessions.create(str(principal["username"]), str(principal["role"]))
         response.set_cookie(COOKIE_NAME, session.token, httponly=True, samesite="strict", secure=False, max_age=cfg.session_ttl_seconds, path="/")
-        return {"ok": True, "expires_at": datetime.fromtimestamp(session.expires_at).astimezone().isoformat()}
+        return {"ok": True, "expires_at": datetime.fromtimestamp(session.expires_at).astimezone().isoformat(), "user": principal}
+
+    @app.get("/api/auth/me")
+    def auth_me(request: Request) -> dict[str, object]:
+        return users.get(str(request.state.username))
+
+    @app.post("/api/auth/change-password")
+    def change_password(request: Request, payload: ChangePasswordRequest, response: Response) -> dict[str, object]:
+        username = str(request.state.username)
+        users.authenticate(username, payload.current_password)
+        user = users.set_password(username, payload.new_password, must_change_password=False)
+        sessions.revoke_user(username)
+        response.delete_cookie(COOKIE_NAME, path="/")
+        return {"ok": True, "user": user, "relogin_required": True}
 
     @app.post("/api/auth/logout")
     def logout(request: Request, response: Response) -> dict[str, bool]:
         sessions.revoke(request.cookies.get(COOKIE_NAME)); response.delete_cookie(COOKIE_NAME, path="/"); return {"ok": True}
+
+    @app.get("/api/users")
+    def list_users(request: Request) -> list[dict[str, object]]:
+        if str(request.state.role) != "admin": raise DomainError("PERMISSION_DENIED", "仅管理员可查看账号", status_code=403)
+        return users.list()
+
+    @app.post("/api/users")
+    def create_user(request: Request, payload: UserCreate) -> dict[str, object]:
+        if str(request.state.role) != "admin": raise DomainError("PERMISSION_DENIED", "仅管理员可创建账号", status_code=403)
+        return users.create(payload.username, payload.password, payload.role)
+
+    @app.patch("/api/users/{username}")
+    def update_user(username: str, request: Request, payload: UserUpdate) -> dict[str, object]:
+        if str(request.state.role) != "admin": raise DomainError("PERMISSION_DENIED", "仅管理员可修改账号", status_code=403)
+        result = users.update(username, role=payload.role, enabled=payload.enabled)
+        sessions.revoke_user(username)
+        return result
+
+    @app.post("/api/users/{username}/reset-password")
+    def reset_user_password(username: str, request: Request, payload: UserPasswordReset) -> dict[str, object]:
+        if str(request.state.role) != "admin": raise DomainError("PERMISSION_DENIED", "仅管理员可重置密码", status_code=403)
+        result = users.set_password(username, payload.password, must_change_password=payload.must_change_password)
+        sessions.revoke_user(username)
+        return result
 
     @app.post("/api/files/upload")
     async def upload_file(role: str = Form(...), file: UploadFile = File(...)) -> dict[str, object]:
@@ -307,12 +398,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/catalogs/{catalog_id}/versions")
     def create_catalog_version(catalog_id: str, payload: CatalogVersionCreate) -> dict[str, object]:
-        return catalogs.add_version(
-            catalog_id,
-            source_file_id=payload.source_file_id,
-            group_code_column=payload.group_code_column,
-            activate=payload.activate,
-        )
+        return catalogs.add_version(catalog_id, source_file_id=payload.source_file_id, group_code_column=payload.group_code_column, activate=payload.activate)
 
     @app.post("/api/catalogs/{catalog_id}/versions/{version_id}/activate")
     def activate_catalog_version(catalog_id: str, version_id: str) -> dict[str, object]:
@@ -500,8 +586,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "version":__version__,"data_dir":str(cfg.data_dir),"database":str(metadata.db_path),"max_upload_bytes":cfg.max_upload_bytes,
             "max_total_upload_bytes":cfg.max_total_upload_bytes,"chunk_size_bytes":cfg.chunk_size_bytes,"baseline_max_target_rows":cfg.baseline_max_target_rows,
             "embedding":{"provider":cfg.embedding_provider,"model_id":cfg.embedding_model_id,"dimensions":cfg.embedding_dimensions,"max_length":cfg.embedding_max_length,"precision":cfg.embedding_precision},
+            "authorization":{"roles":list(ROLES)},
             "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
         }
 
-    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.dictionaries=dictionaries; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.dictionaries=dictionaries; app.state.users=users; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
