@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import platform
@@ -15,6 +16,18 @@ def _arch() -> str:
     if value in {"arm64", "aarch64"}:
         return "aarch64"
     raise RuntimeError(value)
+
+
+def _tree_sha256(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(item for item in root.rglob("*") if item.is_file() and not item.is_symlink()):
+        if path.name == "runtime-manifest.json":
+            continue
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _base_runtime(tmp_path: Path) -> Path:
@@ -60,8 +73,13 @@ def test_prepare_runtime_uses_offline_install_contract(tmp_path: Path) -> None:
     assert manifest["target_arch"] == _arch()
     assert manifest["python_version"] == platform.python_version()
     assert len(manifest["runtime_tree_sha256"]) == 64
+    assert manifest["runtime_tree_sha256"] == _tree_sha256(output)
     assert any(str(item).startswith("onnxruntime") for item in manifest["dependencies"])
     assert any(str(item).startswith("tokenizers") for item in manifest["dependencies"])
+    launcher = output / "bin/material-matcher"
+    assert launcher.is_file()
+    assert launcher.stat().st_mode & 0o111
+    assert "material_matcher.cli" in launcher.read_text(encoding="utf-8")
 
 
 def test_prepare_runtime_rejects_output_overlapping_input(tmp_path: Path) -> None:
