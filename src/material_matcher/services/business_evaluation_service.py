@@ -43,6 +43,14 @@ class BusinessEvaluationService:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
         return dict(row)
 
+    @staticmethod
+    def _configured_top_n(task: dict[str, object]) -> int:
+        try:
+            document = json.loads(str(task.get("config_snapshot") or "{}"))
+            return max(1, int(document.get("decision", {}).get("top_n", 1)))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 1
+
     def _truth(self, file_id: str, key_column: str, expected_column: str) -> dict[str, str]:
         record = self.files.get(file_id)
         if record.get("role") != "supplement":
@@ -126,6 +134,8 @@ class BusinessEvaluationService:
         if task.get("status") != "COMPLETED":
             raise DomainError("TASK_STATE_CONFLICT", "只有计算完成的任务才能进行准确率验收", status_code=409)
 
+        configured_top_n = self._configured_top_n(task)
+        recall_ks = sorted({k for k in (1, 3, 5, 10) if k <= configured_top_n} | {configured_top_n})
         truth = self._truth(truth_file_id, key_column, expected_group_code_column)
         items = self._task_items(task_id, key_mode, list(truth))
         candidate_ranks = self._candidate_ranks(task_id, [str(item["source_row_id"]) for item in items.values()])
@@ -139,7 +149,7 @@ class BusinessEvaluationService:
         unmatched_rows = 0
         resolved_rows = 0
         human_changed_rows = 0
-        candidate_hits = {1: 0, 3: 0, 5: 0, 10: 0}
+        candidate_hits = {k: 0 for k in recall_ks}
         details: list[dict[str, object]] = []
 
         for key, expected in truth.items():
@@ -202,7 +212,7 @@ class BusinessEvaluationService:
             "top1_accuracy": _ratio(top1_correct, evaluated),
             "final_correct": final_correct,
             "final_accuracy": _ratio(final_correct, evaluated),
-            "human_accuracy_gain": round(_ratio(final_correct, evaluated) - _ratio(top1_correct, evaluated), 6),
+            "human_accuracy_gain": _ratio(final_correct - top1_correct, evaluated),
             "automatic_rows": automatic_rows,
             "automatic_accuracy": _ratio(automatic_correct, automatic_rows),
             "review_rows": review_rows,
@@ -212,6 +222,7 @@ class BusinessEvaluationService:
             "resolved_rows": resolved_rows,
             "resolved_rate": _ratio(resolved_rows, evaluated),
             "human_changed_rows": human_changed_rows,
+            "candidate_top_n": configured_top_n,
             "candidate_recall_at": {str(k): _ratio(value, evaluated) for k, value in candidate_hits.items()},
         }
         run_id = uuid.uuid4().hex
