@@ -91,6 +91,9 @@ def _row_result(source_row: dict[str, object], row_index: int, scored: list[tupl
     candidates = [CandidateResult(rank, item[1], round(item[0],4), float(item[3]["raw_score"]), bool(item[3]["critical_conflict"]), item[2], list(item[3]["field_scores"])) for rank,item in enumerate(selected,start=1)]
     first = candidates[0].score if candidates else 0.0; second = candidates[1].score if len(candidates)>1 else 0.0
     status = decide_status(first, config) if candidates else "UNMATCHED"
+    if (status == "MATCHED" and config.decision.review_enabled and len(candidates) > 1
+            and candidates[1].score == first and candidates[1].group_code != candidates[0].group_code):
+        status = "REVIEW"
     final = candidates[0].group_code if status == "MATCHED" and candidates else None
     source_id = str(source_row.get(config.source_id_column) or row_index) if config.source_id_column else str(row_index)
     return RowResult(str(row_index), source_id, source_row, status, final, first, second, round(first-second,4), candidates[0].critical_conflict if candidates else False, candidates)
