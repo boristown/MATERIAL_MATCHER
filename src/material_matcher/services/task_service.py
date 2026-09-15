@@ -8,6 +8,7 @@ import uuid
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
+from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
 
@@ -22,6 +23,7 @@ def _canonical(value: object) -> str:
 class TaskService:
     def __init__(self, repository: MetadataRepository) -> None:
         self.repo = repository
+        self.dictionaries = DictionaryService(repository)
 
     def _validate_template_source(self, profile_id: str, version_no: int) -> None:
         with self.repo.connect() as connection:
@@ -47,7 +49,7 @@ class TaskService:
     ) -> dict[str, object]:
         draft_id = uuid.uuid4().hex
         created_at = _now()
-        document = config_document or {}
+        document = self.dictionaries.bind_references(config_document) if config_document is not None else {}
         if config_document is not None:
             MatchingConfig.model_validate(document)
         if template_profile_id is not None or template_profile_version is not None:
@@ -120,10 +122,11 @@ class TaskService:
 
     def save_rules(self, draft_id: str, document: dict[str, Any]) -> dict[str, object]:
         draft = self.get_draft(draft_id)
-        MatchingConfig.model_validate(document)
+        bound_document = self.dictionaries.bind_references(document)
+        MatchingConfig.model_validate(bound_document)
         template_profile_id = draft.get("template_profile_id")
         template_profile_version = draft.get("template_profile_version")
-        advanced = document.get("advanced")
+        advanced = bound_document.get("advanced")
         if isinstance(advanced, dict):
             template_source = advanced.get("template_source")
             if isinstance(template_source, dict):
@@ -136,7 +139,7 @@ class TaskService:
         with self.repo.connect() as connection:
             connection.execute(
                 "UPDATE task_drafts SET config_document=?, template_profile_id=?, template_profile_version=?, current_step=2, updated_at=? WHERE draft_id=?",
-                (_canonical(document), template_profile_id, template_profile_version, _now(), draft_id),
+                (_canonical(bound_document), template_profile_id, template_profile_version, _now(), draft_id),
             )
         return self.get_draft(draft_id)
 
@@ -144,7 +147,8 @@ class TaskService:
         draft = self.get_draft(draft_id)
         if not draft.get("source_file_id") or not draft.get("catalog_version_id"):
             raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据和集团码目录", status_code=422)
-        config = MatchingConfig.model_validate(draft.get("config_document") or {})
+        bound_document = self.dictionaries.bind_references(dict(draft.get("config_document") or {}))
+        config = MatchingConfig.model_validate(bound_document)
         if not config.rules:
             raise DomainError("INVALID_PROFILE", "至少配置一条字段对应关系后才能开始比对", status_code=422)
         snapshot = config.model_dump(mode="json")
