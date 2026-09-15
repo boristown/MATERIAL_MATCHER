@@ -99,6 +99,24 @@ CREATE TABLE IF NOT EXISTS benchmark_runs(
   started_at TEXT NOT NULL, finished_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at ON benchmark_runs(started_at DESC);
+CREATE TABLE IF NOT EXISTS evaluation_runs(
+  run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, truth_file_id TEXT NOT NULL,
+  key_mode TEXT NOT NULL, key_column TEXT NOT NULL, expected_column TEXT NOT NULL,
+  metrics TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+  FOREIGN KEY(truth_file_id) REFERENCES files(file_id)
+);
+CREATE INDEX IF NOT EXISTS idx_evaluation_runs_task_created ON evaluation_runs(task_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS evaluation_items(
+  run_id TEXT NOT NULL, truth_key TEXT NOT NULL, expected_group_code TEXT NOT NULL,
+  matched_task_row INTEGER NOT NULL, source_row_id TEXT, source_id TEXT,
+  original_status TEXT, current_status TEXT, top1_group_code TEXT, final_group_code TEXT,
+  top1_score REAL, top1_correct INTEGER NOT NULL, final_correct INTEGER NOT NULL,
+  expected_candidate_rank INTEGER,
+  PRIMARY KEY(run_id, truth_key),
+  FOREIGN KEY(run_id) REFERENCES evaluation_runs(run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_evaluation_items_errors ON evaluation_items(run_id, final_correct, top1_correct);
 """
 
 
