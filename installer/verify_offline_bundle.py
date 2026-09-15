@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import re
 import stat
 import sys
 from typing import Iterator
@@ -14,6 +15,8 @@ from typing import Iterator
 MANIFEST_NAME = "offline-manifest.json"
 SUPPORTED_FORMAT_VERSION = 1
 PRODUCT = "MATERIAL_MATCHER"
+SUPPORTED_ARCHES = {"x86_64", "aarch64"}
+RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 
 def _sha256(path: Path) -> str:
@@ -34,6 +37,8 @@ def _normalize_arch(value: str) -> str:
 
 
 def _safe_relative(value: str) -> PurePosixPath:
+    if "\\" in value:
+        raise ValueError(f"非法离线包路径：{value!r}")
     path = PurePosixPath(value)
     if not value or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError(f"非法离线包路径：{value!r}")
@@ -62,9 +67,13 @@ def _iter_entries(root: Path) -> Iterator[tuple[str, Path]]:
 
 
 def _validate_symlink(root: Path, relative: str, path: Path, expected_target: str) -> None:
+    if not expected_target:
+        raise ValueError(f"符号链接缺少目标：{relative}")
     actual_target = os.readlink(path)
     if actual_target != expected_target:
         raise ValueError(f"符号链接目标不一致：{relative}")
+    if "\\" in actual_target:
+        raise ValueError(f"符号链接目标格式不允许：{relative}")
     target = PurePosixPath(actual_target)
     if target.is_absolute():
         raise ValueError(f"离线包禁止绝对符号链接：{relative}")
@@ -75,8 +84,26 @@ def _validate_symlink(root: Path, relative: str, path: Path, expected_target: st
         raise ValueError(f"符号链接逃逸离线包目录：{relative}") from exc
 
 
+def _require_executable(actual: dict[str, Path], relative: str) -> None:
+    path = actual[relative]
+    if not path.exists() or not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError(f"必需启动文件不可执行：{relative}")
+
+
+def _native_wheel_exists(expected: dict[str, dict[str, object]], package_prefix: str, target_arch: str) -> bool:
+    prefix = f"wheelhouse/{package_prefix.lower()}-"
+    return any(
+        path.lower().startswith(prefix)
+        and path.lower().endswith(".whl")
+        and target_arch in PurePosixPath(path).name.lower()
+        for path in expected
+    )
+
+
 def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     root = root.resolve()
+    if not root.is_dir():
+        raise ValueError(f"离线包目录不存在：{root}")
     manifest_path = root / MANIFEST_NAME
     if not manifest_path.is_file():
         raise ValueError(f"缺少 {MANIFEST_NAME}")
@@ -85,11 +112,14 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         raise ValueError("离线包 manifest 格式版本不受支持")
     if manifest.get("product") != PRODUCT:
         raise ValueError("离线包产品标识不正确")
+
     release_version = str(manifest.get("release_version") or "").strip()
+    if not RELEASE_VERSION_RE.fullmatch(release_version):
+        raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
     target_arch = _normalize_arch(str(manifest.get("target_arch") or ""))
-    model_id = str(manifest.get("model_id") or "").strip()
-    if not release_version or not target_arch or not model_id:
-        raise ValueError("离线包 manifest 缺少 release_version / target_arch / model_id")
+    if target_arch not in SUPPORTED_ARCHES:
+        raise ValueError(f"不支持的目标 CPU 架构：{target_arch or 'empty'}")
+    model_id = _safe_relative(str(manifest.get("model_id") or "").strip()).as_posix()
     if not skip_arch and target_arch != _normalize_arch(platform.machine()):
         raise ValueError(f"离线包架构 {target_arch} 与当前机器 {platform.machine()} 不匹配")
 
@@ -124,10 +154,10 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         if kind != "file" or path.is_symlink() or not path.is_file():
             raise ValueError(f"文件类型不一致：{relative}")
         expected_size = int(item.get("size", -1))
-        if path.stat().st_size != expected_size:
+        if expected_size < 0 or path.stat().st_size != expected_size:
             raise ValueError(f"文件大小校验失败：{relative}")
         expected_sha = str(item.get("sha256") or "").lower()
-        if len(expected_sha) != 64 or _sha256(path) != expected_sha:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha) or _sha256(path) != expected_sha:
             raise ValueError(f"SHA-256 校验失败：{relative}")
         if bool(item.get("executable")) and not (stat.S_IMODE(path.stat().st_mode) & 0o111):
             raise ValueError(f"文件缺少可执行权限：{relative}")
@@ -144,12 +174,15 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     missing_required = sorted(required_exact - set(expected))
     if missing_required:
         raise ValueError(f"离线包缺少必需组件：{', '.join(missing_required)}")
+    for executable in ("install.sh", "release/runtime/bin/python3", "release/runtime/bin/material-matcher"):
+        _require_executable(actual, executable)
+
     if not any(path in expected for path in (f"models/{model_id}/model_int8.onnx", f"models/{model_id}/model.onnx")):
         raise ValueError(f"离线包缺少 {model_prefix} 下的 ONNX 模型")
-    if not any(path.startswith("wheelhouse/onnxruntime-") and path.endswith(".whl") for path in expected):
-        raise ValueError("wheelhouse 缺少 onnxruntime wheel")
-    if not any(path.startswith("wheelhouse/tokenizers-") and path.endswith(".whl") for path in expected):
-        raise ValueError("wheelhouse 缺少 tokenizers wheel")
+    if not _native_wheel_exists(expected, "onnxruntime", target_arch):
+        raise ValueError(f"wheelhouse 缺少适用于 {target_arch} 的 onnxruntime wheel")
+    if not _native_wheel_exists(expected, "tokenizers", target_arch):
+        raise ValueError(f"wheelhouse 缺少适用于 {target_arch} 的 tokenizers wheel")
 
     return {
         "ok": True,
