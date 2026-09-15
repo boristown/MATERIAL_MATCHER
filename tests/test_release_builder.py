@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import platform
@@ -23,6 +24,22 @@ def _arch() -> str:
     raise RuntimeError(f"unsupported test arch: {value}")
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _runtime_tree_sha(runtime: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(item for item in runtime.rglob("*") if item.is_file() and not item.is_symlink()):
+        if path.name == "runtime-manifest.json":
+            continue
+        digest.update(path.relative_to(runtime).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(_sha256(path).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _runtime(tmp_path: Path) -> Path:
     runtime = tmp_path / "runtime-stage"
     fake_modules = tmp_path / "fake-modules"
@@ -38,6 +55,19 @@ def _runtime(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     python.chmod(0o755)
+    (runtime / "runtime-manifest.json").write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "product": "MATERIAL_MATCHER_PYTHON_RUNTIME",
+                "target_arch": _arch(),
+                "python_version": platform.python_version(),
+                "dependencies": [],
+                "runtime_tree_sha256": _runtime_tree_sha(runtime),
+            }
+        ),
+        encoding="utf-8",
+    )
     return runtime
 
 
@@ -71,8 +101,10 @@ def test_build_release_creates_self_contained_layout(tmp_path: Path) -> None:
     manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
     assert manifest["release_version"] == version
     assert manifest["target_arch"] == _arch()
+    assert len(manifest["runtime_manifest_sha256"]) == 64
     assert len(manifest["source_tree_sha256"]) == 64
     assert len(manifest["web_tree_sha256"]) == 64
+    assert (output / "runtime/runtime-manifest.json").is_file()
     assert (output / "app/material_matcher/cli.py").is_file()
     assert (output / "web/dist/index.html").is_file()
     assert (output / "runtime/bin/material-matcher").stat().st_mode & 0o111
@@ -103,3 +135,25 @@ def test_build_release_rejects_version_mismatch(tmp_path: Path) -> None:
     )
     assert result.returncode == 2
     assert "与项目版本" in result.stderr
+
+
+def test_build_release_rejects_tampered_runtime(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    runtime = _runtime(tmp_path)
+    (runtime / "bin/python3").write_text("#!/bin/sh\nexit 0\n# tampered\n", encoding="utf-8")
+    (runtime / "bin/python3").chmod(0o755)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts/build_release.py"),
+            "--runtime-dir", str(runtime),
+            "--web-dist-dir", str(_web_dist(tmp_path)),
+            "--output-dir", str(tmp_path / "release"),
+            "--release-version", _project_version(repo_root),
+            "--target-arch", _arch(),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "摘要不一致" in result.stderr
