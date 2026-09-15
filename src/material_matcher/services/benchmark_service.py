@@ -17,6 +17,7 @@ from material_matcher.embedding.providers import DeterministicEmbeddingProvider,
 from material_matcher.settings import Settings
 from material_matcher.storage.metadata import MetadataRepository
 from material_matcher.vector.index import EmbeddedBBQFlatIndex
+from material_matcher.vector.quality import evaluate_index_recall
 
 
 def _now() -> str:
@@ -122,7 +123,17 @@ class BenchmarkService:
         top_k = max(1, min(target_rows, min(1000, int(top_k))))
         run_id = uuid.uuid4().hex
         started_at = _now()
-        parameters = {"target_rows": target_rows, "query_count": query_count, "dimensions": dimensions, "top_k": top_k, "provider": "deterministic_test"}
+        quality_reference_rows = min(target_rows, 10_000)
+        quality_query_count = min(query_count, 100)
+        parameters = {
+            "target_rows": target_rows,
+            "query_count": query_count,
+            "dimensions": dimensions,
+            "top_k": top_k,
+            "provider": "deterministic_test",
+            "quality_reference_rows": quality_reference_rows,
+            "quality_query_count": quality_query_count,
+        }
         root = self.settings.data_dir / "tmp" / f"benchmark-{run_id}"
         index_root = root / "index"
         try:
@@ -138,17 +149,44 @@ class BenchmarkService:
             build_started = time.perf_counter()
             index, stats = EmbeddedBBQFlatIndex.build(index_root, provider=provider, cache=cache, target_rows=rows, config=config, group_code_column="集团码", metadata={"benchmark": True, "benchmark_kind": "synthetic_vector_kernel"}, embedding_batch_size=min(512, max(16, self.settings.embedding_batch_size)), scan_block_rows=self.settings.index_scan_block_rows)
             build_seconds = max(time.perf_counter() - build_started, 1e-9)
+
             query_texts = [f"工业物料 {index * 997 % target_rows:08d} 型号 M{index % 1000:03d}" for index in range(query_count)]
             query_vectors = provider.embed_batched(query_texts, max_batch_size=self.settings.query_batch_size, token_budget=self.settings.embedding_token_budget)
             search_started = time.perf_counter()
             hits_returned = sum(len(index.search(query, top_k)) for query in query_vectors)
             search_seconds = max(time.perf_counter() - search_started, 1e-9)
+
+            quality_texts = [f"工业物料 {index:08d} 型号 M{index % 1000:03d}" for index in range(quality_reference_rows)]
+            reference_vectors = provider.embed_batched(
+                quality_texts,
+                max_batch_size=min(512, max(16, self.settings.embedding_batch_size)),
+                token_budget=self.settings.embedding_token_budget,
+            )
+            quality_started = time.perf_counter()
+            quality = evaluate_index_recall(
+                index,
+                reference_vectors=reference_vectors,
+                query_vectors=query_vectors,
+                candidate_ids=np.arange(quality_reference_rows, dtype=np.int64),
+                ks=(10, 50, 100),
+                max_queries=quality_query_count,
+            )
+            quality_seconds = max(time.perf_counter() - quality_started, 1e-9)
+
             disk_bytes = sum(path.stat().st_size for path in index_root.rglob("*") if path.is_file())
             metrics = {
-                "build_seconds": round(build_seconds, 6), "build_rows_per_second": round(target_rows / build_seconds, 3),
-                "search_seconds": round(search_seconds, 6), "search_queries_per_second": round(query_count / search_seconds, 3),
-                "average_hits_returned": round(hits_returned / query_count, 3), "index_disk_bytes": int(disk_bytes),
-                "build_stats": asdict(stats), "measurement_scope": "synthetic_vector_kernel_only", "production_performance_claim": False,
+                "build_seconds": round(build_seconds, 6),
+                "build_rows_per_second": round(target_rows / build_seconds, 3),
+                "search_seconds": round(search_seconds, 6),
+                "search_queries_per_second": round(query_count / search_seconds, 3),
+                "average_hits_returned": round(hits_returned / query_count, 3),
+                "index_disk_bytes": int(disk_bytes),
+                "build_stats": asdict(stats),
+                "recall_quality": quality.to_dict(),
+                "recall_evaluation_seconds": round(quality_seconds, 6),
+                "measurement_scope": "synthetic_vector_kernel_and_quantization_recall_subset",
+                "production_performance_claim": False,
+                "business_accuracy_claim": False,
             }
             return self._record(run_id=run_id, kind="vector_kernel", status="SUCCESS", parameters=parameters, metrics=metrics, started_at=started_at)
         except Exception as exc:
