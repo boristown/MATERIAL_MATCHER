@@ -40,6 +40,8 @@ def _write(path: Path, content: bytes, executable: bool = False) -> None:
 def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
     release = tmp_path / "release-stage"
     runtime = release / "runtime"
+    source = release / "app"
+    web = release / "web/dist"
     model = tmp_path / "model-stage"
     wheelhouse = tmp_path / "wheelhouse-stage"
     version = _project_version(repo_root)
@@ -56,8 +58,10 @@ def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
     runtime_manifest_path = runtime / "runtime-manifest.json"
     runtime_manifest_path.write_text(json.dumps(runtime_manifest), encoding="utf-8")
 
-    _write(release / "web/dist/index.html", b"<html>matcher</html>")
-    (release / "release-manifest.json").write_text(
+    _write(source / "material_matcher/__init__.py", f"__version__ = {version!r}\n".encode())
+    _write(web / "index.html", b"<html>matcher</html>")
+    release_manifest_path = release / "release-manifest.json"
+    release_manifest_path.write_text(
         json.dumps(
             {
                 "format_version": 1,
@@ -66,8 +70,8 @@ def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
                 "target_arch": "x86_64",
                 "python_version": "3.11.0",
                 "runtime_manifest_sha256": _sha256(runtime_manifest_path),
-                "source_tree_sha256": "a" * 64,
-                "web_tree_sha256": "b" * 64,
+                "source_tree_sha256": _tree_sha256(source),
+                "web_tree_sha256": _tree_sha256(web),
             }
         ),
         encoding="utf-8",
@@ -109,6 +113,7 @@ def test_offline_bundle_build_and_verify(tmp_path: Path) -> None:
     assert "release/release-manifest.json" in paths
     assert "release/runtime/runtime-manifest.json" in paths
     assert "release/runtime/bin/material-matcher" in paths
+    assert "release/app/material_matcher/__init__.py" in paths
     assert "release/web/dist/index.html" in paths
     assert "models/BAAI/bge-base-zh-v1.5/tokenizer.json" in paths
     assert "models/BAAI/bge-base-zh-v1.5/model_int8.onnx" in paths
@@ -197,6 +202,28 @@ def test_offline_bundle_rejects_runtime_manifest_tampering(tmp_path: Path) -> No
     )
     assert result.returncode == 2
     assert "Runtime 文件" in result.stderr or "SHA-256" in result.stderr
+
+
+def test_offline_bundle_rejects_release_tree_tampering(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    release, model, wheelhouse = _staging(tmp_path, repo_root)
+    (release / "web/dist/index.html").write_text("tampered web", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts/build_offline_bundle.py"),
+            "--release-dir", str(release),
+            "--model-dir", str(model),
+            "--wheelhouse-dir", str(wheelhouse),
+            "--output-dir", str(tmp_path / "tampered-release"),
+            "--release-version", _project_version(repo_root),
+            "--target-arch", "x86_64",
+        ],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "Release 前端" in result.stderr or "SHA-256" in result.stderr
 
 
 def test_offline_bundle_rejects_unsafe_model_id_and_arch_wheel(tmp_path: Path) -> None:
