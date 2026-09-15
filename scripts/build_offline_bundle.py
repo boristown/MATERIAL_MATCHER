@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 MANIFEST_NAME = "offline-manifest.json"
+RELEASE_MANIFEST_NAME = "release-manifest.json"
 PRODUCT = "MATERIAL_MATCHER"
 FORMAT_VERSION = 1
 SUPPORTED_ARCHES = {"x86_64", "aarch64"}
@@ -84,6 +85,16 @@ def _paths_overlap(first: Path, second: Path) -> bool:
     return first == second or first in second.parents or second in first.parents
 
 
+def _load_release_manifest(release_dir: Path) -> dict[str, object]:
+    path = release_dir / RELEASE_MANIFEST_NAME
+    if not path.is_file():
+        raise ValueError(f"release 缺少 {RELEASE_MANIFEST_NAME}，请先使用 scripts/build_release.py 构建")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("format_version") != 1 or payload.get("product") != "MATERIAL_MATCHER_RELEASE":
+        raise ValueError("release manifest 产品或格式版本不正确")
+    return payload
+
+
 def build_bundle(
     *,
     release_dir: Path,
@@ -106,6 +117,16 @@ def build_bundle(
     wheelhouse_dir = wheelhouse_dir.resolve()
     output_dir = output_dir.resolve()
     repo_root = Path(__file__).resolve().parents[1]
+
+    release_manifest = _load_release_manifest(release_dir)
+    if str(release_manifest.get("release_version") or "") != release_version:
+        raise ValueError(
+            f"release 版本 {release_manifest.get('release_version')} 与离线包版本 {release_version} 不一致"
+        )
+    if str(release_manifest.get("target_arch") or "") != target_arch:
+        raise ValueError(
+            f"release 架构 {release_manifest.get('target_arch')} 与离线包目标架构 {target_arch} 不一致"
+        )
 
     for source in (release_dir, model_dir, wheelhouse_dir):
         if _paths_overlap(output_dir, source):
@@ -133,6 +154,7 @@ def build_bundle(
         "release_version": release_version,
         "target_arch": target_arch,
         "model_id": model_path.as_posix(),
+        "release_manifest_sha256": _sha256(output_dir / "release" / RELEASE_MANIFEST_NAME),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "files": files,
     }
@@ -148,7 +170,7 @@ def build_bundle(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="组装 MATERIAL_MATCHER 正式离线发布目录，不下载任何公网依赖")
-    parser.add_argument("--release-dir", type=Path, required=True, help="已构建的自包含 release 目录")
+    parser.add_argument("--release-dir", type=Path, required=True, help="scripts/build_release.py 生成的自包含 release 目录")
     parser.add_argument("--model-dir", type=Path, required=True, help="目标 Embedding 模型目录，需包含 tokenizer.json 和 ONNX")
     parser.add_argument("--wheelhouse-dir", type=Path, required=True, help="离线 Python wheelhouse")
     parser.add_argument("--output-dir", type=Path, required=True)
