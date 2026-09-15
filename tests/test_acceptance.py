@@ -36,6 +36,7 @@ def _settings(tmp_path: Path, *, with_policy: bool = False) -> Settings:
 def _bootstrap(meta: MetadataRepository, settings: Settings) -> None:
     users = UserService(meta)
     users.ensure_bootstrap_admin(settings.admin_password)
+    users.set_password('admin', 'ChangedAdmin123')
 
 
 def _insert_evaluation_evidence(meta: MetadataRepository, run_id: str, metrics: dict[str, object]) -> None:
