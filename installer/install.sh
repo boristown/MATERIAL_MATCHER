@@ -142,6 +142,7 @@ if systemctl is-active --quiet material_matcher.service 2>/dev/null; then SERVIC
 
 RELEASE_DEST=""
 MODEL_RELEASE_ROOT=""
+MODEL_COPIED=0
 if [[ -n "$BUNDLE_ROOT" ]]; then
   RELEASE_DEST="$OPT/releases/$RELEASE_VERSION"
   if [[ -d "$RELEASE_DEST" ]]; then
@@ -165,26 +166,41 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
     cp -a "$BUNDLE_ROOT/models/$MODEL_ID" "$MODEL_STAGE/$MODEL_ID"
     printf '%s\n' "$MANIFEST_SHA" >"$MODEL_STAGE/.bundle_manifest_sha256"
     mv "$MODEL_STAGE" "$MODEL_RELEASE_ROOT"
+    MODEL_COPIED=1
   fi
 
-  # 所有新版本检查都在旧服务仍在线时完成；只有通过后才进入停机切换窗口。
   [[ -x "$RELEASE_DEST/runtime/bin/python3" ]] || fail "自包含 Python Runtime 不可执行"
   [[ -x "$RELEASE_DEST/runtime/bin/material-matcher" ]] || fail "material-matcher 启动器不可执行"
   [[ -f "$RELEASE_DEST/web/dist/index.html" ]] || fail "Vue 前端发布产物缺失"
   [[ -f "$RELEASE_DEST/release-manifest.json" ]] || fail "release manifest 缺失"
-  RELEASE_RUNTIME_VERSION="$(PYTHONPATH="$RELEASE_DEST/app" "$RELEASE_DEST/runtime/bin/python3" - <<'PY'
-import material_matcher
-print(material_matcher.__version__)
-PY
-)" || fail "无法读取新 release 运行时版本"
-  [[ "$RELEASE_RUNTIME_VERSION" == "$RELEASE_VERSION" ]] || fail "新 release 运行时版本 $RELEASE_RUNTIME_VERSION 与离线包版本 $RELEASE_VERSION 不一致"
-  PYTHONPATH="$RELEASE_DEST/app" "$RELEASE_DEST/runtime/bin/python3" - <<'PY' || fail "自包含 Runtime 缺少正式 Python/Embedding 依赖"
-import fastapi, numpy, onnxruntime, openpyxl, pydantic, tokenizers, uvicorn
-PY
-  "$RELEASE_DEST/runtime/bin/material-matcher" --help >/dev/null || fail "material-matcher 启动器自检失败"
 fi
 
-chown -R "$APP_USER:$APP_USER" "$VAR" "$LOG"
+# 不递归扫描已有海量索引/结果；固定目录只调整目录本身，新模型只处理本次版本。
+chown "$APP_USER:$APP_USER" "$VAR" "$LOG"
+for path in "$VAR/meta" "$VAR/datasets" "$VAR/uploads" "$VAR/results" "$VAR/indexes" "$VAR/models" "$VAR/models/releases" "$VAR/jobs" "$VAR/tmp"; do
+  chown "$APP_USER:$APP_USER" "$path"
+done
+if [[ "$MODEL_COPIED" == "1" ]]; then chown -R "$APP_USER:$APP_USER" "$MODEL_RELEASE_ROOT"; fi
+
+if [[ -n "$BUNDLE_ROOT" ]]; then
+  # 以正式运行用户、未来将激活的模型/前端路径执行切换前诊断；此时旧服务仍在线。
+  DOCTOR_ENV=(
+    "MATERIAL_MATCHER_DATA_DIR=$VAR"
+    "MATERIAL_MATCHER_CONFIG_DIR=$ETC"
+    "MATERIAL_MATCHER_LOG_DIR=$LOG"
+    "MATERIAL_MATCHER_MODEL_ROOT=$MODEL_RELEASE_ROOT"
+    "MATERIAL_MATCHER_WEB_DIST_DIR=$RELEASE_DEST/web/dist"
+  )
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$APP_USER" -- env "${DOCTOR_ENV[@]}" "$RELEASE_DEST/runtime/bin/material-matcher" doctor \
+      --require-frontend --require-embedding --require-release-manifest >/dev/null \
+      || fail "新版本部署前诊断失败，旧服务保持不变"
+  else
+    env "${DOCTOR_ENV[@]}" "$RELEASE_DEST/runtime/bin/material-matcher" doctor \
+      --require-frontend --require-embedding --require-release-manifest >/dev/null \
+      || fail "新版本部署前诊断失败，旧服务保持不变"
+  fi
+fi
 
 cat >"$SERVICE_FILE" <<EOF
 [Unit]
