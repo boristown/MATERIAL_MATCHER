@@ -23,13 +23,14 @@ class Settings:
     embedding_dimensions: int = 768
     embedding_max_length: int = 256
     embedding_precision: str = "int8"
-    embedding_model_root: Path = Path("/opt/material_matcher/models")
+    embedding_model_root: Path = Path("/var/lib/material_matcher/models")
     embedding_batch_size: int = 128
     embedding_token_budget: int = 16_384
     embedding_intra_threads: int = 0
     index_scan_block_rows: int = 8192
     query_batch_size: int = 64
     index_lock_stale_seconds: int = 21_600
+    web_dist_dir: Path = Path("/opt/material_matcher/current/web/dist")
 
     @property
     def index_dir(self) -> Path:
@@ -52,13 +53,14 @@ class Settings:
             embedding_dimensions=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_DIMENSIONS", "768")),
             embedding_max_length=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_MAX_LENGTH", "256")),
             embedding_precision=os.getenv("MATERIAL_MATCHER_EMBEDDING_PRECISION", "int8"),
-            embedding_model_root=Path(os.getenv("MATERIAL_MATCHER_MODEL_ROOT", "/opt/material_matcher/models")),
+            embedding_model_root=Path(os.getenv("MATERIAL_MATCHER_MODEL_ROOT", "/var/lib/material_matcher/models")),
             embedding_batch_size=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_BATCH_SIZE", "128")),
             embedding_token_budget=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_TOKEN_BUDGET", "16384")),
             embedding_intra_threads=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_INTRA_THREADS", "0")),
             index_scan_block_rows=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_BLOCK_ROWS", "8192")),
             query_batch_size=int(os.getenv("MATERIAL_MATCHER_QUERY_BATCH_SIZE", "64")),
             index_lock_stale_seconds=int(os.getenv("MATERIAL_MATCHER_INDEX_LOCK_STALE_SECONDS", "21600")),
+            web_dist_dir=Path(os.getenv("MATERIAL_MATCHER_WEB_DIST_DIR", "/opt/material_matcher/current/web/dist")),
         )
 
     def ensure_dirs(self) -> None:
