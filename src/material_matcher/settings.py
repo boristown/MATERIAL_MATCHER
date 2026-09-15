@@ -23,7 +23,7 @@ class Settings:
     embedding_dimensions: int = 768
     embedding_max_length: int = 256
     embedding_precision: str = "int8"
-    embedding_model_root: Path = Path("/var/lib/material_matcher/models")
+    embedding_model_root: Path = Path("/var/lib/material_matcher/models/current")
     embedding_batch_size: int = 128
     embedding_token_budget: int = 16_384
     embedding_intra_threads: int = 0
@@ -53,7 +53,7 @@ class Settings:
             embedding_dimensions=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_DIMENSIONS", "768")),
             embedding_max_length=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_MAX_LENGTH", "256")),
             embedding_precision=os.getenv("MATERIAL_MATCHER_EMBEDDING_PRECISION", "int8"),
-            embedding_model_root=Path(os.getenv("MATERIAL_MATCHER_MODEL_ROOT", "/var/lib/material_matcher/models")),
+            embedding_model_root=Path(os.getenv("MATERIAL_MATCHER_MODEL_ROOT", "/var/lib/material_matcher/models/current")),
             embedding_batch_size=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_BATCH_SIZE", "128")),
             embedding_token_budget=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_TOKEN_BUDGET", "16384")),
             embedding_intra_threads=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_INTRA_THREADS", "0")),
