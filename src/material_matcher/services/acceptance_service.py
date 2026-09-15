@@ -15,11 +15,11 @@ from material_matcher.storage.metadata import MetadataRepository
 class AcceptanceService:
     """Generate evidence-based production acceptance gates.
 
-    PASS means the current installation contains concrete evidence for a gate.
-    BLOCKED means the implementation exists but the required external input or
-    target environment is absent. FAIL is reserved for a present-but-invalid
-    condition. This prevents development/CI machines from being reported as
-    production-ready merely because synthetic tests pass.
+    PASS means the current installation contains concrete evidence and, where
+    applicable, that evidence meets explicitly configured acceptance criteria.
+    BLOCKED means the code path exists but external inputs, target environment,
+    or project acceptance thresholds are still missing. FAIL is reserved for a
+    present-but-invalid condition or measured evidence below an explicit gate.
     """
 
     def __init__(self, metadata: MetadataRepository, settings: Settings) -> None:
@@ -120,6 +120,114 @@ class AcceptanceService:
                 }
         return None
 
+    def _policy_gate(self) -> tuple[dict[str, Any], bool]:
+        thresholds = self.settings.acceptance_thresholds
+        required = {
+            "min_truth_rows": thresholds["min_truth_rows"],
+            "min_truth_coverage": thresholds["min_truth_coverage"],
+            "min_top1_accuracy": thresholds["min_top1_accuracy"],
+            "min_final_accuracy": thresholds["min_final_accuracy"],
+            "max_review_rate": thresholds["max_review_rate"],
+            "max_scale_hours": thresholds["max_scale_hours"],
+        }
+        missing = [name for name, value in required.items() if value is None]
+        invalid: list[str] = []
+        if thresholds["min_truth_rows"] is not None and int(thresholds["min_truth_rows"]) <= 0:
+            invalid.append("min_truth_rows")
+        for name in ("min_truth_coverage", "min_top1_accuracy", "min_final_accuracy", "max_review_rate"):
+            value = thresholds[name]
+            if value is not None and not 0.0 <= float(value) <= 1.0:
+                invalid.append(name)
+        if thresholds["max_scale_hours"] is not None and float(thresholds["max_scale_hours"]) <= 0.0:
+            invalid.append("max_scale_hours")
+        if invalid:
+            return self._gate(
+                "acceptance_policy",
+                "FAIL",
+                "生产验收阈值配置非法，请修正后重新验收",
+                {"thresholds": thresholds, "invalid": invalid},
+            ), False
+        if missing:
+            return self._gate(
+                "acceptance_policy",
+                "BLOCKED",
+                "尚未显式配置项目生产验收阈值；系统不会使用内置拍脑袋阈值替代业务签字标准",
+                {"thresholds": thresholds, "missing": missing},
+            ), False
+        return self._gate(
+            "acceptance_policy",
+            "PASS",
+            "生产验收阈值已显式配置",
+            {"thresholds": thresholds},
+        ), True
+
+    def _business_evaluation_gate(self, policy_ready: bool) -> dict[str, Any]:
+        evaluation = self._latest_evaluation()
+        thresholds = self.settings.acceptance_thresholds
+        if evaluation is None:
+            return self._gate(
+                "business_gold_evaluation",
+                "BLOCKED",
+                "尚未导入客户历史正确集团码/人工金标进行验收",
+                {"thresholds": thresholds},
+            )
+        if not policy_ready:
+            return self._gate(
+                "business_gold_evaluation",
+                "BLOCKED",
+                "已有真实金标结果，但项目验收阈值尚未完整配置，不能判定PASS",
+                {"latest_evaluation": evaluation, "thresholds": thresholds},
+            )
+        metrics = evaluation.get("metrics") or {}
+        checks = {
+            "truth_rows": int(metrics.get("truth_rows") or 0) >= int(thresholds["min_truth_rows"]),
+            "truth_coverage": float(metrics.get("truth_coverage") or 0.0) >= float(thresholds["min_truth_coverage"]),
+            "top1_accuracy": float(metrics.get("top1_accuracy") or 0.0) >= float(thresholds["min_top1_accuracy"]),
+            "final_accuracy": float(metrics.get("final_accuracy") or 0.0) >= float(thresholds["min_final_accuracy"]),
+            "review_rate": float(metrics.get("review_rate") or 0.0) <= float(thresholds["max_review_rate"]),
+        }
+        passed = all(checks.values())
+        return self._gate(
+            "business_gold_evaluation",
+            "PASS" if passed else "FAIL",
+            "真实业务金标指标达到项目验收阈值" if passed else "真实业务金标指标低于项目验收阈值",
+            {"latest_evaluation": evaluation, "thresholds": thresholds, "checks": checks},
+        )
+
+    def _million_scale_gate(self, policy_ready: bool) -> dict[str, Any]:
+        scale_task = self._production_scale_task()
+        thresholds = self.settings.acceptance_thresholds
+        if scale_task is None:
+            return self._gate(
+                "million_scale_end_to_end",
+                "BLOCKED",
+                "尚无满足10万Source × 100万Target门槛的正式完成任务，synthetic benchmark不计入",
+                {"task": None, "max_scale_hours": thresholds["max_scale_hours"]},
+            )
+        if not policy_ready:
+            return self._gate(
+                "million_scale_end_to_end",
+                "BLOCKED",
+                "已有百万级正式任务，但尚未配置最大允许端到端耗时，不能判定PASS",
+                {"task": scale_task, "max_scale_hours": thresholds["max_scale_hours"]},
+            )
+        duration = scale_task.get("duration_seconds")
+        if duration is None:
+            return self._gate(
+                "million_scale_end_to_end",
+                "FAIL",
+                "百万级任务缺少完整起止时间，无法形成性能验收证据",
+                {"task": scale_task, "max_scale_hours": thresholds["max_scale_hours"]},
+            )
+        max_seconds = float(thresholds["max_scale_hours"]) * 3600.0
+        passed = float(duration) <= max_seconds
+        return self._gate(
+            "million_scale_end_to_end",
+            "PASS" if passed else "FAIL",
+            "百万级正式任务规模与端到端耗时均达到项目门槛" if passed else "百万级正式任务已完成，但端到端耗时超过项目门槛",
+            {"task": scale_task, "max_scale_hours": thresholds["max_scale_hours"], "duration_hours": round(float(duration) / 3600.0, 6)},
+        )
+
     def report(self) -> dict[str, Any]:
         gates: list[dict[str, Any]] = []
 
@@ -139,12 +247,25 @@ class AcceptanceService:
 
         with self.meta.connect() as connection:
             enabled_admins = int(connection.execute("SELECT COUNT(*) AS count FROM users WHERE role='admin' AND enabled=1").fetchone()["count"])
+            ready_admins = int(connection.execute("SELECT COUNT(*) AS count FROM users WHERE role='admin' AND enabled=1 AND must_change_password=0").fetchone()["count"])
+        if enabled_admins == 0:
+            security_status = "FAIL"
+            security_message = "没有启用的管理员账号"
+        elif ready_admins == 0:
+            security_status = "BLOCKED"
+            security_message = "管理员账号仍处于强制改密状态，请先完成首次密码轮换"
+        else:
+            security_status = "PASS"
+            security_message = "持久化账号与服务端RBAC已启用，至少一个管理员已完成密码轮换"
         gates.append(self._gate(
             "security_governance",
-            "PASS" if enabled_admins > 0 else "FAIL",
-            "持久化账号与RBAC已启用" if enabled_admins > 0 else "没有启用的管理员账号",
-            {"enabled_admins": enabled_admins, "roles": ["admin", "operator", "reviewer", "viewer"]},
+            security_status,
+            security_message,
+            {"enabled_admins": enabled_admins, "ready_admins": ready_admins, "roles": ["admin", "operator", "reviewer", "viewer"]},
         ))
+
+        policy_gate, policy_ready = self._policy_gate()
+        gates.append(policy_gate)
 
         frontend_ready = bool(diagnostics["checks"]["frontend"].get("ready"))
         release_ready = bool(diagnostics["checks"]["release_manifest"].get("ready"))
@@ -173,21 +294,8 @@ class AcceptanceService:
             {"latest_benchmark": vector_benchmark},
         ))
 
-        evaluation = self._latest_evaluation()
-        gates.append(self._gate(
-            "business_gold_evaluation",
-            "PASS" if evaluation is not None else "BLOCKED",
-            "已有真实任务金标验收记录；阈值是否达标应由项目验收标准判定" if evaluation else "尚未导入客户历史正确集团码/人工金标进行验收",
-            {"latest_evaluation": evaluation},
-        ))
-
-        scale_task = self._production_scale_task()
-        gates.append(self._gate(
-            "million_scale_end_to_end",
-            "PASS" if scale_task is not None else "BLOCKED",
-            "已检测到至少10万Source × 100万Target的正式完成任务" if scale_task else "尚无满足10万Source × 100万Target门槛的正式完成任务，synthetic benchmark不计入",
-            {"task": scale_task},
-        ))
+        gates.append(self._business_evaluation_gate(policy_ready))
+        gates.append(self._million_scale_gate(policy_ready))
 
         os_release = self._os_release()
         os_text = " ".join([os_release.get("ID", ""), os_release.get("NAME", ""), os_release.get("PRETTY_NAME", ""), os_release.get("VERSION", "")]).lower()
@@ -204,14 +312,14 @@ class AcceptanceService:
         blocked_count = sum(gate["status"] == "BLOCKED" for gate in gates)
         pass_count = sum(gate["status"] == "PASS" for gate in gates)
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "code_ready": fail_count == 0,
             "production_ready": fail_count == 0 and blocked_count == 0,
             "summary": {"pass": pass_count, "blocked": blocked_count, "fail": fail_count, "total": len(gates)},
             "gates": gates,
             "semantics": {
-                "PASS": "有当前环境的具体证据",
-                "BLOCKED": "代码路径已具备，但缺外部数据/模型/目标机器/正式介质证据",
-                "FAIL": "已发现实际配置或实现缺陷",
+                "PASS": "有当前环境的具体证据，并满足已配置的验收阈值",
+                "BLOCKED": "代码路径已具备，但缺外部数据/模型/目标机器/正式介质或项目阈值",
+                "FAIL": "已发现实际配置/实现缺陷，或实测指标低于显式验收阈值",
             },
         }
