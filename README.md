@@ -21,7 +21,9 @@
 
 ## 当前实现里程碑
 
-`v0.4` 已打通**小规模端到端业务闭环**：
+### v0.4：小规模端到端业务闭环
+
+已打通：
 
 ```text
 上传 Source / Target
@@ -34,9 +36,53 @@
 → 生成并下载最终 Excel
 ```
 
-当前匹配执行器是用于验证业务闭环的通用扫描基线。为避免在百万级目录上退化为不可接受的全量逐对比对，Target 超过配置的安全上限时会明确返回 `INDEX_NOT_READY`，要求进入下一里程碑的向量索引路径。该基线不会构造完整的 Source × Target 相似度矩阵。
+小任务仍可使用通用扫描后端完成完整业务流程；不会构造完整 Source × Target 相似度矩阵。
 
-下一里程碑重点是：Embedding Provider、`bge-base-zh-v1.5`、Embedding Cache、1-bit BBQ Target、4-bit Query、int8 rerank、批量召回、索引复用与真实性能 Benchmark。
+### v0.5：可复用向量执行核心
+
+当前开发分支已经接入向量检索正式执行链路：
+
+- 可替换 `EmbeddingProvider`，默认配置为 `BAAI/bge-base-zh-v1.5 / 768 维`；
+- 本地 ONNX Provider，模型文件和运行时缺失时显式报告，不使用伪语义结果；
+- 持久化 Embedding Cache，相同模型/处理规则/文本可跨任务复用；
+- Target 索引 fingerprint 绑定目录版本、Target 文件 SHA、模型实际 SHA、维度、检索文本处理规则和分类字段；
+- 仅修改评分权重或最终判定阈值不会错误触发 Target 重建；
+- Target 主索引采用 1-bit packed vector，Query 采用 4-bit 非对称量化；
+- 候选使用 int8 sidecar 重排；
+- 分块 TopK 召回，不生成 Source × Target 全量相似度矩阵；
+- STRICT / MAPPED 模式使用分类 postings 先缩小候选范围；
+- `scan / vector` 自动路由：小任务继续走扫描，大目录或显式语义规则进入向量链路；
+- `index_versions` 持久化 BUILDING / READY / FAILED 生命周期，并支持不变 Target 索引复用；
+- 任务运行阶段持久化 `INDEX / RETRIEVE / RERANK / PERSIST / DONE` 和实际 Index ID；
+- “系统设置”可查看模型/Runtime readiness、索引版本和 Benchmark 历史；
+- 任务页只有在正式 Embedding Runtime + 模型文件就绪时才开放“语义相似”；
+- 提供 `material-matcher benchmark embedding` 和 `material-matcher benchmark vector`。
+
+其中：
+
+- `benchmark embedding` 使用**实际配置的生产 Embedding Provider / 模型**测量吞吐、P50/P95 batch latency 和 110 万条向量化预计时长；
+- `benchmark vector` 使用确定性测试向量测量实际 BBQ build/search 内核，只用于内核基准，明确不作为生产模型端到端性能承诺。
+
+## 当前性能边界
+
+v0.5 已具备大规模向量路径的核心结构，但**尚不能声明已经达到 100 万 Target / 10 万 Source 的生产性能目标**：
+
+- 本仓库不提交 `bge-base-zh-v1.5` 模型文件，也没有在本 PR 的 GitHub CI 中运行真实模型推理；
+- 尚未在目标银河麒麟 Linux V10 服务器安装正式 ONNX 模型并执行现场 Benchmark；
+- 尚未完成 100 万 Target / 10 万 Source 的真实 Recall@K、端到端阶段耗时和内存/磁盘实测；
+- 当前默认 `EmbeddedBBQFlatIndex` 为可移植 NumPy 分块扫描实现，尚不是最终 native SIMD/POPCNT、HNSW 或 Block/Disk 路由实现；
+- 当前 `max_length` 可配置，但自动 token 长度统计、P99/P99.9 选择和长度分桶仍待完善。
+
+因此当前状态应理解为：**业务闭环已完成，向量执行核心已接通，正在进入生产规模性能与离线交付验收阶段。**
+
+## 下一里程碑
+
+1. 正式离线交付 `bge-base-zh-v1.5` ONNX / tokenizer 与 `onnxruntime + tokenizers` wheelhouse，不将模型二进制提交到 Git。
+2. 自动统计 token 长度 P50/P95/P99/P99.9，选择 128/192/256/512，并按 token budget 分桶批量推理。
+3. 在目标 CPU 上 Benchmark NumPy Flat、native SIMD/POPCNT、HNSW/Block/Disk 路径，形成 `AutoBBQIndex` 选择策略。
+4. 使用真实业务样本验证 Recall@10 / Recall@50 / Recall@100、TopN 排序和最终集团码准确率。
+5. 完成 100 万 Target / 10 万 Source 首次建库与索引复用后的端到端 Benchmark，再决定是否满足 2～4 小时和 20～90 分钟产品目标。
+6. 完成自包含 Python Runtime、前端 dist、wheelhouse、模型和 Native 组件的正式离线安装介质，并在真实银河麒麟 V10 验收。
 
 ## 当前 13 所业务样例
 
