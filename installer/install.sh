@@ -10,13 +10,50 @@ PASSWORD_FILE="$ETC/secret/admin_password.env"
 SERVER_ENV="$ETC/server.env"
 STORAGE_ENV="$ETC/storage.env"
 SERVICE_FILE="/etc/systemd/system/material_matcher.service"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUNDLE_ROOT="${MATERIAL_MATCHER_BUNDLE_ROOT:-}"
 
-[[ $EUID -eq 0 ]] || { echo "请使用 sudo ./install.sh"; exit 1; }
+fail() { echo "安装失败：$*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || fail "请使用 sudo ./install.sh"
+
+if [[ -z "$BUNDLE_ROOT" ]]; then
+  if [[ -f "$SCRIPT_DIR/offline-manifest.json" ]]; then
+    BUNDLE_ROOT="$SCRIPT_DIR"
+  elif [[ -f "$SCRIPT_DIR/../offline-manifest.json" ]]; then
+    BUNDLE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+  fi
+fi
+
+RELEASE_VERSION=""
+MODEL_ID=""
+MANIFEST_SHA=""
+if [[ -n "$BUNDLE_ROOT" ]]; then
+  BUNDLE_ROOT="$(cd "$BUNDLE_ROOT" && pwd)"
+  [[ -f "$BUNDLE_ROOT/offline-manifest.json" ]] || fail "离线包缺少 offline-manifest.json"
+  [[ -f "$BUNDLE_ROOT/verify_offline_bundle.py" ]] || fail "离线包缺少 verify_offline_bundle.py"
+  python3 "$BUNDLE_ROOT/verify_offline_bundle.py" "$BUNDLE_ROOT" || fail "离线包完整性或架构校验未通过"
+  read -r RELEASE_VERSION MODEL_ID < <(python3 - "$BUNDLE_ROOT/offline-manifest.json" <<'PY'
+import json, sys
+m=json.load(open(sys.argv[1],encoding='utf-8'))
+print(m['release_version'], m['model_id'])
+PY
+)
+  MANIFEST_SHA="$(python3 - "$BUNDLE_ROOT/offline-manifest.json" <<'PY'
+import hashlib, sys
+print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())
+PY
+)"
+  if [[ "${MATERIAL_MATCHER_ALLOW_UNSUPPORTED_OS:-0}" != "1" ]]; then
+    grep -Eqi 'kylin|银河麒麟' /etc/os-release 2>/dev/null || fail "正式离线安装包仅验收银河麒麟 Linux V10；测试其他 Linux 请显式设置 MATERIAL_MATCHER_ALLOW_UNSUPPORTED_OS=1"
+  fi
+fi
 
 find_data_mount() {
   findmnt -rn -o TARGET,FSTYPE,OPTIONS | while read -r target fs opts; do
     case "$fs" in ext2|ext3|ext4|xfs|btrfs) ;; *) continue ;; esac
     [[ "$target" == /boot* ]] && continue
+    [[ "$target" == /media/* || "$target" == /run/media/* ]] && continue
     grep -qw ro <<<"${opts//,/ }" && continue
     [[ -w "$target" ]] || continue
     avail=$(df -Pk "$target" | awk 'NR==2 {print $4}')
@@ -26,16 +63,11 @@ find_data_mount() {
 
 port_free() {
   python3 - "$1" <<'PY'
-import socket
-import sys
-port = int(sys.argv[1])
-sock = socket.socket()
-try:
-    sock.bind(("0.0.0.0", port))
-except OSError:
-    raise SystemExit(1)
-finally:
-    sock.close()
+import socket, sys
+port=int(sys.argv[1]); sock=socket.socket()
+try: sock.bind(("0.0.0.0",port))
+except OSError: raise SystemExit(1)
+finally: sock.close()
 PY
 }
 
@@ -47,12 +79,18 @@ choose_port() {
   for port in $(seq 12000 29999); do
     if port_free "$port"; then echo "$port"; return; fi
   done
-  echo "没有找到可用高位端口" >&2
-  exit 1
+  fail "没有找到可用高位端口"
+}
+
+activate_link() {
+  local link="$1" target="$2" next="${1}.next.$$"
+  rm -f "$next"
+  ln -s "$target" "$next"
+  mv -Tf "$next" "$link"
 }
 
 mkdir -p "$OPT/releases" "$ETC/secret" "$ETC/profiles" "$ETC/catalogs" \
-  "$ETC/mappings" "$ETC/dictionaries" "$LOG"
+  "$ETC/mappings" "$ETC/dictionaries" "$ETC/templates" "$LOG"
 
 if [[ ! -f "$STORAGE_ENV" ]]; then
   data_mount=$(find_data_mount || true)
@@ -72,7 +110,8 @@ else
   mkdir -p "$VAR"
 fi
 
-mkdir -p "$VAR/meta" "$VAR/uploads" "$VAR/results" "$VAR/indexes" "$VAR/models" "$VAR/tmp"
+mkdir -p "$VAR/meta" "$VAR/datasets" "$VAR/uploads" "$VAR/results" "$VAR/indexes" \
+  "$VAR/models/releases" "$VAR/jobs" "$VAR/tmp"
 
 if [[ ! -f "$SERVER_ENV" ]]; then
   printf 'MATERIAL_MATCHER_HOST=0.0.0.0\nMATERIAL_MATCHER_PORT=%s\n' "$(choose_port)" >"$SERVER_ENV"
@@ -80,9 +119,8 @@ fi
 
 if [[ ! -f "$PASSWORD_FILE" ]]; then
   password=$(python3 - <<'PY'
-import secrets
-import string
-alphabet = string.ascii_letters + string.digits
+import secrets, string
+alphabet=string.ascii_letters+string.digits
 print(''.join(secrets.choice(alphabet) for _ in range(10)))
 PY
 )
@@ -94,6 +132,54 @@ chmod 0600 "$PASSWORD_FILE"
 if ! id "$APP_USER" >/dev/null 2>&1; then
   useradd --system --home "$VAR" --shell /usr/sbin/nologin "$APP_USER"
 fi
+
+OLD_RELEASE=""
+OLD_MODEL_ROOT=""
+if [[ -L "$OPT/current" ]]; then OLD_RELEASE="$(readlink -f "$OPT/current")"; fi
+if [[ -L "$VAR/models/current" ]]; then OLD_MODEL_ROOT="$(readlink -f "$VAR/models/current")"; fi
+
+if [[ -n "$BUNDLE_ROOT" ]]; then
+  if systemctl is-active --quiet material_matcher.service 2>/dev/null; then
+    systemctl stop material_matcher.service
+  fi
+
+  RELEASE_DEST="$OPT/releases/$RELEASE_VERSION"
+  if [[ -d "$RELEASE_DEST" ]]; then
+    [[ -f "$RELEASE_DEST/.bundle_manifest_sha256" ]] || fail "同版本发布目录已存在但无法确认来源：$RELEASE_DEST"
+    [[ "$(cat "$RELEASE_DEST/.bundle_manifest_sha256")" == "$MANIFEST_SHA" ]] || fail "同版本号已存在不同内容，请提升 release_version 后重试"
+  else
+    RELEASE_STAGE="$OPT/releases/.staging-${RELEASE_VERSION}-$$"
+    rm -rf "$RELEASE_STAGE"; mkdir -p "$RELEASE_STAGE"
+    cp -a "$BUNDLE_ROOT/release/." "$RELEASE_STAGE/"
+    printf '%s\n' "$MANIFEST_SHA" >"$RELEASE_STAGE/.bundle_manifest_sha256"
+    mv "$RELEASE_STAGE" "$RELEASE_DEST"
+  fi
+
+  MODEL_RELEASE_ROOT="$VAR/models/releases/$RELEASE_VERSION"
+  if [[ -d "$MODEL_RELEASE_ROOT" ]]; then
+    [[ -f "$MODEL_RELEASE_ROOT/.bundle_manifest_sha256" ]] || fail "同版本模型目录已存在但无法确认来源：$MODEL_RELEASE_ROOT"
+    [[ "$(cat "$MODEL_RELEASE_ROOT/.bundle_manifest_sha256")" == "$MANIFEST_SHA" ]] || fail "同版本模型内容与离线包不一致"
+  else
+    MODEL_STAGE="$VAR/models/releases/.staging-${RELEASE_VERSION}-$$"
+    rm -rf "$MODEL_STAGE"; mkdir -p "$MODEL_STAGE/$(dirname "$MODEL_ID")"
+    cp -a "$BUNDLE_ROOT/models/$MODEL_ID" "$MODEL_STAGE/$MODEL_ID"
+    printf '%s\n' "$MANIFEST_SHA" >"$MODEL_STAGE/.bundle_manifest_sha256"
+    mv "$MODEL_STAGE" "$MODEL_RELEASE_ROOT"
+  fi
+
+  [[ -x "$RELEASE_DEST/runtime/bin/python3" ]] || fail "自包含 Python Runtime 不可执行"
+  [[ -x "$RELEASE_DEST/runtime/bin/material-matcher" ]] || fail "material-matcher 启动器不可执行"
+  [[ -f "$RELEASE_DEST/web/dist/index.html" ]] || fail "Vue 前端发布产物缺失"
+  "$RELEASE_DEST/runtime/bin/python3" - <<'PY' || fail "自包含 Runtime 缺少正式 Python/Embedding 依赖"
+import fastapi, numpy, onnxruntime, openpyxl, pydantic, tokenizers, uvicorn
+PY
+
+  if [[ -n "$OLD_RELEASE" && "$OLD_RELEASE" != "$RELEASE_DEST" ]]; then activate_link "$OPT/previous" "$OLD_RELEASE"; fi
+  if [[ -n "$OLD_MODEL_ROOT" && "$OLD_MODEL_ROOT" != "$MODEL_RELEASE_ROOT" ]]; then activate_link "$VAR/models/previous" "$OLD_MODEL_ROOT"; fi
+  activate_link "$VAR/models/current" "$MODEL_RELEASE_ROOT"
+  activate_link "$OPT/current" "$RELEASE_DEST"
+fi
+
 chown -R "$APP_USER:$APP_USER" "$VAR" "$LOG"
 
 cat >"$SERVICE_FILE" <<EOF
@@ -111,7 +197,9 @@ EnvironmentFile=$STORAGE_ENV
 EnvironmentFile=$PASSWORD_FILE
 Environment=MATERIAL_MATCHER_CONFIG_DIR=$ETC
 Environment=MATERIAL_MATCHER_LOG_DIR=$LOG
-ExecStart=$OPT/current/runtime/bin/material-matcher --host \${MATERIAL_MATCHER_HOST} --port \${MATERIAL_MATCHER_PORT}
+Environment=MATERIAL_MATCHER_MODEL_ROOT=$VAR/models/current
+Environment=MATERIAL_MATCHER_WEB_DIST_DIR=$OPT/current/web/dist
+ExecStart=$OPT/current/runtime/bin/material-matcher serve --host \${MATERIAL_MATCHER_HOST} --port \${MATERIAL_MATCHER_PORT}
 Restart=on-failure
 RestartSec=3
 
@@ -119,22 +207,46 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+rollback_activation() {
+  echo "新版本启动失败，尝试回滚 previous release..." >&2
+  systemctl stop material_matcher.service >/dev/null 2>&1 || true
+  if [[ -n "$OLD_RELEASE" && -d "$OLD_RELEASE" ]]; then activate_link "$OPT/current" "$OLD_RELEASE"; fi
+  if [[ -n "$OLD_MODEL_ROOT" && -d "$OLD_MODEL_ROOT" ]]; then activate_link "$VAR/models/current" "$OLD_MODEL_ROOT"; fi
+  systemctl daemon-reload
+  if [[ -n "$OLD_RELEASE" && -x "$OLD_RELEASE/runtime/bin/material-matcher" ]]; then systemctl start material_matcher.service >/dev/null 2>&1 || true; fi
+}
+
 systemctl daemon-reload
 if [[ -x "$OPT/current/runtime/bin/material-matcher" ]]; then
-  systemctl enable --now material_matcher.service
-  set -a
-  source "$SERVER_ENV"
-  set +a
-  python3 - "${MATERIAL_MATCHER_PORT}" <<'PY'
-import json
-import sys
-import urllib.request
-port = int(sys.argv[1])
-with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health/ready", timeout=10) as response:
-    payload = json.load(response)
-if payload.get("status") != "ready":
-    raise SystemExit("服务已启动，但 readiness 检查未通过")
+  if ! systemctl enable --now material_matcher.service; then
+    rollback_activation
+    fail "systemd 服务启动失败"
+  fi
+  set -a; source "$SERVER_ENV"; set +a
+  if ! python3 - "${MATERIAL_MATCHER_PORT}" <<'PY'
+import json, sys, time, urllib.request
+port=int(sys.argv[1]); last=None
+for _ in range(30):
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health/ready",timeout=2) as response:
+            payload=json.load(response)
+        if payload.get("status")=="ready": raise SystemExit(0)
+        last=payload
+    except Exception as exc:
+        last=str(exc)
+    time.sleep(1)
+print(f"readiness 未通过: {last}",file=sys.stderr)
+raise SystemExit(1)
 PY
+  then
+    rollback_activation
+    fail "服务已启动，但 readiness 检查未通过"
+  fi
+  echo "MATERIAL_MATCHER 安装完成。"
+  echo "访问端口：${MATERIAL_MATCHER_PORT}"
+  echo "管理员账号：admin"
+  echo "初始密码文件：$PASSWORD_FILE"
+  [[ -n "$RELEASE_VERSION" ]] && echo "当前版本：$RELEASE_VERSION"
 else
-  echo "安装目录已准备；正式离线发布包解压到 $OPT/current 后再启动服务。"
+  echo "安装目录已准备；正式离线发布包尚未安装到 $OPT/current。"
 fi
