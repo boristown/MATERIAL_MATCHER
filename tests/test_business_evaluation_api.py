@@ -6,10 +6,11 @@ from fastapi.testclient import TestClient
 def _seed_completed_task(authed: TestClient) -> None:
     meta = authed.app.state.meta
     now = "2026-09-15T19:00:00+08:00"
+    config = '{"decision":{"top_n":3}}'
     with meta.connect() as connection:
         connection.execute(
             "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("eval-task", "准确率验收任务", "source-file", "catalog-v1", None, None, "{}", "sha", "RESULT", "COMPLETED", 100.0, 2, 2, now, now, now, None, None, None),
+            ("eval-task", "准确率验收任务", "source-file", "catalog-v1", None, None, config, "sha", "RESULT", "COMPLETED", 100.0, 2, 2, now, now, now, None, None, None),
         )
         connection.executemany(
             "INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -54,6 +55,7 @@ def test_business_evaluation_api_accepts_uploaded_truth_and_returns_errors(authe
     assert result["metrics"]["truth_coverage"] == 0.666667
     assert result["metrics"]["top1_accuracy"] == 0.5
     assert result["metrics"]["final_accuracy"] == 1.0
+    assert result["metrics"]["candidate_top_n"] == 3
     assert result["metrics"]["candidate_recall_at"]["3"] == 1.0
 
     history = authed.get("/api/tasks/eval-task/evaluations")
