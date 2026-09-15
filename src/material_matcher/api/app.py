@@ -23,6 +23,7 @@ from material_matcher.security.session import SessionStore
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.match_service import MatchService
+from material_matcher.services.profile_service import ProfileService
 from material_matcher.services.task_service import TaskService
 from material_matcher.services.text_profile_service import TextProfileService
 from material_matcher.settings import Settings
@@ -56,6 +57,11 @@ class CatalogCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     source_file_id: str
     group_code_column: str = Field(min_length=1, max_length=200)
+
+
+class ProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    document: dict[str, object] | None = None
 
 
 class UploadInit(BaseModel):
@@ -128,6 +134,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     metadata = MetadataRepository(cfg.data_dir / "meta" / "material_matcher.db")
     files = FileRepository(cfg.data_dir, metadata)
     tasks = TaskService(metadata)
+    profiles = ProfileService(metadata)
     matches = MatchService(metadata, files, cfg)
     benchmarks = BenchmarkService(metadata, cfg)
     evaluations = BusinessEvaluationService(metadata, files)
@@ -214,10 +221,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if role not in _ALLOWED_ROLES:
             raise DomainError("INVALID_FILE_ROLE", "文件用途不正确", status_code=422)
         suffix = Path(file.filename or "").suffix.lower()
-        if suffix == ".xls":
-            raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
-        if suffix not in _ALLOWED_SUFFIXES:
-            raise DomainError("UNSUPPORTED_FILE", "仅支持 .xlsx / .xlsm / .csv", status_code=400)
+        if suffix == ".xls": raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
+        if suffix not in _ALLOWED_SUFFIXES: raise DomainError("UNSUPPORTED_FILE", "仅支持 .xlsx / .xlsm / .csv", status_code=400)
         record = files.save_stream(file.filename or "upload", role, file.file, cfg.max_upload_bytes)
         try:
             inspection = inspect_tabular_file(Path(str(record["stored_path"])))
@@ -226,25 +231,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"file": record, "inspection": inspection}
 
     @app.get("/api/files")
-    def list_files() -> list[dict[str, object]]:
-        return files.list()
+    def list_files() -> list[dict[str, object]]: return files.list()
 
     @app.get("/api/files/{file_id}/inspection")
     def inspect_file(file_id: str) -> dict[str, object]:
-        record = files.get(file_id)
-        return {"file": record, "inspection": inspect_tabular_file(Path(str(record["stored_path"])))}
+        record = files.get(file_id); return {"file": record, "inspection": inspect_tabular_file(Path(str(record["stored_path"])))}
 
     @app.post("/api/uploads/init")
     def init_upload(payload: UploadInit) -> dict[str, object]:
-        if payload.role not in _ALLOWED_ROLES:
-            raise DomainError("INVALID_FILE_ROLE", "文件用途不正确", status_code=422)
-        if payload.total_size > cfg.max_total_upload_bytes:
-            raise DomainError("FILE_TOO_LARGE", "文件超过系统允许的最大容量", status_code=413)
+        if payload.role not in _ALLOWED_ROLES: raise DomainError("INVALID_FILE_ROLE", "文件用途不正确", status_code=422)
+        if payload.total_size > cfg.max_total_upload_bytes: raise DomainError("FILE_TOO_LARGE", "文件超过系统允许的最大容量", status_code=413)
         suffix = Path(payload.original_name).suffix.lower()
-        if suffix == ".xls":
-            raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
-        if suffix not in _ALLOWED_SUFFIXES:
-            raise DomainError("UNSUPPORTED_FILE", "仅支持 .xlsx / .xlsm / .csv", status_code=400)
+        if suffix == ".xls": raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
+        if suffix not in _ALLOWED_SUFFIXES: raise DomainError("UNSUPPORTED_FILE", "仅支持 .xlsx / .xlsm / .csv", status_code=400)
         upload_id = uuid.uuid4().hex; temporary_path = cfg.data_dir / "tmp" / f"upload-{upload_id}{suffix}.part"
         with metadata.connect() as connection:
             connection.execute("INSERT INTO upload_sessions VALUES(?,?,?,?,?,?,?,?,?)", (upload_id, payload.role, payload.original_name, payload.total_size, payload.sha256, 0, 0, str(temporary_path), _now()))
@@ -252,8 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/uploads/{upload_id}/chunks/{index}")
     async def upload_chunk(upload_id: str, index: int, request: Request) -> dict[str, int]:
-        with metadata.connect() as connection:
-            row = connection.execute("SELECT * FROM upload_sessions WHERE upload_id=?", (upload_id,)).fetchone()
+        with metadata.connect() as connection: row = connection.execute("SELECT * FROM upload_sessions WHERE upload_id=?", (upload_id,)).fetchone()
         if row is None: raise DomainError("UPLOAD_NOT_FOUND", "分块上传任务不存在", status_code=404)
         data = await request.body()
         if index != row["next_chunk"]: raise DomainError("UPLOAD_CHUNK_ORDER", "分块顺序不正确", status_code=409, details={"next_chunk": row["next_chunk"]})
@@ -298,6 +296,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/catalogs/versions/{version_id}")
     def get_catalog(version_id: str) -> dict[str, object]: return get_catalog_version(version_id)
 
+    @app.get("/api/profiles")
+    def list_profiles() -> list[dict[str, object]]: return profiles.list()
+
+    @app.post("/api/profiles")
+    def create_profile(payload: ProfileCreate) -> dict[str, object]: return profiles.create(payload.name, payload.document)
+
+    @app.get("/api/profiles/{profile_id}")
+    def get_profile(profile_id: str) -> dict[str, object]: return profiles.get(profile_id)
+
+    @app.put("/api/profiles/{profile_id}/draft")
+    async def save_profile_draft(profile_id: str, request: Request) -> dict[str, object]:
+        document = await request.json()
+        if not isinstance(document, dict): raise DomainError("INVALID_PROFILE", "匹配方案格式不正确", status_code=422)
+        return profiles.save_draft(profile_id, document)
+
+    @app.post("/api/profiles/{profile_id}/validate")
+    def validate_profile(profile_id: str) -> dict[str, object]: return profiles.validate(profile_id)
+
+    @app.post("/api/profiles/{profile_id}/publish")
+    def publish_profile(profile_id: str) -> dict[str, object]: return profiles.publish(profile_id)
+
+    @app.get("/api/profiles/{profile_id}/versions")
+    def profile_versions(profile_id: str) -> list[dict[str, object]]: return profiles.versions(profile_id)
+
+    @app.post("/api/profiles/{profile_id}/rollback/{version_no}")
+    def rollback_profile(profile_id: str, version_no: int) -> dict[str, object]: return profiles.rollback(profile_id, version_no)
+
     @app.post("/api/task-drafts")
     def create_draft(payload: DraftCreate) -> dict[str, object]: return tasks.create_draft(payload.name)
 
@@ -321,8 +346,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def dry_run(draft_id: str, payload: DryRunRequest) -> dict[str, object]: return matches.dry_run(draft_id,payload.sample_rows)
 
     @app.post("/api/task-drafts/{draft_id}/text-profile")
-    def text_profile(draft_id: str, payload: TextProfileRequest) -> dict[str, object]:
-        return text_profiles.profile_draft(draft_id, sample_rows=payload.sample_rows, scan_limit=payload.scan_limit)
+    def text_profile(draft_id: str, payload: TextProfileRequest) -> dict[str, object]: return text_profiles.profile_draft(draft_id, sample_rows=payload.sample_rows, scan_limit=payload.scan_limit)
 
     @app.post("/api/task-drafts/{draft_id}/start",status_code=202)
     def start_task(draft_id: str) -> dict[str, object]:
@@ -339,20 +363,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         task=tasks.get_task(task_id); status=str(task["status"]); stage=str(task["stage"])
         runtime=matches.runtime_status(task_id); mode=str(runtime.get("execution_mode") or "unknown"); phase=str(runtime.get("current_phase") or "WAITING")
         prepare="DONE" if status not in {"PENDING","PREPARING","RECOVERING"} else "RUNNING" if status in {"PREPARING","RECOVERING"} else "WAITING"
-        failed=status=="FAILED" or phase=="FAILED"
-        completed=status=="COMPLETED" or phase=="DONE"
-        vector_mode=mode=="vector"
-
-        if not vector_mode:
-            embedding_status="SKIPPED"
-        elif failed:
-            embedding_status="FAILED"
-        elif phase=="INDEX":
-            embedding_status="RUNNING"
-        elif phase in {"RETRIEVE","RERANK","PERSIST","DONE"} or completed:
-            embedding_status="DONE"
-        else:
-            embedding_status="WAITING"
+        failed=status=="FAILED" or phase=="FAILED"; completed=status=="COMPLETED" or phase=="DONE"; vector_mode=mode=="vector"
+        if not vector_mode: embedding_status="SKIPPED"
+        elif failed: embedding_status="FAILED"
+        elif phase=="INDEX": embedding_status="RUNNING"
+        elif phase in {"RETRIEVE","RERANK","PERSIST","DONE"} or completed: embedding_status="DONE"
+        else: embedding_status="WAITING"
 
         def phase_status(active: str, done_after: set[str]) -> str:
             if failed: return "FAILED"
@@ -360,25 +376,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if phase==active: return "RUNNING"
             return "WAITING"
 
-        retrieve_status=phase_status("RETRIEVE", {"RERANK","PERSIST","DONE"})
-        rerank_status=phase_status("RERANK", {"PERSIST","DONE"})
-        result_status=phase_status("PERSIST", {"DONE"})
+        retrieve_status=phase_status("RETRIEVE", {"RERANK","PERSIST","DONE"}); rerank_status=phase_status("RERANK", {"PERSIST","DONE"}); result_status=phase_status("PERSIST", {"DONE"})
         return {
             "task_id":task_id,"stage":stage,"status":status,"progress":task["progress"],"processed_rows":task["processed_rows"],"total_rows":task["total_rows"],
             "error_code":task.get("error_code"),"error_message":task.get("error_message"),"execution_mode":mode,"current_phase":phase,"index_id":runtime.get("index_id"),
-            "steps":[
-                {"key":"prepare","label":"数据准备","status":prepare},
-                {"key":"embedding","label":"向量化 / 索引准备","status":embedding_status},
-                {"key":"retrieve","label":"候选召回","status":retrieve_status},
-                {"key":"rerank","label":"精细评分","status":rerank_status},
-                {"key":"prepare_result","label":"结果持久化","status":result_status},
-            ],
+            "steps":[{"key":"prepare","label":"数据准备","status":prepare},{"key":"embedding","label":"向量化 / 索引准备","status":embedding_status},{"key":"retrieve","label":"候选召回","status":retrieve_status},{"key":"rerank","label":"精细评分","status":rerank_status},{"key":"prepare_result","label":"结果持久化","status":result_status}],
         }
 
     @app.get("/api/tasks/{task_id}/runtime")
-    def task_runtime(task_id: str) -> dict[str, object]:
-        tasks.get_task(task_id)
-        return matches.runtime_status(task_id)
+    def task_runtime(task_id: str) -> dict[str, object]: tasks.get_task(task_id); return matches.runtime_status(task_id)
 
     @app.get("/api/tasks/{task_id}/workbench/summary")
     def workbench_summary(task_id: str) -> dict[str,int]: tasks.get_task(task_id); return matches.summary(task_id)
@@ -417,17 +423,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/tasks/{task_id}/evaluations")
     def create_evaluation(task_id: str, payload: BusinessEvaluationRequest) -> dict[str, object]:
-        return evaluations.evaluate(
-            task_id,
-            truth_file_id=payload.truth_file_id,
-            key_column=payload.key_column,
-            expected_group_code_column=payload.expected_group_code_column,
-            key_mode=payload.key_mode,
-        )
+        return evaluations.evaluate(task_id, truth_file_id=payload.truth_file_id, key_column=payload.key_column, expected_group_code_column=payload.expected_group_code_column, key_mode=payload.key_mode)
 
     @app.get("/api/tasks/{task_id}/evaluations")
-    def list_evaluations(task_id: str, limit: int = Query(20, ge=1, le=200)) -> list[dict[str, object]]:
-        return evaluations.list_for_task(task_id, limit)
+    def list_evaluations(task_id: str, limit: int = Query(20, ge=1, le=200)) -> list[dict[str, object]]: return evaluations.list_for_task(task_id, limit)
 
     @app.get("/api/evaluations/{run_id}")
     def get_evaluation(run_id: str, include_items: bool = False, only_errors: bool = False, limit: int = Query(200, ge=1, le=2000)) -> dict[str, object]:
@@ -435,44 +434,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/indexes")
     def list_indexes(limit:int=Query(50,ge=1,le=200))->dict[str,object]:
-        versions=matches.indexes.list_versions()[:limit]
-        return {"total":len(versions),"items":versions}
+        versions=matches.indexes.list_versions()[:limit]; return {"total":len(versions),"items":versions}
 
     @app.get("/api/system/vector-status")
     def vector_status() -> dict[str, object]:
-        runtime=embedding_runtime_status(cfg)
-        versions=matches.indexes.list_versions()
-        counts={"READY":0,"BUILDING":0,"FAILED":0}
+        runtime=embedding_runtime_status(cfg); versions=matches.indexes.list_versions(); counts={"READY":0,"BUILDING":0,"FAILED":0}
         for version in versions:
-            status=str(version.get("status") or "")
-            counts[status]=counts.get(status,0)+1
-        return {
-            "embedding":runtime,
-            "indexes":{"counts":counts,"latest":versions[0] if versions else None,"index_dir":str(cfg.index_dir)},
-            "cache_dir":str(cfg.embedding_cache_dir),
-        }
+            status=str(version.get("status") or ""); counts[status]=counts.get(status,0)+1
+        return {"embedding":runtime,"indexes":{"counts":counts,"latest":versions[0] if versions else None,"index_dir":str(cfg.index_dir)},"cache_dir":str(cfg.embedding_cache_dir)}
 
     @app.get("/api/system/benchmarks")
-    def list_benchmarks(limit:int=Query(20,ge=1,le=200))->list[dict[str,object]]:
-        return benchmarks.list_runs(limit)
+    def list_benchmarks(limit:int=Query(20,ge=1,le=200))->list[dict[str,object]]: return benchmarks.list_runs(limit)
 
     @app.post("/api/system/benchmarks/embedding")
-    def benchmark_embedding(payload:EmbeddingBenchmarkRequest)->dict[str,object]:
-        return benchmarks.run_embedding(sample_count=payload.sample_count,batch_size=payload.batch_size)
+    def benchmark_embedding(payload:EmbeddingBenchmarkRequest)->dict[str,object]: return benchmarks.run_embedding(sample_count=payload.sample_count,batch_size=payload.batch_size)
 
     @app.post("/api/system/benchmarks/vector")
-    def benchmark_vector(payload:VectorBenchmarkRequest)->dict[str,object]:
-        return benchmarks.run_vector_kernel(target_rows=payload.target_rows,query_count=payload.query_count,dimensions=payload.dimensions,top_k=payload.top_k)
+    def benchmark_vector(payload:VectorBenchmarkRequest)->dict[str,object]: return benchmarks.run_vector_kernel(target_rows=payload.target_rows,query_count=payload.query_count,dimensions=payload.dimensions,top_k=payload.top_k)
 
     @app.get("/api/system/info")
     def system_info() -> dict[str, object]:
         return {
-            "version":__version__,"data_dir":str(cfg.data_dir),"database":str(metadata.db_path),
-            "max_upload_bytes":cfg.max_upload_bytes,"max_total_upload_bytes":cfg.max_total_upload_bytes,"chunk_size_bytes":cfg.chunk_size_bytes,
-            "baseline_max_target_rows":cfg.baseline_max_target_rows,
+            "version":__version__,"data_dir":str(cfg.data_dir),"database":str(metadata.db_path),"max_upload_bytes":cfg.max_upload_bytes,
+            "max_total_upload_bytes":cfg.max_total_upload_bytes,"chunk_size_bytes":cfg.chunk_size_bytes,"baseline_max_target_rows":cfg.baseline_max_target_rows,
             "embedding":{"provider":cfg.embedding_provider,"model_id":cfg.embedding_model_id,"dimensions":cfg.embedding_dimensions,"max_length":cfg.embedding_max_length,"precision":cfg.embedding_precision},
             "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
         }
 
-    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
