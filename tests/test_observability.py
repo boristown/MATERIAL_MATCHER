@@ -22,8 +22,16 @@ def test_vector_status_and_benchmark_history(authed: TestClient) -> None:
     assert result['status'] == 'SUCCESS'
     assert result['kind'] == 'vector_kernel'
     assert result['metrics']['production_performance_claim'] is False
+    assert result['metrics']['business_accuracy_claim'] is False
     assert result['metrics']['build_stats']['row_count'] == 200
     assert result['metrics']['search_queries_per_second'] > 0
+    quality = result['metrics']['recall_quality']
+    assert quality['reference'] == 'float32_exact_cosine'
+    assert quality['reference_rows'] == 200
+    assert quality['query_count'] == 5
+    assert set(quality['recall_at']) == {'10', '50', '100'}
+    assert all(0.0 <= value <= 1.0 for value in quality['recall_at'].values())
+    assert 0.0 <= quality['top1_hit_rate'] <= 1.0
 
     history = authed.get('/api/system/benchmarks').json()
     assert history
