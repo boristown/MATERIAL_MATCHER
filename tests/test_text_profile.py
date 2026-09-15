@@ -52,7 +52,7 @@ def test_real_text_profile_streams_with_bounded_reservoir(tmp_path: Path) -> Non
     assert result["sampling_method"] == "bounded_reservoir_v1"
     assert result["scanned_rows"] == 12
     assert result["scan_complete"] is False
-    assert result["coverage_ratio"] is None  # CSV inspector does not know total rows reliably.
+    assert result["coverage_ratio"] == 0.4
     assert result["sampled_rows"] == 8
     assert result["token_profile"]["count"] == 8
     assert result["token_profile"]["maximum"] > 16
