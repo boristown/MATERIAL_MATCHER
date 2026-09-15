@@ -25,8 +25,9 @@ def _sha256_files(paths: list[Path]) -> str:
 class DeterministicEmbeddingProvider:
     """Small deterministic provider used only by tests/benchmark plumbing."""
 
-    def __init__(self, dimensions: int = 32) -> None:
+    def __init__(self, dimensions: int = 32, token_budget: int = 16_384) -> None:
         self._spec = EmbeddingSpec("deterministic_test", "deterministic-test-v1", dimensions, "test-only", 256, True, "float32")
+        self.token_budget = max(1, int(token_budget))
 
     @property
     def spec(self) -> EmbeddingSpec:
@@ -57,7 +58,7 @@ class DeterministicEmbeddingProvider:
 
 
 class OnnxLocalEmbeddingProvider:
-    def __init__(self, *, model_dir: Path, model_id: str, dimensions: int, max_length: int, precision: str = "int8", intra_threads: int = 0) -> None:
+    def __init__(self, *, model_dir: Path, model_id: str, dimensions: int, max_length: int, precision: str = "int8", intra_threads: int = 0, token_budget: int = 16_384) -> None:
         tokenizer_path = model_dir / "tokenizer.json"
         candidates = [model_dir / "model_int8.onnx", model_dir / "model.onnx"] if precision == "int8" else [model_dir / "model.onnx", model_dir / "model_int8.onnx"]
         model_path = next((path for path in candidates if path.exists()), None)
@@ -83,6 +84,7 @@ class OnnxLocalEmbeddingProvider:
         self._session = ort.InferenceSession(str(model_path), sess_options=options, providers=["CPUExecutionProvider"])
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self._input_names = {item.name for item in self._session.get_inputs()}
+        self.token_budget = max(1, int(token_budget))
         self._spec = EmbeddingSpec(
             provider="onnx_local",
             model_id=model_id,
@@ -143,7 +145,7 @@ class OnnxLocalEmbeddingProvider:
 
     def embed(self, texts: Sequence[str]) -> np.ndarray:
         count = max(1, len(texts))
-        return self.embed_batched(texts, max_batch_size=count, token_budget=count * self.spec.max_length)
+        return self.embed_batched(texts, max_batch_size=count, token_budget=self.token_budget)
 
 
 def create_embedding_provider(settings: object, provider_name: str | None = None, model_id: str | None = None, dimensions: int | None = None, max_length: int | None = None, precision: str | None = None):
@@ -156,6 +158,7 @@ def create_embedding_provider(settings: object, provider_name: str | None = None
             max_length=max_length or int(getattr(settings, "embedding_max_length")),
             precision=precision or str(getattr(settings, "embedding_precision")),
             intra_threads=int(getattr(settings, "embedding_intra_threads", 0)),
+            token_budget=int(getattr(settings, "embedding_token_budget", 16_384)),
         )
     raise DomainError("EMBEDDING_PROVIDER_NOT_FOUND", f"不支持的 Embedding Provider：{provider}", status_code=422)
 
