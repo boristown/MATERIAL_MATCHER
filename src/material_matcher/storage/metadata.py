@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS tasks(
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
   error_code TEXT, error_message TEXT, result_file_id TEXT
 );
+CREATE TABLE IF NOT EXISTS task_runtime(
+  task_id TEXT PRIMARY KEY, execution_mode TEXT NOT NULL, current_phase TEXT NOT NULL,
+  index_id TEXT, updated_at TEXT NOT NULL,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+);
 CREATE TABLE IF NOT EXISTS match_items(
   task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, source_id TEXT NOT NULL,
   source_payload TEXT NOT NULL, original_status TEXT NOT NULL, current_status TEXT NOT NULL,
@@ -87,6 +92,7 @@ CREATE TABLE IF NOT EXISTS index_versions(
   index_id TEXT PRIMARY KEY, catalog_version_id TEXT NOT NULL, metadata TEXT NOT NULL,
   status TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_index_versions_catalog_status ON index_versions(catalog_version_id, status);
 """
 
 
@@ -114,10 +120,8 @@ class MetadataRepository:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
-            connection.execute(
-                "UPDATE tasks SET status='RECOVERING' "
-                "WHERE status IN ('RUNNING','PREPARING','EXPORTING')"
-            )
+            connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")
+            connection.execute("UPDATE task_runtime SET current_phase='RECOVERING', updated_at=datetime('now') WHERE task_id IN (SELECT task_id FROM tasks WHERE status='RECOVERING')")
 
     @staticmethod
     def decode(row: sqlite3.Row | None, json_fields: Sequence[str] = ()) -> dict[str, object] | None:
