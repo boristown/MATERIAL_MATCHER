@@ -22,7 +22,7 @@ class CacheStats:
 class EmbeddingCache:
     """Provider-scoped float16 disk cache with a tiny SQLite offset index."""
 
-    def __init__(self, root: Path, provider: EmbeddingProvider, *, token_budget: int = 0) -> None:
+    def __init__(self, root: Path, provider: EmbeddingProvider, *, token_budget: int = 16_384) -> None:
         self.provider = provider
         self.token_budget = max(0, int(token_budget))
         self.root = root / provider.spec.fingerprint
