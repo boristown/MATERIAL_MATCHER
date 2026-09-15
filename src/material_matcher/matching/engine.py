@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
+import numpy as np
+
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
 from material_matcher.embedding.base import EmbeddingProvider
@@ -134,6 +136,7 @@ def match_rows_indexed(
     query_batch_size: int,
     max_source_rows: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    scan_workers: int = 0,
 ) -> list[RowResult]:
     source_layout=detect_layout(source_path); total=min(source_layout.row_count_estimate,max_source_rows) if max_source_rows is not None else source_layout.row_count_estimate
     source_signature=retrieval_text_signature(config,"source")
@@ -143,9 +146,17 @@ def match_rows_indexed(
         if not items: return
         texts=[build_retrieval_text(row,config,"source") for _,row in items]
         vectors,_=cache.get_or_embed(texts,source_signature,max(1,query_batch_size))
-        for (row_index,source_row),query in zip(items,vectors):
-            candidate_ids=index.candidate_ids_for_scope(source_row,config)
-            hits=index.search(query,max(config.retrieval.retrieval_top_k,config.decision.top_n),candidate_ids=candidate_ids,oversample=config.retrieval.oversample)
+        candidate_top_k=max(config.retrieval.retrieval_top_k,config.decision.top_n)
+        hits_list: list[list] | None = None
+        if config.scope_mode == "GLOBAL":
+            hits_list=index.search_many(np.asarray(vectors,dtype=np.float32),candidate_top_k,oversample=config.retrieval.oversample,scan_workers=scan_workers)
+        for position,(row_index,source_row) in enumerate(items):
+            query=np.asarray(vectors[position],dtype=np.float32)
+            if hits_list is not None:
+                hits=hits_list[position]
+            else:
+                candidate_ids=index.candidate_ids_for_scope(source_row,config)
+                hits=index.search(query,candidate_top_k,candidate_ids=candidate_ids,oversample=config.retrieval.oversample)
             records=index.records([hit.row_id for hit in hits])
             scored: list[tuple[float,str,dict[str,object],dict[str,object]]] = []
             for hit in hits:

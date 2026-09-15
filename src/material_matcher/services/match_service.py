@@ -123,6 +123,7 @@ class MatchService:
             query_batch_size=self.settings.query_batch_size,
             max_source_rows=max_source_rows,
             on_progress=on_progress,
+            scan_workers=self.settings.index_scan_workers,
         )
 
     def dry_run(self, draft_id: str, sample_rows: int = 100) -> dict[str, object]:
