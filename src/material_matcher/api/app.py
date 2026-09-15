@@ -23,6 +23,7 @@ from material_matcher.security.session import SessionStore
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.catalog_service import CatalogService
+from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.services.match_service import MatchService
 from material_matcher.services.profile_service import ProfileService
 from material_matcher.services.task_service import TaskService
@@ -64,6 +65,17 @@ class CatalogVersionCreate(BaseModel):
     source_file_id: str
     group_code_column: str = Field(min_length=1, max_length=200)
     activate: bool = False
+
+
+class DictionaryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    mapping: dict[str, str] = Field(min_length=1)
+    case_sensitive: bool = True
+
+
+class DictionaryVersionCreate(BaseModel):
+    mapping: dict[str, str] = Field(min_length=1)
+    case_sensitive: bool = True
 
 
 class ProfileCreate(BaseModel):
@@ -141,6 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     metadata = MetadataRepository(cfg.data_dir / "meta" / "material_matcher.db")
     files = FileRepository(cfg.data_dir, metadata)
     catalogs = CatalogService(metadata, files)
+    dictionaries = DictionaryService(metadata)
     tasks = TaskService(metadata)
     profiles = ProfileService(metadata)
     matches = MatchService(metadata, files, cfg)
@@ -304,6 +317,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/catalogs/{catalog_id}/versions/{version_id}/activate")
     def activate_catalog_version(catalog_id: str, version_id: str) -> dict[str, object]:
         return catalogs.activate(catalog_id, version_id)
+
+    @app.get("/api/dictionaries")
+    def list_dictionaries() -> list[dict[str, object]]:
+        return dictionaries.list()
+
+    @app.post("/api/dictionaries")
+    def create_dictionary(payload: DictionaryCreate) -> dict[str, object]:
+        return dictionaries.create(payload.name, {"mapping": payload.mapping, "case_sensitive": payload.case_sensitive})
+
+    @app.get("/api/dictionaries/{dictionary_id}")
+    def get_dictionary(dictionary_id: str) -> dict[str, object]:
+        return dictionaries.get(dictionary_id)
+
+    @app.get("/api/dictionaries/{dictionary_id}/versions")
+    def dictionary_versions(dictionary_id: str) -> list[dict[str, object]]:
+        return dictionaries.versions(dictionary_id)
+
+    @app.post("/api/dictionaries/{dictionary_id}/versions")
+    def create_dictionary_version(dictionary_id: str, payload: DictionaryVersionCreate) -> dict[str, object]:
+        return dictionaries.add_version(dictionary_id, {"mapping": payload.mapping, "case_sensitive": payload.case_sensitive})
 
     @app.get("/api/profiles")
     def list_profiles() -> list[dict[str, object]]: return profiles.list()
@@ -470,5 +503,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
         }
 
-    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.dictionaries=dictionaries; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
