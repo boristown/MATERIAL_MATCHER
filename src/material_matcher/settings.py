@@ -25,6 +25,7 @@ class Settings:
     embedding_precision: str = "int8"
     embedding_model_root: Path = Path("/opt/material_matcher/models")
     embedding_batch_size: int = 128
+    embedding_token_budget: int = 16_384
     embedding_intra_threads: int = 0
     index_scan_block_rows: int = 8192
     query_batch_size: int = 64
@@ -53,6 +54,7 @@ class Settings:
             embedding_precision=os.getenv("MATERIAL_MATCHER_EMBEDDING_PRECISION", "int8"),
             embedding_model_root=Path(os.getenv("MATERIAL_MATCHER_MODEL_ROOT", "/opt/material_matcher/models")),
             embedding_batch_size=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_BATCH_SIZE", "128")),
+            embedding_token_budget=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_TOKEN_BUDGET", "16384")),
             embedding_intra_threads=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_INTRA_THREADS", "0")),
             index_scan_block_rows=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_BLOCK_ROWS", "8192")),
             query_batch_size=int(os.getenv("MATERIAL_MATCHER_QUERY_BATCH_SIZE", "64")),

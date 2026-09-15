@@ -9,6 +9,7 @@ import numpy as np
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.embedding.base import EmbeddingSpec, normalize_embeddings
+from material_matcher.embedding.batching import token_budget_batches
 
 
 def _sha256_files(paths: list[Path]) -> str:
@@ -31,6 +32,9 @@ class DeterministicEmbeddingProvider:
     def spec(self) -> EmbeddingSpec:
         return self._spec
 
+    def token_lengths(self, texts: Sequence[str]) -> list[int]:
+        return [max(1, len(text)) for text in texts]
+
     def embed(self, texts: Sequence[str]) -> np.ndarray:
         result = np.empty((len(texts), self.spec.dimensions), dtype=np.float32)
         for row, text in enumerate(texts):
@@ -40,6 +44,16 @@ class DeterministicEmbeddingProvider:
             values = np.frombuffer(material[: self.spec.dimensions], dtype=np.uint8).astype(np.float32)
             result[row] = values / 127.5 - 1.0
         return normalize_embeddings(result)
+
+    def embed_batched(self, texts: Sequence[str], *, max_batch_size: int, token_budget: int) -> np.ndarray:
+        if not texts:
+            return np.empty((0, self.spec.dimensions), dtype=np.float32)
+        lengths = [min(item, self.spec.max_length) for item in self.token_lengths(texts)]
+        output = np.empty((len(texts), self.spec.dimensions), dtype=np.float32)
+        for indexes in token_budget_batches(lengths, max_batch_size=max_batch_size, token_budget=token_budget):
+            vectors = self.embed([texts[index] for index in indexes])
+            output[np.asarray(indexes, dtype=np.int64)] = vectors
+        return normalize_embeddings(output)
 
 
 class OnnxLocalEmbeddingProvider:
@@ -83,15 +97,18 @@ class OnnxLocalEmbeddingProvider:
     def spec(self) -> EmbeddingSpec:
         return self._spec
 
-    def embed(self, texts: Sequence[str]) -> np.ndarray:
+    def token_lengths(self, texts: Sequence[str]) -> list[int]:
         if not texts:
+            return []
+        return [len(item.ids) for item in self._tokenizer.encode_batch(list(texts))]
+
+    def _run_ids(self, sequences: list[list[int]]) -> np.ndarray:
+        if not sequences:
             return np.empty((0, self.spec.dimensions), dtype=np.float32)
-        encoded = self._tokenizer.encode_batch(list(texts))
-        clipped = [item.ids[: self.spec.max_length] for item in encoded]
-        max_len = max(1, max(len(item) for item in clipped))
-        input_ids = np.zeros((len(clipped), max_len), dtype=np.int64)
-        attention_mask = np.zeros((len(clipped), max_len), dtype=np.int64)
-        for row, ids in enumerate(clipped):
+        max_len = max(1, max(len(item) for item in sequences))
+        input_ids = np.zeros((len(sequences), max_len), dtype=np.int64)
+        attention_mask = np.zeros((len(sequences), max_len), dtype=np.int64)
+        for row, ids in enumerate(sequences):
             if ids:
                 input_ids[row, : len(ids)] = ids
                 attention_mask[row, : len(ids)] = 1
@@ -111,6 +128,22 @@ class OnnxLocalEmbeddingProvider:
                 status_code=500,
             )
         return normalize_embeddings(vectors)
+
+    def embed_batched(self, texts: Sequence[str], *, max_batch_size: int, token_budget: int) -> np.ndarray:
+        if not texts:
+            return np.empty((0, self.spec.dimensions), dtype=np.float32)
+        encoded = self._tokenizer.encode_batch(list(texts))
+        clipped = [item.ids[: self.spec.max_length] for item in encoded]
+        lengths = [max(1, len(item)) for item in clipped]
+        output = np.empty((len(texts), self.spec.dimensions), dtype=np.float32)
+        for indexes in token_budget_batches(lengths, max_batch_size=max_batch_size, token_budget=token_budget):
+            vectors = self._run_ids([clipped[index] for index in indexes])
+            output[np.asarray(indexes, dtype=np.int64)] = vectors
+        return normalize_embeddings(output)
+
+    def embed(self, texts: Sequence[str]) -> np.ndarray:
+        count = max(1, len(texts))
+        return self.embed_batched(texts, max_batch_size=count, token_budget=count * self.spec.max_length)
 
 
 def create_embedding_provider(settings: object, provider_name: str | None = None, model_id: str | None = None, dimensions: int | None = None, max_length: int | None = None, precision: str | None = None):
