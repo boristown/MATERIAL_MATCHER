@@ -23,6 +23,7 @@ from material_matcher.security.session import SessionStore
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.match_service import MatchService
 from material_matcher.services.task_service import TaskService
+from material_matcher.services.text_profile_service import TextProfileService
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
@@ -65,6 +66,11 @@ class UploadInit(BaseModel):
 
 class DryRunRequest(BaseModel):
     sample_rows: int = Field(default=100, ge=1, le=1000)
+
+
+class TextProfileRequest(BaseModel):
+    sample_rows: int = Field(default=4096, ge=64, le=50_000)
+    scan_limit: int = Field(default=100_000, ge=64, le=2_000_000)
 
 
 class ConfirmRequest(BaseModel):
@@ -116,6 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     tasks = TaskService(metadata)
     matches = MatchService(metadata, files, cfg)
     benchmarks = BenchmarkService(metadata, cfg)
+    text_profiles = TextProfileService(metadata, files, cfg, matches.indexes)
     worker = TaskWorker(matches, cfg.worker_poll_seconds)
     sessions = SessionStore(cfg.session_ttl_seconds)
 
@@ -304,6 +311,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/task-drafts/{draft_id}/dry-run")
     def dry_run(draft_id: str, payload: DryRunRequest) -> dict[str, object]: return matches.dry_run(draft_id,payload.sample_rows)
 
+    @app.post("/api/task-drafts/{draft_id}/text-profile")
+    def text_profile(draft_id: str, payload: TextProfileRequest) -> dict[str, object]:
+        return text_profiles.profile_draft(draft_id, sample_rows=payload.sample_rows, scan_limit=payload.scan_limit)
+
     @app.post("/api/task-drafts/{draft_id}/start",status_code=202)
     def start_task(draft_id: str) -> dict[str, object]:
         task=tasks.start(draft_id); worker.notify(); return task
@@ -436,5 +447,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
         }
 
-    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
