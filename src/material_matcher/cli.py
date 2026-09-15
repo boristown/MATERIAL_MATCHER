@@ -9,16 +9,22 @@ import uvicorn
 from material_matcher.api.app import create_app
 from material_matcher.api.frontend import attach_frontend
 from material_matcher.domain.errors import DomainError
+from material_matcher.services.acceptance_service import AcceptanceService
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.deployment_service import deployment_diagnostics
 from material_matcher.settings import Settings
 from material_matcher.storage.metadata import MetadataRepository
 
 
-def _benchmark_service() -> BenchmarkService:
+def _services() -> tuple[Settings, MetadataRepository]:
     settings = Settings.load()
     settings.ensure_dirs()
     metadata = MetadataRepository(settings.data_dir / "meta" / "material_matcher.db")
+    return settings, metadata
+
+
+def _benchmark_service() -> BenchmarkService:
+    settings, metadata = _services()
     return BenchmarkService(metadata, settings)
 
 
@@ -45,6 +51,9 @@ def main() -> None:
     doctor.add_argument("--require-frontend", action="store_true")
     doctor.add_argument("--require-embedding", action="store_true")
     doctor.add_argument("--require-release-manifest", action="store_true")
+
+    acceptance = subparsers.add_parser("acceptance", help="生成证据驱动的生产验收门禁报告")
+    acceptance.add_argument("--require-production-ready", action="store_true", help="存在BLOCKED门禁时也返回非零退出码")
 
     benchmark = subparsers.add_parser("benchmark", help="运行可重复性能基准")
     benchmark_sub = benchmark.add_subparsers(dest="benchmark_kind", required=True)
@@ -74,6 +83,16 @@ def main() -> None:
         _print(result)
         if not result["ok"]:
             raise SystemExit(2)
+        return
+
+    if args.command == "acceptance":
+        settings, metadata = _services()
+        result = AcceptanceService(metadata, settings).report()
+        _print(result)
+        if not result["code_ready"]:
+            raise SystemExit(2)
+        if bool(args.require_production_ready) and not result["production_ready"]:
+            raise SystemExit(3)
         return
 
     service = _benchmark_service()
