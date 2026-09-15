@@ -72,6 +72,13 @@ CREATE TABLE IF NOT EXISTS audit_events(
   event_id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
   action TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS users(
+  username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, salt TEXT NOT NULL,
+  role TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_role_enabled ON users(role, enabled);
 CREATE TABLE IF NOT EXISTS profiles(
   profile_id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL
 );
