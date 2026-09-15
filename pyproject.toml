@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "material-matcher"
-version = "0.7.0"
+version = "0.8.0"
 description = "Configurable material group-code matching engine"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,7 +15,7 @@ dev = ["pytest>=8,<9", "httpx>=0.27,<1"]
 [project.scripts]
 material-matcher = "material_matcher.cli:main"
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"" = "src"]
 [tool.setuptools.packages.find]
 where = ["src"]
 [tool.pytest.ini_options]
