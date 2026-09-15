@@ -6,6 +6,7 @@ import pytest
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.services.profile_service import ProfileService
+from material_matcher.services.task_service import TaskService
 from material_matcher.storage.metadata import MetadataRepository
 
 
@@ -87,3 +88,34 @@ def test_profile_rollback_rejects_missing_version(tmp_path: Path) -> None:
     with pytest.raises(DomainError) as exc:
         service.rollback(profile_id, 99)
     assert exc.value.code == "PROFILE_VERSION_NOT_FOUND"
+
+
+def test_profile_template_source_is_preserved_into_task_snapshot(tmp_path: Path) -> None:
+    meta = MetadataRepository(tmp_path / "meta.db")
+    profiles = ProfileService(meta)
+    tasks = TaskService(meta)
+    profile_id = str(profiles.create("复用方案", _document(weight=72))["profile_id"])
+    published = profiles.publish(profile_id)
+
+    document = dict(published["document"])
+    document["advanced"] = {
+        **dict(document.get("advanced") or {}),
+        "template_source": {"profile_id": profile_id, "version_no": int(published["version_no"])},
+    }
+    draft = tasks.create_draft("方案复用任务")
+    saved = tasks.save_rules(str(draft["draft_id"]), document)
+    assert saved["template_profile_id"] == profile_id
+    assert saved["template_profile_version"] == 1
+
+    with_data = tasks.save_data(
+        str(draft["draft_id"]),
+        {"source_file_id": "source-1", "catalog_version_id": "catalog-v1", "template_profile_id": None, "template_profile_version": None},
+    )
+    assert with_data["template_profile_id"] == profile_id
+    assert with_data["template_profile_version"] == 1
+
+    task = tasks.start(str(draft["draft_id"]))
+    assert task["profile_id"] == profile_id
+    assert task["profile_version"] == 1
+    assert task["config_snapshot"]["rules"][0]["weight"] == 72
+    assert task["config_snapshot"]["advanced"]["template_source"] == {"profile_id": profile_id, "version_no": 1}
