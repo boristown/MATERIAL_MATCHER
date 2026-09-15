@@ -21,6 +21,7 @@ from material_matcher.embedding.providers import embedding_runtime_status
 from material_matcher.ingestion.inspector import inspect_tabular_file
 from material_matcher.security.session import SessionStore
 from material_matcher.services.benchmark_service import BenchmarkService
+from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.match_service import MatchService
 from material_matcher.services.task_service import TaskService
 from material_matcher.services.text_profile_service import TextProfileService
@@ -90,6 +91,13 @@ class FinalizeRequest(BaseModel):
     allow_unresolved_review: bool = False
 
 
+class BusinessEvaluationRequest(BaseModel):
+    truth_file_id: str = Field(min_length=1)
+    key_column: str = Field(min_length=1, max_length=200)
+    expected_group_code_column: str = Field(min_length=1, max_length=200)
+    key_mode: str = Field(default="source_id", pattern="^(source_id|source_row_id)$")
+
+
 class EmbeddingBenchmarkRequest(BaseModel):
     sample_count: int = Field(default=1000, ge=16, le=50_000)
     batch_size: int | None = Field(default=None, ge=1, le=2048)
@@ -122,6 +130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     tasks = TaskService(metadata)
     matches = MatchService(metadata, files, cfg)
     benchmarks = BenchmarkService(metadata, cfg)
+    evaluations = BusinessEvaluationService(metadata, files)
     text_profiles = TextProfileService(metadata, files, cfg, matches.indexes)
     worker = TaskWorker(matches, cfg.worker_poll_seconds)
     sessions = SessionStore(cfg.session_ttl_seconds)
@@ -406,6 +415,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not file_id: raise DomainError("TASK_STATE_CONFLICT","任务尚未生成最终结果",status_code=409)
         record=files.get(str(file_id)); return FileResponse(Path(str(record["stored_path"])),filename=str(record["original_name"]),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    @app.post("/api/tasks/{task_id}/evaluations")
+    def create_evaluation(task_id: str, payload: BusinessEvaluationRequest) -> dict[str, object]:
+        return evaluations.evaluate(
+            task_id,
+            truth_file_id=payload.truth_file_id,
+            key_column=payload.key_column,
+            expected_group_code_column=payload.expected_group_code_column,
+            key_mode=payload.key_mode,
+        )
+
+    @app.get("/api/tasks/{task_id}/evaluations")
+    def list_evaluations(task_id: str, limit: int = Query(20, ge=1, le=200)) -> list[dict[str, object]]:
+        return evaluations.list_for_task(task_id, limit)
+
+    @app.get("/api/evaluations/{run_id}")
+    def get_evaluation(run_id: str, include_items: bool = False, only_errors: bool = False, limit: int = Query(200, ge=1, le=2000)) -> dict[str, object]:
+        return evaluations.get(run_id, include_items=include_items, only_errors=only_errors, limit=limit)
+
     @app.get("/api/indexes")
     def list_indexes(limit:int=Query(50,ge=1,le=200))->dict[str,object]:
         versions=matches.indexes.list_versions()[:limit]
@@ -447,5 +474,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
         }
 
-    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.text_profiles=text_profiles; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
