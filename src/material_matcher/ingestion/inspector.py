@@ -142,6 +142,22 @@ def inspect_tabular_file(
     }
 
 
+def _count_csv_physical_lines(path: Path) -> int:
+    """Count physical lines by scanning newlines so large CSVs are not capped by the sample window."""
+    lines = 0
+    with path.open("rb") as stream:
+        previous = b""
+        while True:
+            chunk = stream.read(1 << 20)
+            if not chunk:
+                break
+            lines += chunk.count(b"\n")
+            previous = chunk
+        if previous and not previous.endswith(b"\n"):
+            lines += 1
+    return lines
+
+
 def _inspect_csv(path: Path, scan_rows: int, sample_rows: int) -> dict[str, object]:
     with path.open("rb") as stream:
         raw = stream.read(256 * 1024)
@@ -176,7 +192,7 @@ def _inspect_csv(path: Path, scan_rows: int, sample_rows: int) -> dict[str, obje
         "sheet_name": "CSV",
         "recommended_header_row": header_row,
         "header_confidence": 1.0 if best else 0.0,
-        "row_count_estimate": max(0, len(rows) - header_row),
+        "row_count_estimate": max(0, _count_csv_physical_lines(path) - header_row),
         "column_count": len(columns),
         "columns": columns,
         "warnings": [],

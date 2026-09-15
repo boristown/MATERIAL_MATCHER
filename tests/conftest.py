@@ -10,7 +10,7 @@ TEST_ADMIN_PASSWORD = 'ChangedAdmin123'
 
 @pytest.fixture()
 def client(tmp_path: Path):
-    settings=Settings(data_dir=tmp_path/'data',config_dir=tmp_path/'etc',log_dir=tmp_path/'log',admin_password=BOOTSTRAP_ADMIN_PASSWORD,worker_poll_seconds=0.01)
+    settings=Settings(data_dir=tmp_path/'data',config_dir=tmp_path/'etc',log_dir=tmp_path/'log',admin_password=BOOTSTRAP_ADMIN_PASSWORD,worker_poll_seconds=0.01,embedding_model_root=tmp_path/'models',web_dist_dir=tmp_path/'web-dist')
     with TestClient(create_app(settings)) as test_client: yield test_client
 
 @pytest.fixture()
