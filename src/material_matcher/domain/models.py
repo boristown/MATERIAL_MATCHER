@@ -55,12 +55,26 @@ class ScopeConfig(BaseModel):
     mapping: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class RetrievalConfig(BaseModel):
+    mode: Literal["auto", "scan", "vector"] = "auto"
+    provider: str = "onnx_local"
+    model_id: str = "BAAI/bge-base-zh-v1.5"
+    dimensions: int = Field(default=768, ge=8, le=8192)
+    max_length: int = Field(default=256, ge=16, le=4096)
+    precision: str = "int8"
+    source: FieldSide | None = None
+    target: FieldSide | None = None
+    retrieval_top_k: int = Field(default=200, ge=1, le=5000)
+    oversample: int = Field(default=4, ge=1, le=32)
+
+
 class MatchingConfig(BaseModel):
     source_id_column: str | None = None
     scope_mode: Literal["GLOBAL", "STRICT", "MAPPED"] = "GLOBAL"
     scope: ScopeConfig = Field(default_factory=ScopeConfig)
     rules: list[FieldRule] = Field(default_factory=list)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     advanced: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -72,4 +86,6 @@ class MatchingConfig(BaseModel):
                 raise ValueError("同组/分类映射匹配必须指定客户和集团分类字段")
         if self.scope_mode == "MAPPED" and not self.scope.mapping:
             raise ValueError("分类映射匹配必须配置分类映射")
+        if self.retrieval.retrieval_top_k < self.decision.top_n:
+            raise ValueError("向量召回 TopK 不能小于最终候选 TopN")
         return self
