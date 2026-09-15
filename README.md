@@ -200,7 +200,7 @@ GET  /api/evaluations/{run_id}
 
 #### 自动化基线
 
-v0.9 收口 CI：GitHub Actions run #122，backend / frontend 均成功；`pytest -q` 为 **44 passed**，同时通过 `compileall`、安装脚本语法校验、仓库文件策略与 Vue production build。
+v0.9 收口基线：backend / frontend 均成功；`pytest -q` 为 **44 passed**，同时通过 `compileall`、安装脚本语法校验、仓库文件策略与 Vue production build。
 
 ## 当前性能与交付边界
 
