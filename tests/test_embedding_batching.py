@@ -33,13 +33,14 @@ def test_token_budget_batches_cover_once_and_obey_limits() -> None:
 
 
 def test_bucketed_provider_and_cache_preserve_original_order(tmp_path: Path) -> None:
-    provider = DeterministicEmbeddingProvider(32)
+    provider = DeterministicEmbeddingProvider(32, token_budget=100)
     texts = ['x' * 90, 'a', 'm' * 30, 'bb', 'z' * 70, 'ccc']
     reference = provider.embed(texts)
     bucketed = provider.embed_batched(texts, max_batch_size=2, token_budget=100)
     assert np.allclose(reference, bucketed)
 
-    cache = EmbeddingCache(tmp_path / 'cache', provider, token_budget=100)
+    cache = EmbeddingCache(tmp_path / 'cache', provider)
+    assert cache.token_budget == 100
     first, stats = cache.get_or_embed(texts, 'sig', batch_size=3)
     second, second_stats = cache.get_or_embed(texts, 'sig', batch_size=3)
     assert stats.misses == len(texts)
