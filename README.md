@@ -19,6 +19,25 @@
 - 第一阶段默认 Embedding 采用 `BAAI/bge-base-zh-v1.5`，但通过 Provider 可替换；模型、处理流水线和集团目录不变时必须复用 Target 向量与索引。
 - CPU-only 参考环境下，100 万集团物料首次建库 + 10 万客户物料完整匹配的产品目标为数小时级（参考 2～4 小时），实际以现场自动 Benchmark 为准。
 
+## 当前实现里程碑
+
+`v0.4` 已打通**小规模端到端业务闭环**：
+
+```text
+上传 Source / Target
+→ 自动识别与字段确认
+→ 配置字段组合、权重、阈值和匹配范围
+→ Dry Run
+→ SQLite 持久化任务队列执行
+→ TopN / 第二候选 / 分差 / 字段解释
+→ 人工确认或标记未匹配
+→ 生成并下载最终 Excel
+```
+
+当前匹配执行器是用于验证业务闭环的通用扫描基线。为避免在百万级目录上退化为不可接受的全量逐对比对，Target 超过配置的安全上限时会明确返回 `INDEX_NOT_READY`，要求进入下一里程碑的向量索引路径。该基线不会构造完整的 Source × Target 相似度矩阵。
+
+下一里程碑重点是：Embedding Provider、`bge-base-zh-v1.5`、Embedding Cache、1-bit BBQ Target、4-bit Query、int8 rerank、批量召回、索引复用与真实性能 Benchmark。
+
 ## 当前 13 所业务样例
 
 当前公开样例中包含：
