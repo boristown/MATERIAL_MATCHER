@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field
 
 from material_matcher import __version__
 from material_matcher.domain.errors import DomainError
+from material_matcher.embedding.providers import embedding_runtime_status
 from material_matcher.ingestion.inspector import inspect_tabular_file
 from material_matcher.security.session import SessionStore
+from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.match_service import MatchService
 from material_matcher.services.task_service import TaskService
 from material_matcher.settings import Settings
@@ -82,6 +84,18 @@ class FinalizeRequest(BaseModel):
     allow_unresolved_review: bool = False
 
 
+class EmbeddingBenchmarkRequest(BaseModel):
+    sample_count: int = Field(default=1000, ge=16, le=50_000)
+    batch_size: int | None = Field(default=None, ge=1, le=2048)
+
+
+class VectorBenchmarkRequest(BaseModel):
+    target_rows: int = Field(default=10_000, ge=100, le=100_000)
+    query_count: int = Field(default=100, ge=1, le=5_000)
+    dimensions: int = Field(default=128, ge=16, le=2048)
+    top_k: int = Field(default=50, ge=1, le=1000)
+
+
 def _now() -> str:
     return datetime.now().astimezone().isoformat()
 
@@ -101,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     files = FileRepository(cfg.data_dir, metadata)
     tasks = TaskService(metadata)
     matches = MatchService(metadata, files, cfg)
+    benchmarks = BenchmarkService(metadata, cfg)
     worker = TaskWorker(matches, cfg.worker_poll_seconds)
     sessions = SessionStore(cfg.session_ttl_seconds)
 
@@ -182,6 +197,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def upload_file(role: str = Form(...), file: UploadFile = File(...)) -> dict[str, object]:
         if role not in _ALLOWED_ROLES:
             raise DomainError("INVALID_FILE_ROLE", "文件用途不正确", status_code=422)
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix == ".xls":
+            raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
+        if suffix not in _ALLOWED_SUFFIXES:
+            raise DomainError("UNSUPPORTED_FILE", "仅支持 .xlsx / .xlsm / .csv", status_code=400)
         record = files.save_stream(file.filename or "upload", role, file.file, cfg.max_upload_bytes)
         try:
             inspection = inspect_tabular_file(Path(str(record["stored_path"])))
@@ -264,74 +284,157 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/task-drafts")
     def create_draft(payload: DraftCreate) -> dict[str, object]: return tasks.create_draft(payload.name)
+
     @app.get("/api/task-drafts")
     def list_drafts() -> list[dict[str, object]]: return tasks.list_drafts()
+
     @app.get("/api/task-drafts/{draft_id}")
     def get_draft(draft_id: str) -> dict[str, object]: return tasks.get_draft(draft_id)
+
     @app.put("/api/task-drafts/{draft_id}/data")
     def save_draft_data(draft_id: str, payload: DraftData) -> dict[str, object]:
         files.get(payload.source_file_id); get_catalog_version(payload.catalog_version_id); return tasks.save_data(draft_id,payload.model_dump())
+
     @app.put("/api/task-drafts/{draft_id}/rules")
     async def save_draft_rules(draft_id: str, request: Request) -> dict[str, object]:
         document=await request.json()
         if not isinstance(document,dict): raise DomainError("INVALID_PROFILE","匹配规则格式不正确",status_code=422)
         return tasks.save_rules(draft_id,document)
+
     @app.post("/api/task-drafts/{draft_id}/dry-run")
     def dry_run(draft_id: str, payload: DryRunRequest) -> dict[str, object]: return matches.dry_run(draft_id,payload.sample_rows)
+
     @app.post("/api/task-drafts/{draft_id}/start",status_code=202)
     def start_task(draft_id: str) -> dict[str, object]:
         task=tasks.start(draft_id); worker.notify(); return task
 
     @app.get("/api/tasks")
     def list_tasks() -> list[dict[str, object]]: return tasks.list_tasks()
+
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str) -> dict[str, object]: return tasks.get_task(task_id)
+
     @app.get("/api/tasks/{task_id}/progress")
     def get_progress(task_id: str) -> dict[str, object]:
         task=tasks.get_task(task_id); status=str(task["status"]); stage=str(task["stage"])
+        runtime=matches.runtime_status(task_id); mode=str(runtime.get("execution_mode") or "unknown"); phase=str(runtime.get("current_phase") or "WAITING")
         prepare="DONE" if status not in {"PENDING","PREPARING","RECOVERING"} else "RUNNING" if status in {"PREPARING","RECOVERING"} else "WAITING"
-        computation_done=status in {"COMPLETED","FAILED"}
-        running=status=="RUNNING"
-        rules=list((task.get("config_snapshot") or {}).get("rules") or [])
-        uses_semantic=any(str(rule.get("matcher"))=="semantic" for rule in rules if isinstance(rule,dict))
-        embedding_status=("DONE" if computation_done or running else "WAITING") if uses_semantic else "SKIPPED"
-        return {"task_id":task_id,"stage":stage,"status":status,"progress":task["progress"],"processed_rows":task["processed_rows"],"total_rows":task["total_rows"],"error_code":task.get("error_code"),"error_message":task.get("error_message"),"steps":[
-            {"key":"prepare","label":"数据准备","status":prepare},
-            {"key":"embedding","label":"向量化处理","status":embedding_status},
-            {"key":"retrieve","label":"候选比对","status":"DONE" if computation_done else "RUNNING" if running else "WAITING"},
-            {"key":"rerank","label":"精细评分","status":"DONE" if computation_done else "RUNNING" if running and float(task["progress"])>40 else "WAITING"},
-            {"key":"prepare_result","label":"结果整理","status":"DONE" if computation_done else "WAITING"},
-        ]}
+        failed=status=="FAILED" or phase=="FAILED"
+        completed=status=="COMPLETED" or phase=="DONE"
+        vector_mode=mode=="vector"
+
+        if not vector_mode:
+            embedding_status="SKIPPED"
+        elif failed:
+            embedding_status="FAILED"
+        elif phase=="INDEX":
+            embedding_status="RUNNING"
+        elif phase in {"RETRIEVE","RERANK","PERSIST","DONE"} or completed:
+            embedding_status="DONE"
+        else:
+            embedding_status="WAITING"
+
+        def phase_status(active: str, done_after: set[str]) -> str:
+            if failed: return "FAILED"
+            if completed or phase in done_after: return "DONE"
+            if phase==active: return "RUNNING"
+            return "WAITING"
+
+        retrieve_status=phase_status("RETRIEVE", {"RERANK","PERSIST","DONE"})
+        rerank_status=phase_status("RERANK", {"PERSIST","DONE"})
+        result_status=phase_status("PERSIST", {"DONE"})
+        return {
+            "task_id":task_id,"stage":stage,"status":status,"progress":task["progress"],"processed_rows":task["processed_rows"],"total_rows":task["total_rows"],
+            "error_code":task.get("error_code"),"error_message":task.get("error_message"),"execution_mode":mode,"current_phase":phase,"index_id":runtime.get("index_id"),
+            "steps":[
+                {"key":"prepare","label":"数据准备","status":prepare},
+                {"key":"embedding","label":"向量化 / 索引准备","status":embedding_status},
+                {"key":"retrieve","label":"候选召回","status":retrieve_status},
+                {"key":"rerank","label":"精细评分","status":rerank_status},
+                {"key":"prepare_result","label":"结果持久化","status":result_status},
+            ],
+        }
+
+    @app.get("/api/tasks/{task_id}/runtime")
+    def task_runtime(task_id: str) -> dict[str, object]:
+        tasks.get_task(task_id)
+        return matches.runtime_status(task_id)
 
     @app.get("/api/tasks/{task_id}/workbench/summary")
     def workbench_summary(task_id: str) -> dict[str,int]: tasks.get_task(task_id); return matches.summary(task_id)
+
     @app.get("/api/tasks/{task_id}/workbench/items")
     def workbench_items(task_id:str, first_score_min:float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, page:int=Query(1,ge=1), page_size:int=Query(50,ge=1,le=200))->dict[str,object]:
         tasks.get_task(task_id); return matches.workbench_items(task_id,first_score_min=first_score_min,first_score_max=first_score_max,second_score_min=second_score_min,second_score_max=second_score_max,gap_min=gap_min,gap_max=gap_max,critical_conflict=critical_conflict,page=page,page_size=page_size)
+
     @app.get("/api/tasks/{task_id}/items/{source_row_id}/candidates")
     def item_candidates(task_id:str,source_row_id:str)->dict[str,object]: return {"candidates":matches.candidates(task_id,source_row_id)}
+
     @app.post("/api/tasks/{task_id}/items/{source_row_id}/confirm")
     def confirm_item(task_id:str,source_row_id:str,payload:ConfirmRequest)->dict[str,object]: return matches.confirm(task_id,source_row_id,payload.target_id,payload.comment)
+
     @app.post("/api/tasks/{task_id}/items/{source_row_id}/reject")
     def reject_item(task_id:str,source_row_id:str,payload:RejectRequest)->dict[str,object]: return matches.reject(task_id,source_row_id,payload.comment)
+
     @app.post("/api/tasks/{task_id}/workbench/batch-confirm-top1")
     def batch_confirm(task_id:str,payload:BatchRequest)->dict[str,object]: return matches.batch_confirm_top1(task_id,payload.source_row_ids)
+
     @app.post("/api/tasks/{task_id}/workbench/batch-reject")
     def batch_reject(task_id:str,payload:BatchRequest)->dict[str,object]: return matches.batch_reject(task_id,payload.source_row_ids)
+
     @app.post("/api/tasks/{task_id}/finalize")
     def finalize(task_id:str,payload:FinalizeRequest)->dict[str,object]: return matches.finalize(task_id,payload.allow_unresolved_review)
+
     @app.get("/api/tasks/{task_id}/exports")
     def exports(task_id:str)->dict[str,object]:
         task=tasks.get_task(task_id); file_id=task.get("result_file_id"); return {"final_result":({"file_id":file_id,"download_url":f"/api/tasks/{task_id}/result"} if file_id else None)}
+
     @app.get("/api/tasks/{task_id}/result")
     def result_file(task_id:str):
         task=tasks.get_task(task_id); file_id=task.get("result_file_id")
         if not file_id: raise DomainError("TASK_STATE_CONFLICT","任务尚未生成最终结果",status_code=409)
         record=files.get(str(file_id)); return FileResponse(Path(str(record["stored_path"])),filename=str(record["original_name"]),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+    @app.get("/api/indexes")
+    def list_indexes(limit:int=Query(50,ge=1,le=200))->dict[str,object]:
+        versions=matches.indexes.list_versions()[:limit]
+        return {"total":len(versions),"items":versions}
+
+    @app.get("/api/system/vector-status")
+    def vector_status() -> dict[str, object]:
+        runtime=embedding_runtime_status(cfg)
+        versions=matches.indexes.list_versions()
+        counts={"READY":0,"BUILDING":0,"FAILED":0}
+        for version in versions:
+            status=str(version.get("status") or "")
+            counts[status]=counts.get(status,0)+1
+        return {
+            "embedding":runtime,
+            "indexes":{"counts":counts,"latest":versions[0] if versions else None,"index_dir":str(cfg.index_dir)},
+            "cache_dir":str(cfg.embedding_cache_dir),
+        }
+
+    @app.get("/api/system/benchmarks")
+    def list_benchmarks(limit:int=Query(20,ge=1,le=200))->list[dict[str,object]]:
+        return benchmarks.list_runs(limit)
+
+    @app.post("/api/system/benchmarks/embedding")
+    def benchmark_embedding(payload:EmbeddingBenchmarkRequest)->dict[str,object]:
+        return benchmarks.run_embedding(sample_count=payload.sample_count,batch_size=payload.batch_size)
+
+    @app.post("/api/system/benchmarks/vector")
+    def benchmark_vector(payload:VectorBenchmarkRequest)->dict[str,object]:
+        return benchmarks.run_vector_kernel(target_rows=payload.target_rows,query_count=payload.query_count,dimensions=payload.dimensions,top_k=payload.top_k)
+
     @app.get("/api/system/info")
     def system_info() -> dict[str, object]:
-        return {"version":__version__,"data_dir":str(cfg.data_dir),"database":str(metadata.db_path),"max_upload_bytes":cfg.max_upload_bytes,"max_total_upload_bytes":cfg.max_total_upload_bytes,"chunk_size_bytes":cfg.chunk_size_bytes,"baseline_max_target_rows":cfg.baseline_max_target_rows}
+        return {
+            "version":__version__,"data_dir":str(cfg.data_dir),"database":str(metadata.db_path),
+            "max_upload_bytes":cfg.max_upload_bytes,"max_total_upload_bytes":cfg.max_total_upload_bytes,"chunk_size_bytes":cfg.chunk_size_bytes,
+            "baseline_max_target_rows":cfg.baseline_max_target_rows,
+            "embedding":{"provider":cfg.embedding_provider,"model_id":cfg.embedding_model_id,"dimensions":cfg.embedding_dimensions,"max_length":cfg.embedding_max_length,"precision":cfg.embedding_precision},
+            "index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir),
+        }
 
-    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.tasks=tasks; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.worker=worker
     return app
