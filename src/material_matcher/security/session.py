@@ -9,34 +9,52 @@ import time
 class Session:
     token: str
     expires_at: float
+    username: str
+    role: str
 
 
 class SessionStore:
-    """Single-process session store for the first deployable slice.
+    """Single-process authenticated session store.
 
-    Authentication is intentionally isolated behind this class so a persistent
-    session backend can be introduced without changing API/domain code.
+    User/password/role state is persisted in SQLite. Session tokens remain
+    process-local by design; a service restart invalidates browser sessions,
+    which is safer than silently accepting stale authorization state.
     """
 
     def __init__(self, ttl_seconds: int) -> None:
         self.ttl_seconds = ttl_seconds
-        self._sessions: dict[str, float] = {}
+        self._sessions: dict[str, Session] = {}
 
-    def create(self) -> Session:
+    def create(self, username: str = "admin", role: str = "admin") -> Session:
         token = secrets.token_urlsafe(32)
-        expires_at = time.time() + self.ttl_seconds
-        self._sessions[token] = expires_at
-        return Session(token=token, expires_at=expires_at)
+        session = Session(
+            token=token,
+            expires_at=time.time() + self.ttl_seconds,
+            username=username,
+            role=role,
+        )
+        self._sessions[token] = session
+        return session
+
+    def get(self, token: str | None) -> Session | None:
+        if not token:
+            return None
+        session = self._sessions.get(token)
+        if session is None:
+            return None
+        if session.expires_at <= time.time():
+            self._sessions.pop(token, None)
+            return None
+        return session
 
     def validate(self, token: str | None) -> bool:
-        if not token:
-            return False
-        expires_at = self._sessions.get(token, 0.0)
-        if expires_at <= time.time():
-            self._sessions.pop(token, None)
-            return False
-        return True
+        return self.get(token) is not None
 
     def revoke(self, token: str | None) -> None:
         if token:
             self._sessions.pop(token, None)
+
+    def revoke_user(self, username: str) -> None:
+        for token, session in list(self._sessions.items()):
+            if session.username == username:
+                self._sessions.pop(token, None)
