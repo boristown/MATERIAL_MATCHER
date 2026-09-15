@@ -5,6 +5,20 @@ import os
 from pathlib import Path
 
 
+def _optional_int(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return int(raw)
+
+
+def _optional_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return float(raw)
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -31,6 +45,12 @@ class Settings:
     query_batch_size: int = 64
     index_lock_stale_seconds: int = 21_600
     web_dist_dir: Path = Path("/opt/material_matcher/current/web/dist")
+    acceptance_min_truth_rows: int | None = None
+    acceptance_min_truth_coverage: float | None = None
+    acceptance_min_top1_accuracy: float | None = None
+    acceptance_min_final_accuracy: float | None = None
+    acceptance_max_review_rate: float | None = None
+    acceptance_max_scale_hours: float | None = None
 
     @property
     def index_dir(self) -> Path:
@@ -39,6 +59,17 @@ class Settings:
     @property
     def embedding_cache_dir(self) -> Path:
         return self.data_dir / "cache" / "embeddings"
+
+    @property
+    def acceptance_thresholds(self) -> dict[str, int | float | None]:
+        return {
+            "min_truth_rows": self.acceptance_min_truth_rows,
+            "min_truth_coverage": self.acceptance_min_truth_coverage,
+            "min_top1_accuracy": self.acceptance_min_top1_accuracy,
+            "min_final_accuracy": self.acceptance_min_final_accuracy,
+            "max_review_rate": self.acceptance_max_review_rate,
+            "max_scale_hours": self.acceptance_max_scale_hours,
+        }
 
     @classmethod
     def load(cls) -> "Settings":
@@ -61,6 +92,12 @@ class Settings:
             query_batch_size=int(os.getenv("MATERIAL_MATCHER_QUERY_BATCH_SIZE", "64")),
             index_lock_stale_seconds=int(os.getenv("MATERIAL_MATCHER_INDEX_LOCK_STALE_SECONDS", "21600")),
             web_dist_dir=Path(os.getenv("MATERIAL_MATCHER_WEB_DIST_DIR", "/opt/material_matcher/current/web/dist")),
+            acceptance_min_truth_rows=_optional_int("MATERIAL_MATCHER_ACCEPTANCE_MIN_TRUTH_ROWS"),
+            acceptance_min_truth_coverage=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_TRUTH_COVERAGE"),
+            acceptance_min_top1_accuracy=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_TOP1_ACCURACY"),
+            acceptance_min_final_accuracy=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_FINAL_ACCURACY"),
+            acceptance_max_review_rate=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MAX_REVIEW_RATE"),
+            acceptance_max_scale_hours=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MAX_SCALE_HOURS"),
         )
 
     def ensure_dirs(self) -> None:
