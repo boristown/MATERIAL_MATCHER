@@ -55,6 +55,17 @@ def _runtime(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     python.chmod(0o755)
+    launcher = runtime / "bin/material-matcher"
+    launcher.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "BIN_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "RELEASE_ROOT=$(CDPATH= cd -- \"$BIN_DIR/../..\" && pwd)\n"
+        "export PYTHONPATH=\"$RELEASE_ROOT/app${PYTHONPATH:+:$PYTHONPATH}\"\n"
+        "exec \"$BIN_DIR/python3\" -m material_matcher.cli \"$@\"\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
     (runtime / "runtime-manifest.json").write_text(
         json.dumps(
             {
