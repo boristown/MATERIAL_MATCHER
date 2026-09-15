@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e '.[dev]'
+      - run: pytest -q
+      - run: python -m compileall -q src
+      - run: bash -n installer/install.sh
+      - run: python scripts/check_repo_files.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
