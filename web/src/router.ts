@@ -4,6 +4,7 @@ import DataView from './views/DataView.vue'
 import ProfilesView from './views/ProfilesView.vue'
 import SystemView from './views/SystemView.vue'
 import TasksView from './views/TasksView.vue'
+import TaskCreateView from './views/TaskCreateView.vue'
 import TaskWorkspace from './views/TaskWorkspace.vue'
 import TaskEvaluationView from './views/TaskEvaluationView.vue'
 
@@ -13,7 +14,8 @@ export const router = createRouter({
     { path: '/', redirect: '/tasks' },
     { path: '/login', component: LoginView },
     { path: '/tasks', component: TasksView },
-    { path: '/tasks/new', component: TaskWorkspace },
+    { path: '/tasks/new', component: TaskCreateView },
+    { path: '/tasks/workspace', component: TaskWorkspace },
     { path: '/tasks/:taskId/evaluation', component: TaskEvaluationView },
     { path: '/tasks/:taskId', component: TaskWorkspace },
     { path: '/profiles', component: ProfilesView },
