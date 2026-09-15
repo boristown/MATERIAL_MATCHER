@@ -9,6 +9,8 @@ def test_vector_status_and_benchmark_history(authed: TestClient) -> None:
     body = status.json()
     assert body['embedding']['model_id'] == 'BAAI/bge-base-zh-v1.5'
     assert body['embedding']['dimensions'] == 768
+    assert body['embedding']['batch_size'] == 128
+    assert body['embedding']['token_budget'] == 16384
     assert 'ready' in body['embedding']
 
     benchmark = authed.post(
