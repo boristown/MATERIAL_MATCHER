@@ -135,14 +135,14 @@ fi
 
 OLD_RELEASE=""
 OLD_MODEL_ROOT=""
+SERVICE_WAS_ACTIVE=0
 if [[ -L "$OPT/current" ]]; then OLD_RELEASE="$(readlink -f "$OPT/current")"; fi
 if [[ -L "$VAR/models/current" ]]; then OLD_MODEL_ROOT="$(readlink -f "$VAR/models/current")"; fi
+if systemctl is-active --quiet material_matcher.service 2>/dev/null; then SERVICE_WAS_ACTIVE=1; fi
 
+RELEASE_DEST=""
+MODEL_RELEASE_ROOT=""
 if [[ -n "$BUNDLE_ROOT" ]]; then
-  if systemctl is-active --quiet material_matcher.service 2>/dev/null; then
-    systemctl stop material_matcher.service
-  fi
-
   RELEASE_DEST="$OPT/releases/$RELEASE_VERSION"
   if [[ -d "$RELEASE_DEST" ]]; then
     [[ -f "$RELEASE_DEST/.bundle_manifest_sha256" ]] || fail "同版本发布目录已存在但无法确认来源：$RELEASE_DEST"
@@ -167,17 +167,21 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
     mv "$MODEL_STAGE" "$MODEL_RELEASE_ROOT"
   fi
 
+  # 所有新版本检查都在旧服务仍在线时完成；只有通过后才进入停机切换窗口。
   [[ -x "$RELEASE_DEST/runtime/bin/python3" ]] || fail "自包含 Python Runtime 不可执行"
   [[ -x "$RELEASE_DEST/runtime/bin/material-matcher" ]] || fail "material-matcher 启动器不可执行"
   [[ -f "$RELEASE_DEST/web/dist/index.html" ]] || fail "Vue 前端发布产物缺失"
-  "$RELEASE_DEST/runtime/bin/python3" - <<'PY' || fail "自包含 Runtime 缺少正式 Python/Embedding 依赖"
+  [[ -f "$RELEASE_DEST/release-manifest.json" ]] || fail "release manifest 缺失"
+  RELEASE_RUNTIME_VERSION="$(PYTHONPATH="$RELEASE_DEST/app" "$RELEASE_DEST/runtime/bin/python3" - <<'PY'
+import material_matcher
+print(material_matcher.__version__)
+PY
+)" || fail "无法读取新 release 运行时版本"
+  [[ "$RELEASE_RUNTIME_VERSION" == "$RELEASE_VERSION" ]] || fail "新 release 运行时版本 $RELEASE_RUNTIME_VERSION 与离线包版本 $RELEASE_VERSION 不一致"
+  PYTHONPATH="$RELEASE_DEST/app" "$RELEASE_DEST/runtime/bin/python3" - <<'PY' || fail "自包含 Runtime 缺少正式 Python/Embedding 依赖"
 import fastapi, numpy, onnxruntime, openpyxl, pydantic, tokenizers, uvicorn
 PY
-
-  if [[ -n "$OLD_RELEASE" && "$OLD_RELEASE" != "$RELEASE_DEST" ]]; then activate_link "$OPT/previous" "$OLD_RELEASE"; fi
-  if [[ -n "$OLD_MODEL_ROOT" && "$OLD_MODEL_ROOT" != "$MODEL_RELEASE_ROOT" ]]; then activate_link "$VAR/models/previous" "$OLD_MODEL_ROOT"; fi
-  activate_link "$VAR/models/current" "$MODEL_RELEASE_ROOT"
-  activate_link "$OPT/current" "$RELEASE_DEST"
+  "$RELEASE_DEST/runtime/bin/material-matcher" --help >/dev/null || fail "material-matcher 启动器自检失败"
 fi
 
 chown -R "$APP_USER:$APP_USER" "$VAR" "$LOG"
@@ -208,18 +212,39 @@ WantedBy=multi-user.target
 EOF
 
 rollback_activation() {
-  echo "新版本启动失败，尝试回滚 previous release..." >&2
+  echo "新版本启动失败，回滚到安装前状态..." >&2
   systemctl stop material_matcher.service >/dev/null 2>&1 || true
-  if [[ -n "$OLD_RELEASE" && -d "$OLD_RELEASE" ]]; then activate_link "$OPT/current" "$OLD_RELEASE"; fi
-  if [[ -n "$OLD_MODEL_ROOT" && -d "$OLD_MODEL_ROOT" ]]; then activate_link "$VAR/models/current" "$OLD_MODEL_ROOT"; fi
-  systemctl daemon-reload
-  if [[ -n "$OLD_RELEASE" && -x "$OLD_RELEASE/runtime/bin/material-matcher" ]]; then systemctl start material_matcher.service >/dev/null 2>&1 || true; fi
+  if [[ -n "$OLD_RELEASE" && -d "$OLD_RELEASE" ]]; then
+    activate_link "$OPT/current" "$OLD_RELEASE"
+  else
+    rm -f "$OPT/current"
+  fi
+  if [[ -n "$OLD_MODEL_ROOT" && -d "$OLD_MODEL_ROOT" ]]; then
+    activate_link "$VAR/models/current" "$OLD_MODEL_ROOT"
+  else
+    rm -f "$VAR/models/current"
+  fi
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [[ "$SERVICE_WAS_ACTIVE" == "1" && -n "$OLD_RELEASE" && -x "$OLD_RELEASE/runtime/bin/material-matcher" ]]; then
+    systemctl start material_matcher.service >/dev/null 2>&1 || true
+  fi
 }
+
+if [[ -n "$BUNDLE_ROOT" ]]; then
+  # 从这里开始才进入短暂停机窗口。
+  if [[ "$SERVICE_WAS_ACTIVE" == "1" ]]; then
+    systemctl stop material_matcher.service || fail "无法停止旧版本服务，未执行版本切换"
+  fi
+  if [[ -n "$OLD_RELEASE" && "$OLD_RELEASE" != "$RELEASE_DEST" ]]; then activate_link "$OPT/previous" "$OLD_RELEASE"; fi
+  if [[ -n "$OLD_MODEL_ROOT" && "$OLD_MODEL_ROOT" != "$MODEL_RELEASE_ROOT" ]]; then activate_link "$VAR/models/previous" "$OLD_MODEL_ROOT"; fi
+  activate_link "$VAR/models/current" "$MODEL_RELEASE_ROOT"
+  activate_link "$OPT/current" "$RELEASE_DEST"
+fi
 
 systemctl daemon-reload
 if [[ -x "$OPT/current/runtime/bin/material-matcher" ]]; then
   if ! systemctl enable --now material_matcher.service; then
-    rollback_activation
+    [[ -n "$BUNDLE_ROOT" ]] && rollback_activation
     fail "systemd 服务启动失败"
   fi
   set -a; source "$SERVER_ENV"; set +a
@@ -239,7 +264,7 @@ print(f"readiness 未通过: {last}",file=sys.stderr)
 raise SystemExit(1)
 PY
   then
-    rollback_activation
+    [[ -n "$BUNDLE_ROOT" ]] && rollback_activation
     fail "服务已启动，但 readiness 检查未通过"
   fi
   echo "MATERIAL_MATCHER 安装完成。"
