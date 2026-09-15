@@ -72,6 +72,13 @@ async function loadCatalogs(): Promise<void> {
     catalogVersionId.value = current?.version_id ?? ''
   }
 }
+async function selectCatalog(versionId: string): Promise<void> {
+  const catalog = readyCatalogs.value.find(item => item.version_id === versionId)
+  if (!catalog) return
+  groupCodeColumn.value = catalog.group_code_column
+  try { await loadFile(catalog.source_file_id, 'target') }
+  catch (error) { ElMessage.error((error as Error).message) }
+}
 async function restoreDraft(id: string): Promise<void> {
   const draft = (await api.get(`/task-drafts/${id}`)).data
   draftId.value = draft.draft_id
@@ -85,6 +92,7 @@ async function restoreDraft(id: string): Promise<void> {
   if (draft.catalog_version_id) {
     catalogVersionId.value = String(draft.catalog_version_id)
     targetMode.value = 'existing'
+    await selectCatalog(catalogVersionId.value)
   }
 }
 async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
@@ -111,6 +119,16 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
     busy.value = false
   }
 }
+function defaultRule(): Record<string, unknown> {
+  const sourceField = sourceColumns.value.find(column => column !== sourceIdColumn.value) ?? sourceColumns.value[0] ?? ''
+  const targetField = targetColumns.value.find(column => column !== groupCodeColumn.value) ?? targetColumns.value[0] ?? ''
+  return {
+    id: 'rule_1',
+    source: { fields: sourceField ? [sourceField] : [], combine: 'concat', separator: ' ', pipeline: [] },
+    target: { fields: targetField ? [targetField] : [], combine: 'concat', separator: ' ', pipeline: [] },
+    matcher: 'fuzzy', weight: 80, critical: false, matcher_options: {},
+  }
+}
 async function continueToRules(): Promise<void> {
   if (!canContinue.value || !source.value) return
   busy.value = true
@@ -128,6 +146,11 @@ async function continueToRules(): Promise<void> {
         group_code_column: groupCodeColumn.value,
       })).data
       versionId = catalog.version_id
+    } else {
+      const catalog = selectedCatalog.value
+      if (!catalog) return
+      groupCodeColumn.value = catalog.group_code_column
+      if (!target.value || target.value.file_id !== catalog.source_file_id) await loadFile(catalog.source_file_id, 'target')
     }
     await api.put(`/task-drafts/${draftId.value}/data`, {
       source_file_id: source.value.file_id,
@@ -135,10 +158,13 @@ async function continueToRules(): Promise<void> {
       template_profile_id: null,
       template_profile_version: null,
     })
-    await api.put(`/task-drafts/${draftId.value}/rules`, {
-      ...((await api.get(`/task-drafts/${draftId.value}`)).data.config_document ?? {}),
+    const current = (await api.get(`/task-drafts/${draftId.value}`)).data.config_document ?? {}
+    const document = {
+      ...current,
       source_id_column: sourceIdColumn.value,
-    })
+      rules: Array.isArray(current.rules) && current.rules.length ? current.rules : [defaultRule()],
+    }
+    await api.put(`/task-drafts/${draftId.value}/rules`, document)
     await router.push({ path: '/tasks/workspace', query: { draft: draftId.value } })
   } catch (error) {
     ElMessage.error((error as Error).message)
@@ -163,53 +189,24 @@ onMounted(async () => {
 
 <template>
   <div v-loading="loading">
-    <div class="toolbar">
-      <div><h2>{{ name || '新建匹配任务' }}</h2><p>选择数据 → 确认匹配规则 → 比对计算 → 人工处理 → 生成结果。</p></div>
-    </div>
+    <div class="toolbar"><div><h2>{{ name || '新建匹配任务' }}</h2><p>选择数据 → 确认匹配规则 → 比对计算 → 人工处理 → 生成结果。</p></div></div>
     <el-steps :active="0"><el-step title="选择数据"/><el-step title="确认匹配规则"/><el-step title="比对计算"/><el-step title="人工处理"/><el-step title="生成结果"/></el-steps>
-
     <div class="panel">
       <h3>1. 选择数据</h3>
       <el-form label-width="130px">
         <el-form-item label="任务名称"><el-input v-model="name" :disabled="existingDraft" placeholder="任务名称" /></el-form-item>
-        <el-form-item label="客户物料数据">
-          <div class="inline-row">
-            <el-upload :auto-upload="false" :show-file-list="false" :on-change="(file:any)=>upload('source',file)"><el-button>选择 Source Excel / CSV</el-button></el-upload>
-            <span class="muted">{{ source?.original_name || '尚未选择' }}</span>
-          </div>
-        </el-form-item>
-        <el-form-item v-if="sourceColumns.length" label="客户物料编码列">
-          <el-select v-model="sourceIdColumn" style="width:360px"><el-option v-for="column in sourceColumns" :key="column" :label="column" :value="column"/></el-select>
-        </el-form-item>
-
+        <el-form-item label="客户物料数据"><div class="inline-row"><el-upload :auto-upload="false" :show-file-list="false" :on-change="(file:any)=>upload('source',file)"><el-button>选择 Source Excel / CSV</el-button></el-upload><span class="muted">{{ source?.original_name || '尚未选择' }}</span></div></el-form-item>
+        <el-form-item v-if="sourceColumns.length" label="客户物料编码列"><el-select v-model="sourceIdColumn" style="width:360px"><el-option v-for="column in sourceColumns" :key="column" :label="column" :value="column"/></el-select></el-form-item>
         <el-divider />
-        <el-form-item label="集团码数据来源">
-          <el-radio-group v-model="targetMode">
-            <el-radio-button value="existing">选择已有目录</el-radio-button>
-            <el-radio-button value="upload">上传新 Target</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-
+        <el-form-item label="集团码数据来源"><el-radio-group v-model="targetMode"><el-radio-button value="existing">选择已有目录</el-radio-button><el-radio-button value="upload">上传新 Target</el-radio-button></el-radio-group></el-form-item>
         <template v-if="targetMode==='existing'">
-          <el-form-item label="集团码目录">
-            <el-select v-model="catalogVersionId" filterable placeholder="选择 READY 目录版本" style="width:560px">
-              <el-option v-for="item in readyCatalogs" :key="item.version_id" :value="item.version_id" :label="`${item.name}${item.active ? ' · 当前版本' : ''} · ${item.group_code_column} · ${item.version_id.slice(0,8)}`" />
-            </el-select>
-          </el-form-item>
+          <el-form-item label="集团码目录"><el-select v-model="catalogVersionId" filterable placeholder="选择 READY 目录版本" style="width:560px" @change="selectCatalog"><el-option v-for="item in readyCatalogs" :key="item.version_id" :value="item.version_id" :label="`${item.name}${item.active ? ' · 当前版本' : ''} · ${item.group_code_column} · ${item.version_id.slice(0,8)}`" /></el-select></el-form-item>
           <el-alert v-if="selectedCatalog" :title="`将冻结目录版本 ${selectedCatalog.version_id}；后续即使基础数据切换 active，本任务也不会漂移。`" type="info" :closable="false" />
           <el-empty v-else description="尚无 READY 集团码目录，可切换到“上传新 Target”创建首个目录" :image-size="72" />
         </template>
-
         <template v-else>
-          <el-form-item label="集团码文件">
-            <div class="inline-row">
-              <el-upload :auto-upload="false" :show-file-list="false" :on-change="(file:any)=>upload('target',file)"><el-button>选择 Target Excel / CSV</el-button></el-upload>
-              <span class="muted">{{ target?.original_name || '尚未选择' }}</span>
-            </div>
-          </el-form-item>
-          <el-form-item v-if="targetColumns.length" label="集团码列">
-            <el-select v-model="groupCodeColumn" style="width:360px"><el-option v-for="column in targetColumns" :key="column" :label="column" :value="column"/></el-select>
-          </el-form-item>
+          <el-form-item label="集团码文件"><div class="inline-row"><el-upload :auto-upload="false" :show-file-list="false" :on-change="(file:any)=>upload('target',file)"><el-button>选择 Target Excel / CSV</el-button></el-upload><span class="muted">{{ target?.original_name || '尚未选择' }}</span></div></el-form-item>
+          <el-form-item v-if="targetColumns.length" label="集团码列"><el-select v-model="groupCodeColumn" style="width:360px"><el-option v-for="column in targetColumns" :key="column" :label="column" :value="column"/></el-select></el-form-item>
           <el-alert title="继续后会创建一个新的集团码目录及首个不可变版本，并将该 version_id 冻结到任务草稿。" type="info" :closable="false" />
         </template>
       </el-form>
