@@ -31,10 +31,11 @@ class DictionaryService:
         {"mapping": {"SUS304": "304不锈钢"}, "case_sensitive": true}
 
     Matching configs reference a dictionary with a ``dictionary_map`` processing
-    step. ``bind_references`` validates the reference and freezes the referenced
-    SHA into the config document. ``materialize`` injects the mapping only for a
-    runtime call, keeping task snapshots compact while preserving immutable,
-    auditable semantics.
+    step. ``bind_references`` validates the reference and freezes both the
+    referenced SHA and mapping into the config document. This intentionally
+    makes task/profile snapshots self-contained: later dictionary versions can
+    never change a historical task. Candidate traces omit the mapping payload so
+    the frozen config does not multiply into every candidate explanation.
     """
 
     def __init__(self, metadata: MetadataRepository) -> None:
@@ -207,9 +208,9 @@ class DictionaryService:
         return resolved
 
     def bind_references(self, document: dict[str, Any]) -> dict[str, Any]:
-        """Validate dictionary references and freeze their immutable SHA metadata."""
-        return self._visit_pipelines(document, materialize=False)
+        """Validate and make referenced dictionary versions part of the immutable snapshot."""
+        return self._visit_pipelines(document, materialize=True)
 
     def materialize(self, document: dict[str, Any]) -> dict[str, Any]:
-        """Return an ephemeral runtime config with dictionary mappings injected."""
+        """Refresh runtime mappings while rejecting any SHA mismatch."""
         return self._visit_pipelines(document, materialize=True)
