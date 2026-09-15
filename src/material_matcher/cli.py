@@ -7,6 +7,7 @@ import sys
 import uvicorn
 
 from material_matcher.api.app import create_app
+from material_matcher.api.frontend import attach_frontend
 from material_matcher.domain.errors import DomainError
 from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.settings import Settings
@@ -22,6 +23,13 @@ def _benchmark_service() -> BenchmarkService:
 
 def _print(value: object) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def _serve(host: str, port: int) -> None:
+    settings = Settings.load()
+    app = create_app(settings)
+    attach_frontend(app, settings.web_dist_dir)
+    uvicorn.run(app, host=host, port=port)
 
 
 def main() -> None:
@@ -47,7 +55,7 @@ def main() -> None:
     if args.command in {None, "serve"}:
         host = getattr(args, "host", "0.0.0.0")
         port = getattr(args, "port", 18080)
-        uvicorn.run(create_app(), host=host, port=port)
+        _serve(host, port)
         return
 
     service = _benchmark_service()
