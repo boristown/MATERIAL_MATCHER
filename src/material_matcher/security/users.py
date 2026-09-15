@@ -42,13 +42,22 @@ class UserService:
             now = _now()
             connection.execute(
                 "INSERT INTO users(username,password_hash,salt,role,enabled,must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                ("admin", password_hash, salt, "admin", 1, 0, now, now),
+                ("admin", password_hash, salt, "admin", 1, 1, now, now),
             )
 
-    def authenticate(self, username: str, password: str) -> dict[str, object]:
+    def _row(self, username: str):
         with self.meta.connect() as connection:
             row = connection.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-        if row is None or not int(row["enabled"]):
+        if row is None:
+            raise DomainError("USER_NOT_FOUND", "用户不存在", status_code=404)
+        return row
+
+    def authenticate(self, username: str, password: str) -> dict[str, object]:
+        try:
+            row = self._row(username)
+        except DomainError as exc:
+            raise DomainError("AUTH_FAILED", "用户名或密码错误", status_code=401) from exc
+        if not int(row["enabled"]):
             raise DomainError("AUTH_FAILED", "用户名或密码错误", status_code=401)
         try:
             salt = bytes.fromhex(str(row["salt"]))
@@ -71,11 +80,7 @@ class UserService:
         }
 
     def get(self, username: str) -> dict[str, object]:
-        with self.meta.connect() as connection:
-            row = connection.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
-        if row is None:
-            raise DomainError("USER_NOT_FOUND", "用户不存在", status_code=404)
-        return self._public(dict(row))
+        return self._public(dict(self._row(username)))
 
     def list(self) -> list[dict[str, object]]:
         with self.meta.connect() as connection:
@@ -111,8 +116,17 @@ class UserService:
             raise DomainError("WEAK_PASSWORD", "密码必须同时包含字母和数字", status_code=422)
 
     def set_password(self, username: str, password: str, *, must_change_password: bool = False) -> dict[str, object]:
-        self.get(username)
+        row = self._row(username)
         self._validate_password(password)
+        try:
+            same_as_current = hmac.compare_digest(
+                _derive(password, bytes.fromhex(str(row["salt"]))),
+                str(row["password_hash"]),
+            )
+        except Exception:
+            same_as_current = False
+        if same_as_current:
+            raise DomainError("PASSWORD_REUSE", "新密码不能与当前密码相同", status_code=422)
         salt, password_hash = _new_secret(password)
         with self.meta.connect() as connection:
             connection.execute(
