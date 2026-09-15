@@ -13,10 +13,11 @@ from material_matcher.storage.metadata import MetadataRepository
 
 def _seed_task(meta: MetadataRepository) -> None:
     now = "2026-09-15T19:00:00+08:00"
+    config = '{"decision":{"top_n":10}}'
     with meta.connect() as connection:
         connection.execute(
             "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("task-1", "验收任务", "source-file", "catalog-v1", None, None, "{}", "sha", "RESULT", "COMPLETED", 100.0, 3, 3, now, now, now, None, None, None),
+            ("task-1", "验收任务", "source-file", "catalog-v1", None, None, config, "sha", "RESULT", "COMPLETED", 100.0, 3, 3, now, now, now, None, None, None),
         )
         rows = [
             ("task-1", "row-1", "A", "{}", "MATCHED", "MATCHED", "G1", 98.0, 70.0, 28.0, 0, "G1", now, now),
@@ -63,6 +64,7 @@ def test_business_evaluation_separates_model_and_human_quality(tmp_path: Path) -
     assert metrics["review_rows"] == 1
     assert metrics["unmatched_rows"] == 1
     assert metrics["resolved_rate"] == pytest.approx(2 / 3, abs=1e-6)
+    assert metrics["candidate_top_n"] == 10
     assert metrics["candidate_recall_at"]["1"] == pytest.approx(1 / 3, abs=1e-6)
     assert metrics["candidate_recall_at"]["3"] == pytest.approx(2 / 3, abs=1e-6)
     assert metrics["candidate_recall_at"]["5"] == 1.0
