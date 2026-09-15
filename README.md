@@ -87,7 +87,7 @@ POST /api/task-drafts/{draft_id}/text-profile
 
 ### v0.8：正式离线交付与安全升级链路
 
-运行时版本已推进到 `0.8.0`。仓库已经具备从外部离线输入生成正式交付目录的源码级流水线，**但模型、wheel、Python Runtime 和最终离线包仍按仓库策略不提交 Git**。
+仓库已经具备从外部离线输入生成正式交付目录的源码级流水线，**但模型、wheel、Python Runtime 和最终离线包仍按仓库策略不提交 Git**。
 
 #### 自包含 Runtime
 
@@ -115,13 +115,7 @@ runtime/runtime-manifest.json
 
 #### Release 构建
 
-新增：
-
-```text
-scripts/build_release.py
-```
-
-将已准备 Runtime、当前后端源码和 Vue production dist 组成 release，并校验：
+`scripts/build_release.py` 将已准备 Runtime、当前后端源码和 Vue production dist 组成 release，并校验：
 
 - `pyproject.toml` 与 `material_matcher.__version__` 一致；
 - release version 与项目版本一致；
@@ -129,7 +123,8 @@ scripts/build_release.py
 - Runtime 实际架构/Python 与 manifest 一致；
 - 正式依赖可 import；
 - `material-matcher --help` 可执行；
-- `web/dist/index.html` 存在。
+- `web/dist/index.html` 存在；
+- release 源码复制排除 `__pycache__ / *.pyc / *.pyo`，避免构建机运行痕迹进入正式介质。
 
 生成 `release-manifest.json`，固化 Runtime manifest、源码树和前端树摘要。
 
@@ -147,55 +142,82 @@ offline-manifest.json
 
 校验器会重新计算 Runtime、后端源码、Vue dist 与离线包逐文件 SHA-256，并拒绝：缺件、未登记文件、篡改、路径逃逸、不安全符号链接、版本混装、CPU 架构不匹配以及错误架构的 `onnxruntime/tokenizers` wheel。
 
-#### B/S 与部署预检
+#### B/S、预检与事务化升级
 
-- FastAPI 正式 `serve` 命令可托管 Vue SPA，业务路由刷新回退到 `index.html`；未知 `/api/*` 不会错误返回前端页面；
+- FastAPI 正式 `serve` 命令可托管 Vue SPA，未知 `/api/*` 不会错误返回前端页面；
 - 模型目录统一为 `/var/lib/material_matcher/models/current`；
-- 新增 `material-matcher doctor`，可要求检查前端、Embedding 和 release manifest；
-- 安装器以正式 `material_matcher` 运行用户对**尚未激活的新版本**执行 doctor。
-
-#### 事务化升级
-
-升级顺序已调整为：
-
-```text
-校验离线包
-→ 复制新 release/model
-→ 旧服务保持在线
-→ 新版本 doctor
-→ doctor 全通过
-→ 停止旧服务
-→ 原子切换 current
-→ 启动新服务
-→ readiness
-```
-
-若 systemd 启动或 readiness 失败，会恢复安装前 release/model；若升级前旧服务正在运行，则重新启动旧版本。
-
-同时取消每次升级对整个 `/var/lib/material_matcher` 的递归 `chown -R`，避免百万级索引/结果导致无意义的长时间文件遍历。
+- `material-matcher doctor` 可检查前端、Embedding、数据目录和 release manifest；
+- 新 release/model 在旧服务仍在线时复制并预检，全部通过后才停止旧服务并原子切换 `current`；
+- 新服务启动/readiness 失败时恢复旧 release/model，并在升级前旧服务确实运行时重新启动旧版本；
+- 不再对整个 `/var/lib/material_matcher` 执行递归 `chown -R`，避免百万级索引目录拖长升级窗口。
 
 完整操作见：[v0.8 正式离线交付指南](docs/OFFLINE_RELEASE_GUIDE.md)。
 
+### v0.9：召回质量与真实业务准确率验收
+
+运行时版本已推进到 `0.9.0`。本阶段把“性能 benchmark”升级为“性能 + 质量双验收”，并把准确率验收从 synthetic reference 延伸到真实业务标注集。
+
+#### 向量 Recall 基线
+
+`benchmark vector` 除吞吐和磁盘占用外，会在有界 reference 子集上使用 `float32 exact cosine` 作为基准，计算：
+
+- Recall@10 / Recall@50 / Recall@100（在有效 K 范围内）；
+- Top1 hit rate；
+- reference rows / query count；
+- 明确标记 `production_performance_claim=false`、`business_accuracy_claim=false`。
+
+该指标用于比较 portable BBQ、未来 native SIMD/POPCNT、HNSW/Block 等检索实现是否发生召回退化，**不等同于业务集团码准确率**。
+
+#### 真实任务业务验收
+
+完成任务可以额外进入“准确率验收”，上传 `supplement` 类型的 Excel/CSV 真值文件，并显式选择：
+
+- 验收键：`source_id` 或 `source_row_id`；
+- 真值文件中的验收键列；
+- 正确集团码列。
+
+验收层只读取冻结的任务结果，不修改任务，持久化 `evaluation_runs / evaluation_items` 与审计事件。报告包括：
+
+- 真值覆盖率；
+- 原始 Top1 准确率；
+- 人工处理后的最终准确率与人工增益；
+- 自动匹配区准确率；
+- Review / 未匹配 / 最终有结果比例；
+- 正确集团码在持久化候选中的 Recall@K；
+- 错例、未覆盖真值以及正确候选排名。
+
+候选 Recall 严格受任务冻结的 `decision.top_n` 限制。例如任务只保存 Top3，就不会伪报 Recall@5/10。
+
+对应接口：
+
+```text
+POST /api/tasks/{task_id}/evaluations
+GET  /api/tasks/{task_id}/evaluations
+GET  /api/evaluations/{run_id}
+```
+
+任务列表中已完成任务提供“准确率验收”入口，验收历史与错例可回看。该功能用于真实标注集验收；在尚未导入客户真实真值前，不对实际业务准确率作数值承诺。
+
 ## 当前性能与交付边界
 
-v0.8 已具备业务闭环、向量执行、token-aware 调度、真实语料画像以及离线发布/升级机制，但**仍不能声明已经完成生产规模和麒麟实机验收**：
+v0.9 已具备业务闭环、向量执行、token-aware 调度、真实语料画像、离线发布/升级机制以及可重复的召回/业务准确率验收框架，但**仍不能声明已经完成生产规模和银河麒麟实机验收**：
 
 - Git 仓库按设计不提交 `bge-base-zh-v1.5` 模型、Python Runtime、wheelhouse 和最终安装介质；
-- 真实语料画像仍需在客户真实数据 + 正式模型上执行；
-- 尚未完成 100 万 Target / 10 万 Source 的真实 Recall@K、端到端耗时、内存和磁盘实测；
+- 准确率验收框架已经完成，但真实业务准确率仍必须使用客户历史正确集团码/人工金标数据实际测量；
+- 尚未完成 100 万 Target / 10 万 Source 的正式模型端到端耗时、内存、磁盘与真实 Recall 实测；
 - 当前 packed-popcount 热路径仍为 portable NumPy/LUT，实现了正确的大规模结构但还未完成 native SIMD/POPCNT、HNSW 或 Block/Disk 自动路由；
 - 离线构建、完整性检查、doctor、事务切换和回滚已有 CI 覆盖，但尚未在真实银河麒麟 Linux V10 + 正式 Runtime/wheel/model 介质上执行安装验收；
-- SELinux/现场安全策略、systemd 权限和客户实际磁盘挂载差异仍需实机验证。
+- `匹配方案` 与 `基础数据` 的底层表已存在，但前端仍需从占位页面产品化；账号/权限也仍需按最终部署要求强化。
 
-因此当前状态应理解为：**核心业务和性能候选架构已闭环，正式离线交付机制已实现到源码/自动化测试层，下一阶段重点是目标服务器实机、真实模型、准确率和百万级性能验收。**
+因此当前状态应理解为：**核心匹配平台、性能候选架构、离线交付机制和质量验收框架均已形成；下一阶段主要进入真实数据/真实机器验收，以及平台外围管理能力产品化。**
 
 ## 下一里程碑
 
 1. 准备目标 CPU 的正式基础 Python Runtime、完整 wheelhouse 与 `bge-base-zh-v1.5` ONNX/tokenizer，按 v0.8 流水线生成真实离线介质。
-2. 在银河麒麟 V10 实机执行安装、升级、回滚、systemd/readiness、权限和磁盘映射验收。
-3. 在目标 CPU 比较 portable packed-popcount、native SIMD/POPCNT、HNSW/Block/Disk，形成 `AutoBBQIndex` 选择策略。
-4. 使用真实业务样本验证 Recall@10 / Recall@50 / Recall@100、TopN 排序和最终集团码准确率。
-5. 完成 100 万 Target / 10 万 Source 首次建库及索引复用后的端到端 Benchmark，再判断是否满足首次 2～4 小时、复用索引后 20～90 分钟的产品目标。
+2. 使用客户历史正确集团码/人工金标数据运行 v0.9 业务验收，形成真实 Top1、最终准确率、Review率和候选 Recall 基线。
+3. 在银河麒麟 V10 实机执行安装、升级、回滚、systemd/readiness、权限和磁盘映射验收。
+4. 完成 100 万 Target / 10 万 Source 首次建库及索引复用后的端到端 Benchmark；仅在实测需要时再投入 native SIMD/POPCNT、HNSW/Block/Disk。
+5. 产品化“匹配方案”和“基础数据”管理页面，并补最终账号/权限治理。
 6. 如现场确有需要，将百万级全量 token 画像升级为持久化、可恢复、可显示进度的异步预检任务。
 
 ## 当前 13 所业务样例
