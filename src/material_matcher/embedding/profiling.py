@@ -45,8 +45,8 @@ def profile_retrieval_texts(
 
     Rows are streamed and a deterministic reservoir is maintained over non-empty
     retrieval texts. ``scan_limit`` intentionally bounds synchronous preflight
-    work; the response reports coverage so a partial scan cannot be mistaken for
-    a full-file profile.
+    work; the response reports whether EOF was reached so a partial scan cannot
+    be mistaken for a full-file profile.
     """
     sample_limit = max(1, int(sample_rows))
     scan_cap = max(sample_limit, int(scan_limit))
@@ -55,9 +55,11 @@ def profile_retrieval_texts(
     scanned_rows = 0
     nonempty_rows = 0
     empty_rows = 0
+    hit_scan_limit = False
 
     for row in iter_tabular_rows(path):
         if scanned_rows >= scan_cap:
+            hit_scan_limit = True
             break
         scanned_rows += 1
         text = build_retrieval_text(row, config, side)
@@ -74,8 +76,14 @@ def profile_retrieval_texts(
 
     layout = detect_layout(path)
     estimated_rows = max(0, int(layout.row_count_estimate))
-    scan_complete = estimated_rows <= 0 or scanned_rows >= estimated_rows
-    coverage_ratio = 1.0 if scan_complete else min(1.0, scanned_rows / max(1, estimated_rows))
+    scan_complete = not hit_scan_limit
+    coverage_ratio: float | None
+    if scan_complete:
+        coverage_ratio = 1.0
+    elif estimated_rows > scanned_rows:
+        coverage_ratio = round(scanned_rows / estimated_rows, 6)
+    else:
+        coverage_ratio = None
 
     lengths = token_counter.token_lengths(reservoir) if reservoir else []
     token_profile = profile_token_lengths(lengths)
@@ -101,7 +109,7 @@ def profile_retrieval_texts(
         "scanned_rows": scanned_rows,
         "scan_limit": scan_cap,
         "scan_complete": scan_complete,
-        "coverage_ratio": round(coverage_ratio, 6),
+        "coverage_ratio": coverage_ratio,
         "nonempty_rows": nonempty_rows,
         "empty_rows": empty_rows,
         "empty_rate": round(empty_rows / max(1, scanned_rows), 6),
