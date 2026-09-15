@@ -22,6 +22,14 @@ const vectorBusy = ref(false)
 
 const readyText = computed(() => vector.value?.embedding.ready ? '已就绪' : '未就绪')
 
+function recallText(row: any): string {
+  if (row?.kind !== 'vector_kernel') return '-'
+  const recall = row?.metrics?.recall_quality?.recall_at
+  if (!recall) return '-'
+  const percent = (value: unknown) => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '-'
+  return `R@10 ${percent(recall['10'])} / R@50 ${percent(recall['50'])} / R@100 ${percent(recall['100'])}`
+}
+
 async function refresh(): Promise<void> {
   loading.value = true
   try {
@@ -57,7 +65,9 @@ async function runVectorBenchmark(): Promise<void> {
   vectorBusy.value = true
   try {
     const response = await api.post('/system/benchmarks/vector', { target_rows: 10000, query_count: 100, dimensions: 128, top_k: 50 })
-    ElMessage.success(`BBQ 内核基准完成：${response.data.metrics.search_queries_per_second} 查询/秒`)
+    const recall = response.data.metrics.recall_quality?.recall_at ?? {}
+    const r100 = typeof recall['100'] === 'number' ? `${(recall['100'] * 100).toFixed(1)}%` : '-'
+    ElMessage.success(`BBQ 基准完成：${response.data.metrics.search_queries_per_second} 查询/秒，synthetic Recall@100=${r100}`)
     await refresh()
   } catch (error) {
     ElMessage.error((error as Error).message)
@@ -119,16 +129,17 @@ onMounted(refresh)
     </div>
 
     <div class="panel">
-      <h3>性能基准记录</h3>
-      <p class="muted">Embedding 基准使用正式已安装模型；BBQ 内核基准使用确定性测试向量，仅测索引/检索内核，不作为生产模型端到端性能承诺。</p>
+      <h3>性能与召回基准记录</h3>
+      <p class="muted">Embedding 基准使用正式已安装模型；BBQ 内核基准使用确定性测试向量，并以 float32 exact cosine 为 reference 计算 Recall@10/50/100。后者用于防止索引优化导致召回退化，不代表真实业务准确率。</p>
       <el-table :data="benchmarks" size="small" empty-text="尚无基准记录">
         <el-table-column prop="kind" label="类型" width="140"/>
         <el-table-column prop="status" label="状态" width="100"/>
         <el-table-column prop="started_at" label="时间" min-width="180"/>
         <el-table-column label="吞吐" min-width="160"><template #default="scope"><span v-if="scope.row.kind==='embedding'">{{ scope.row.metrics?.throughput_rows_per_second ?? '-' }} 条/秒</span><span v-else>{{ scope.row.metrics?.search_queries_per_second ?? '-' }} 查询/秒</span></template></el-table-column>
+        <el-table-column label="Recall@K" min-width="330"><template #default="scope">{{ recallText(scope.row) }}</template></el-table-column>
         <el-table-column label="Token P99 / 建议长度" min-width="180"><template #default="scope"><span v-if="scope.row.kind==='embedding'">P99 {{ scope.row.metrics?.token_length_profile?.p99 ?? '-' }} / {{ scope.row.metrics?.token_length_profile?.recommended_max_length ?? '-' }}</span><span v-else>-</span></template></el-table-column>
         <el-table-column label="Padding效率" width="120"><template #default="scope"><span v-if="scope.row.kind==='embedding' && scope.row.metrics?.padding_efficiency != null">{{ (scope.row.metrics.padding_efficiency*100).toFixed(1) }}%</span><span v-else>-</span></template></el-table-column>
-        <el-table-column label="预计/范围" min-width="200"><template #default="scope"><span v-if="scope.row.kind==='embedding'">110万条约 {{ scope.row.metrics?.projected_1_100_000_rows_hours ?? '-' }} 小时</span><span v-else>synthetic vector kernel</span></template></el-table-column>
+        <el-table-column label="预计/范围" min-width="220"><template #default="scope"><span v-if="scope.row.kind==='embedding'">110万条约 {{ scope.row.metrics?.projected_1_100_000_rows_hours ?? '-' }} 小时</span><span v-else>synthetic kernel / 非业务准确率</span></template></el-table-column>
         <el-table-column prop="error_message" label="错误" min-width="220" show-overflow-tooltip/>
       </el-table>
     </div>
