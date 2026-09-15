@@ -101,12 +101,23 @@ class TaskService:
         return self.get_draft(draft_id)
 
     def save_rules(self, draft_id: str, document: dict[str, Any]) -> dict[str, object]:
-        self.get_draft(draft_id)
+        draft = self.get_draft(draft_id)
         MatchingConfig.model_validate(document)
+        template_profile_id = draft.get("template_profile_id")
+        template_profile_version = draft.get("template_profile_version")
+        advanced = document.get("advanced")
+        if isinstance(advanced, dict):
+            template_source = advanced.get("template_source")
+            if isinstance(template_source, dict):
+                source_profile_id = template_source.get("profile_id")
+                source_version = template_source.get("version_no")
+                if source_profile_id and source_version is not None:
+                    template_profile_id = str(source_profile_id)
+                    template_profile_version = int(source_version)
         with self.repo.connect() as connection:
             connection.execute(
-                "UPDATE task_drafts SET config_document=?, current_step=2, updated_at=? WHERE draft_id=?",
-                (_canonical(document), _now(), draft_id),
+                "UPDATE task_drafts SET config_document=?, template_profile_id=?, template_profile_version=?, current_step=2, updated_at=? WHERE draft_id=?",
+                (_canonical(document), template_profile_id, template_profile_version, _now(), draft_id),
             )
         return self.get_draft(draft_id)
 
