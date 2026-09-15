@@ -173,7 +173,12 @@ def build_release(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(runtime_dir, output_dir / "runtime", symlinks=True)
-    shutil.copytree(repo_root / "src/material_matcher", output_dir / "app/material_matcher", symlinks=False)
+    shutil.copytree(
+        repo_root / "src/material_matcher",
+        output_dir / "app/material_matcher",
+        symlinks=False,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
     shutil.copytree(web_dist_dir, output_dir / "web/dist", symlinks=False)
 
     python = output_dir / "runtime/bin/python3"
