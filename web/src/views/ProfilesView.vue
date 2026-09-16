@@ -19,7 +19,7 @@ async function load(): Promise<void> {
   loading.value = true
   try { profiles.value = (await api.get('/profiles')).data ?? [] } finally { loading.value = false }
 }
-function createProfile(): void { router.push('/tasks/new') }
+function createProfile(): void { router.push({ path: '/tasks/new', query: { edit: '1' } }) }
 function useProfile(row: ProfileRow): void { router.push({ path: '/tasks/new', query: { profile: row.profile_id } }) }
 function editProfile(row: ProfileRow): void { router.push({ path: '/tasks/new', query: { profile: row.profile_id, edit: '1' } }) }
 async function renameProfile(row: ProfileRow): Promise<void> {
@@ -62,15 +62,21 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div v-loading="loading" class="profiles-page">
     <div class="toolbar">
       <div><h2>匹配方案</h2><p>方案 = 可复用的字段映射 + 过滤 + 阈值模板;发布后不可变,任务引用时冻结版本。</p></div>
       <el-button type="primary" @click="createProfile">＋ 新建方案</el-button>
     </div>
-    <el-empty v-if="!profiles.length" description="尚无方案。点击「新建方案」拖入 Excel 即可解析字段并连线配置。"/>
+    <el-empty v-if="!profiles.length" description="尚无方案。点击「新建方案」进入专用方案配置页。"/>
     <div class="profile-grid">
       <div v-for="row in profiles" :key="row.profile_id" class="profile-card">
-        <div class="profile-head"><b>{{ row.name }}</b><el-tag v-if="row.latest_published_version" size="small" type="success">已发布 v{{ row.latest_published_version }}</el-tag><el-tag v-if="row.has_draft" size="small" type="warning">有草稿</el-tag></div>
+        <div class="profile-head">
+          <b class="profile-name">{{ row.name }}</b>
+          <div class="profile-tags">
+            <el-tag v-if="row.latest_published_version" size="small" type="success">已发布 v{{ row.latest_published_version }}</el-tag>
+            <el-tag v-if="row.has_draft" size="small" type="warning">有草稿</el-tag>
+          </div>
+        </div>
         <p class="muted">更新:{{ String(row.updated_at ?? row.created_at ?? '').slice(0, 19).replace('T', ' ') }}</p>
         <div class="profile-actions">
           <el-button type="primary" size="small" :disabled="!row.latest_published_version" @click="useProfile(row)">用此方案建任务</el-button>
@@ -93,3 +99,53 @@ onMounted(async () => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.profiles-page .profile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+}
+.profiles-page .profile-card {
+  min-width: 0;
+}
+.profile-head {
+  align-items: flex-start;
+}
+.profile-name {
+  flex: 1 1 180px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.45;
+}
+.profile-tags {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 100%;
+}
+.profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.profile-actions :deep(.el-button) {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+.profile-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+@media (max-width: 720px) {
+  .profile-tags {
+    justify-content: flex-start;
+    flex-basis: 100%;
+  }
+  .profile-actions :deep(.el-button) {
+    flex: 1 1 calc(50% - 8px);
+  }
+}
+</style>
