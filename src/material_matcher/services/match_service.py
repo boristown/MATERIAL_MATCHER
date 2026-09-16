@@ -2,20 +2,18 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timedelta
-from io import BytesIO
 import json
 from pathlib import Path
 import time
 from typing import Any
 import uuid
 
-from openpyxl import Workbook
-
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
 from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.ingestion.reader import detect_layout
 from material_matcher.matching.engine import RowResult, match_rows, match_rows_indexed, summarize
+from material_matcher.services.result_export_service import ResultExportService
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
@@ -36,6 +34,7 @@ class MatchService:
         self.files = files
         self.settings = settings
         self.indexes = indexes or VectorIndexService(metadata, files, settings)
+        self.result_exporter = ResultExportService(metadata, files, settings)
         self._progress_window: dict[str, list[tuple[float, str, int, int]]] = {}
 
     def observe_progress(self, task_id: str, kind: str, done: int, total: int, *, now: float | None = None) -> None:
@@ -218,10 +217,66 @@ class MatchService:
             if isinstance(exc, DomainError): return
             raise
 
-    def summary(self, task_id: str) -> dict[str, int]:
-        with self.meta.connect() as connection: rows = connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
+    def summary(self, task_id: str) -> dict[str, object]:
+        with self.meta.connect() as connection:
+            rows = connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
+            task_row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            preview_rows = connection.execute(
+                """SELECT
+                    m.source_row_id,m.source_row_number,m.source_id,m.current_status,
+                    m.top1_group_code,m.top1_score,m.final_group_code,m.created_at,m.updated_at,
+                    (SELECT c.target_row_number FROM match_candidates c
+                     WHERE c.task_id=m.task_id AND c.source_row_id=m.source_row_id
+                       AND m.final_group_code IS NOT NULL AND c.target_group_code=m.final_group_code
+                     ORDER BY c.rank LIMIT 1) AS target_row_number,
+                    (SELECT c.score FROM match_candidates c
+                     WHERE c.task_id=m.task_id AND c.source_row_id=m.source_row_id
+                       AND m.final_group_code IS NOT NULL AND c.target_group_code=m.final_group_code
+                     ORDER BY c.rank LIMIT 1) AS selected_score,
+                    (SELECT r.operator FROM reviews r
+                     WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id
+                     ORDER BY r.created_at DESC LIMIT 1) AS last_operator,
+                    (SELECT r.created_at FROM reviews r
+                     WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id
+                     ORDER BY r.created_at DESC LIMIT 1) AS last_operation_time
+                FROM match_items m
+                WHERE m.task_id=?
+                ORDER BY COALESCE(m.source_row_number, 2147483647), CAST(m.source_row_id AS INTEGER)
+                LIMIT 50""",
+                (task_id,),
+            ).fetchall()
         counts = {str(row["current_status"]): int(row["count"]) for row in rows}
-        return {"pending_review": counts.get("REVIEW", 0), "confirmed": counts.get("CONFIRMED", 0), "unmatched": counts.get("UNMATCHED", 0), "automatic_matched": counts.get("MATCHED", 0)}
+        task = dict(task_row) if task_row is not None else {}
+        business_rows: list[dict[str, object]] = []
+        for row in preview_rows:
+            item = dict(row)
+            status = str(item.get("current_status") or "")
+            operator = item.get("last_operator")
+            if status == "MATCHED":
+                method = "自动匹配"
+            elif status == "CONFIRMED":
+                method = "人工匹配"
+            elif status == "REVIEW":
+                method = "待人工处理"
+            elif operator:
+                method = "人工标记未匹配"
+            else:
+                method = "自动判定未匹配"
+            item["similarity"] = item.get("selected_score") if item.get("selected_score") is not None else item.get("top1_score")
+            item["match_method"] = method
+            if not item.get("last_operation_time"):
+                item["last_operation_time"] = item.get("updated_at")
+            item.pop("selected_score", None)
+            business_rows.append(item)
+        return {
+            "pending_review": counts.get("REVIEW", 0),
+            "confirmed": counts.get("CONFIRMED", 0),
+            "unmatched": counts.get("UNMATCHED", 0),
+            "automatic_matched": counts.get("MATCHED", 0),
+            "created_by": self.result_exporter._task_actor(task_id, task, "created") or None,
+            "started_by": self.result_exporter._task_actor(task_id, task, "started") or None,
+            "preview_rows": business_rows,
+        }
 
     def workbench_items(self, task_id: str, *, first_score_min: float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, q:str|None=None, page:int=1, page_size:int=50) -> dict[str, object]:
         conditions=["task_id=?","current_status='REVIEW'"]; params:list[object]=[task_id]
@@ -317,43 +372,13 @@ class MatchService:
 
     def finalize(self,task_id:str,allow_unresolved_review:bool=False)->dict[str,object]:
         with self.meta.connect() as connection:
-            task=connection.execute("SELECT * FROM tasks WHERE task_id=?",(task_id,)).fetchone()
-            if task is None: raise DomainError("TASK_NOT_FOUND","任务不存在",status_code=404)
+            task_row=connection.execute("SELECT * FROM tasks WHERE task_id=?",(task_id,)).fetchone()
+            if task_row is None: raise DomainError("TASK_NOT_FOUND","任务不存在",status_code=404)
+            task=dict(task_row)
             if task["status"] != "COMPLETED" or task["stage"] not in {"REVIEW","RESULT"}: raise DomainError("TASK_STATE_CONFLICT","比对计算尚未完成，暂不能生成最终结果",status_code=409)
             if task["result_file_id"]: return {"task_id":task_id,"result_file_id":task["result_file_id"],"unresolved_review":0,"summary":self.summary(task_id)}
             unresolved=int(connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",(task_id,)).fetchone()[0])
         if unresolved and not allow_unresolved_review: raise DomainError("TASK_STATE_CONFLICT",f"仍有 {unresolved} 条待人工处理记录，请确认是否保留为空后继续生成",status_code=409,details={"unresolved_review":unresolved})
-        with self.meta.connect() as connection:
-            items=connection.execute("SELECT * FROM match_items WHERE task_id=? ORDER BY CAST(source_row_id AS INTEGER)",(task_id,)).fetchall(); candidates=connection.execute("SELECT * FROM match_candidates WHERE task_id=? ORDER BY CAST(source_row_id AS INTEGER), rank",(task_id,)).fetchall(); reviews=connection.execute("SELECT * FROM reviews WHERE task_id=? ORDER BY created_at",(task_id,)).fetchall()
-        item_by_source={str(item["source_row_id"]):item for item in items}; candidate_rows:dict[str,list[Any]]={}
-        for candidate in candidates: candidate_rows.setdefault(str(candidate["source_row_id"]),[]).append(candidate)
-        workbook=Workbook(); summary_sheet=workbook.active; summary_sheet.title="匹配摘要"; counts=self.summary(task_id); total_rows=max(1,sum(counts.values())); decision=self._effective_decision(task_id,task)
-        summary_rows=[("任务名称",str(task["name"])),("任务编号",str(task_id)),("源数据行数",total_rows),("自动匹配",f"{counts.get('automatic_matched',0)}({counts.get('automatic_matched',0)/total_rows:.1%})"),("人工确认",f"{counts.get('confirmed',0)}({counts.get('confirmed',0)/total_rows:.1%})"),("待确认",counts.get("pending_review",0)),("未匹配",f"{counts.get('unmatched',0)}({counts.get('unmatched',0)/total_rows:.1%})"),("自动匹配阈值",decision.get("success_threshold")),("人工确认下限",decision.get("review_threshold")),("生成时间",_now())]
-        summary_sheet.append(["匹配摘要",""])
-        for key,value in summary_rows: summary_sheet.append([key,value])
-        result_sheet=workbook.create_sheet("匹配结果"); result_sheet.append(["源数据原始行号","源物料编码","状态","最终集团码","目标集团码原始行号","第一候选集团码","第一候选目标原始行号","第一候选分","第二候选分","分差","关键字段冲突"]); status_labels={"MATCHED":"自动匹配","CONFIRMED":"人工确认","REVIEW":"待确认","UNMATCHED":"未匹配"}
-        for item in items:
-            source_key=str(item["source_row_id"]); row_candidates=candidate_rows.get(source_key,[]); top1=row_candidates[0] if row_candidates else None; final_code=item["final_group_code"] if item["current_status"] != "REVIEW" else None; final_candidate=next((candidate for candidate in row_candidates if final_code is not None and str(candidate["target_group_code"])==str(final_code)),None)
-            result_sheet.append([item["source_row_number"],str(item["source_id"]),status_labels.get(str(item["current_status"]),str(item["current_status"])),final_code,final_candidate["target_row_number"] if final_candidate is not None else None,item["top1_group_code"],top1["target_row_number"] if top1 is not None else None,item["top1_score"],item["second_score"],item["score_gap"],"是" if item["critical_conflict"] else "否"])
-        cand_sheet=workbook.create_sheet("TopN候选"); cand_sheet.append(["源数据原始行号","源物料编码","排名","目标文件原始行号","目标物料编码/集团码","匹配得分"])
-        for candidate in candidates:
-            source_item=item_by_source.get(str(candidate["source_row_id"])); cand_sheet.append([source_item["source_row_number"] if source_item is not None else None,str(source_item["source_id"]) if source_item is not None else "",candidate["rank"],candidate["target_row_number"],str(candidate["target_group_code"]),candidate["score"]])
-        review_sheet=workbook.create_sheet("人工确认记录"); review_sheet.append(["源数据原始行号","源物料编码","动作","集团码","操作人","备注","时间"])
-        for review in reviews:
-            source_item=item_by_source.get(str(review["source_row_id"])); review_sheet.append([source_item["source_row_number"] if source_item is not None else None,str(source_item["source_id"]) if source_item is not None else str(review["source_row_id"]),review["action"],review["selected_group_code"],review["operator"],review["comment"],review["created_at"]])
-        from openpyxl.styles import Alignment,Font,PatternFill
-        header_fill=PatternFill("solid",fgColor="1F4E79"); header_font=Font(color="FFFFFF",bold=True,size=11); status_fill={"自动匹配":PatternFill("solid",fgColor="E2EFDA"),"人工确认":PatternFill("solid",fgColor="DDEBF7"),"待确认":PatternFill("solid",fgColor="FFF2CC"),"未匹配":PatternFill("solid",fgColor="F2F2F2")}
-        for sheet in workbook.worksheets:
-            for cell in sheet[1]: cell.fill=header_fill; cell.font=header_font; cell.alignment=Alignment(horizontal="center",vertical="center")
-            sheet.freeze_panes="A2"
-            for column_cells in sheet.columns:
-                width=max((len(str(cell.value)) for cell in column_cells[:200] if cell.value is not None),default=8); sheet.column_dimensions[column_cells[0].column_letter].width=min(46,max(10,width+4))
-            for row in sheet.iter_rows():
-                for cell in row:
-                    if isinstance(cell.value,str):
-                        cell.number_format="@"
-                        if sheet is result_sheet and cell.column==3 and cell.value in status_fill: cell.fill=status_fill[cell.value]
-        summary_sheet["A1"].font=Font(bold=True,size=14,color="1F4E79"); summary_sheet["A1"].fill=PatternFill(); summary_sheet.column_dimensions["A"].width=18; summary_sheet.column_dimensions["B"].width=64
-        output=BytesIO(); workbook.save(output); output.seek(0); file_record=self.files.save_stream(f"material_matcher_{task_id}.xlsx","result",output,self.settings.max_total_upload_bytes)
+        file_record=self.result_exporter.export_task(task_id,task,unresolved_review=unresolved)
         with self.meta.connect() as connection: connection.execute("UPDATE tasks SET result_file_id=?, stage='RESULT', status='COMPLETED' WHERE task_id=?",(file_record["file_id"],task_id))
         return {"task_id":task_id,"result_file_id":file_record["file_id"],"unresolved_review":unresolved,"summary":self.summary(task_id)}

@@ -96,4 +96,4 @@ def test_redecide_and_workbench_search_api(tmp_path: Path, authed) -> None:
     import io
     wb = load_workbook(io.BytesIO(export.content))
     assert wb.sheetnames[0] == "匹配摘要"
-    assert "匹配结果" in wb.sheetnames
+    assert "最终匹配结果" in wb.sheetnames

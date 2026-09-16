@@ -37,8 +37,11 @@
 .result-metric small { color: #94a3b8; font-size: 11px; line-height: 1.45; }
 .result-metric.primary { background: #eff6ff; border-color: #bfdbfe; }
 .result-metric.primary b { color: #1d4ed8; }
-.result-metric.threshold { background: #fafafa; }
-.result-metric.threshold b { font-size: 21px; color: #334155; }
+
+.result-lifecycle { display: flex; flex-wrap: wrap; margin: 8px -5px 0; }
+.result-lifecycle > div { flex: 1 1 185px; min-width: 170px; margin: 5px; padding: 10px 12px; background: #fff; border: 1px solid #e5eaf2; border-radius: 9px; }
+.result-lifecycle span { display: block; color: #94a3b8; font-size: 11px; }
+.result-lifecycle b { display: block; margin-top: 4px; color: #334155; font-size: 12.5px; font-weight: 600; word-break: break-word; }
 
 .result-note { margin-top: 12px; padding: 10px 12px; border-radius: 9px; font-size: 12px; line-height: 1.65; }
 .result-note.warning { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; }
@@ -48,11 +51,6 @@
 .result-quality-kicker { display: inline-block; margin-bottom: 5px; color: #9a5b00; font-size: 11px; font-weight: 700; letter-spacing: 0.2px; }
 .result-quality-alert h4 { margin: 0; color: #7c4300; font-size: 16px; line-height: 1.45; }
 .result-quality-alert p { margin: 7px 0 0; color: #79572e; font-size: 12.5px; line-height: 1.7; }
-.result-quality-stats { display: flex; flex-wrap: wrap; margin: 13px -5px 0; }
-.result-quality-stats > div { flex: 1 1 145px; min-width: 135px; margin: 5px; padding: 10px 12px; background: rgba(255,255,255,0.78); border: 1px solid #f3dfad; border-radius: 9px; }
-.result-quality-stats span { display: block; color: #8a6a40; font-size: 11px; }
-.result-quality-stats b { display: block; margin-top: 3px; color: #7c4300; font-size: 17px; font-variant-numeric: tabular-nums; }
-.result-quality-stats .recommendation b { font-size: 15px; }
 .result-quality-actions { margin-top: 12px; }
 
 .result-preview { margin-top: 18px; overflow: hidden; border: 1px solid var(--mm-line); border-radius: 11px; }
@@ -75,9 +73,13 @@
 .result-download-primary { display: flex; align-items: center; gap: 14px; padding: 14px; background: #fff; border: 1px solid #d7e3f6; border-radius: 10px; }
 .result-download-primary .el-button { min-width: 230px; margin-left: 0; }
 .result-download-primary > span { color: #64748b; font-size: 12px; line-height: 1.55; }
-.result-download-secondary { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-.result-download-secondary > span { display: inline-flex; }
-.result-download-secondary .el-button { margin-left: 0; }
+.result-excel-hints { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; padding: 0 2px; color: #64748b; font-size: 11.5px; }
+.result-excel-hints span { display: inline-flex; align-items: center; gap: 6px; }
+.hint-dot { width: 10px; height: 10px; display: inline-block; border: 1px solid rgba(15,23,42,0.08); border-radius: 3px; }
+.hint-dot.exact { background: #e2f0d9; }
+.hint-dot.partial { background: #fff2cc; }
+.hint-dot.different { background: #fce4d6; }
+.hint-dot.missing { background: #e7e6e6; }
 
 .result-state-panel { min-height: 252px; display: flex; align-items: center; padding: 34px 40px; }
 .result-state-icon { width: 56px; height: 56px; margin-right: 22px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 14px; font-size: 24px; font-weight: 700; }
@@ -110,6 +112,7 @@
 @media (max-width: 640px) {
   .result-workbench-body { padding: 18px; }
   .result-main-actions .el-button { flex: 1 1 130px; }
+  .result-lifecycle > div { flex-basis: 100%; }
   .result-state-panel { display: block; padding: 24px 18px; }
   .result-state-icon { margin: 0 0 16px; }
   .result-preview-head { align-items: flex-start; gap: 10px; }
@@ -117,7 +120,5 @@
   .result-preview-head span { display: block; margin-top: 3px; }
   .result-downloads-head > div { display: block; }
   .result-downloads-head span { display: block; margin-top: 3px; }
-  .result-download-secondary > span { flex: 1 1 100%; }
-  .result-download-secondary .el-button { width: 100%; }
   .results-history { padding: 18px; }
 }

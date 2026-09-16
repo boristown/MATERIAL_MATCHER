@@ -173,18 +173,19 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
         summary_values = [exported["匹配摘要"].cell(row=row, column=1).value for row in range(1, exported["匹配摘要"].max_row + 1)]
         assert "配置SHA256" not in summary_values
 
-        result = exported["匹配结果"]
-        assert result.cell(2, 1).value == 5
-        assert result.cell(2, 2).value == "S-1"
-        assert result.cell(2, 7).value == 7
-        assert float(result.cell(2, 8).value) == candidate_score.display_score
+        result = exported["最终匹配结果"]
+        assert result.cell(3, 1).value == 5
+        assert result.cell(3, 2).value == "S-1"
+        assert result.cell(3, 5).value == "未匹配"
+        assert float(result.cell(3, 7).value) == candidate_score.display_score
+        assert result.cell(3, 11).value is None
 
-        topn = exported["TopN候选"]
-        assert topn.cell(2, 1).value == 5
-        assert topn.cell(2, 2).value == "S-1"
-        assert topn.cell(2, 4).value == 7
-        assert topn.cell(2, 5).value == "G-1"
-        assert float(topn.cell(2, 6).value) == candidate_score.display_score
+        topn = exported["Top5候选"]
+        assert topn.cell(3, 1).value == 5
+        assert topn.cell(3, 2).value == "S-1"
+        assert topn.cell(3, 7).value == 7
+        assert topn.cell(3, 8).value == "G-1"
+        assert float(topn.cell(3, 9).value) == candidate_score.display_score
     finally:
         exported.close()
 
