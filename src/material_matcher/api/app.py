@@ -505,9 +505,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return "WAITING"
 
         retrieve_status=phase_status("RETRIEVE", {"RERANK","PERSIST","DONE"}); rerank_status=phase_status("RERANK", {"PERSIST","DONE"}); result_status=phase_status("PERSIST", {"DONE"})
+        estimate = matches.progress_estimate(task_id, phase) if status in {"PENDING", "PREPARING", "RECOVERING", "RUNNING"} else None
         return {
             "task_id":task_id,"stage":stage,"status":status,"progress":task["progress"],"processed_rows":task["processed_rows"],"total_rows":task["total_rows"],
-            "error_code":task.get("error_code"),"error_message":task.get("error_message"),"execution_mode":mode,"current_phase":phase,"index_id":runtime.get("index_id"),
+            "error_code":task.get("error_code"),"error_message":task.get("error_message"),"execution_mode":mode,"current_phase":phase,"index_id":runtime.get("index_id"),"estimate":estimate,"started_at":task.get("started_at"),"live_counts":matches.live_counts(task_id),"interim":status not in {"COMPLETED","FAILED"},
             "steps":[{"key":"prepare","label":"数据准备","status":prepare},{"key":"embedding","label":"向量化 / 索引准备","status":embedding_status},{"key":"retrieve","label":"候选召回","status":retrieve_status},{"key":"rerank","label":"精细评分","status":rerank_status},{"key":"prepare_result","label":"结果持久化","status":result_status}],
         }
 
@@ -515,7 +516,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def task_runtime(task_id: str) -> dict[str, object]: tasks.get_task(task_id); return matches.runtime_status(task_id)
 
     @app.get("/api/tasks/{task_id}/workbench/summary")
-    def workbench_summary(task_id: str) -> dict[str,int]: tasks.get_task(task_id); return matches.summary(task_id)
+    def workbench_summary(task_id: str) -> dict[str,object]:
+        task = tasks.get_task(task_id)
+        return {**matches.summary(task_id), "interim": str(task["status"]) not in {"COMPLETED"}, "task_status": str(task["status"]), "processed_rows": int(task.get("processed_rows") or 0), "total_rows": int(task.get("total_rows") or 0), "progress": task.get("progress")}
+
+    @app.get("/api/tasks/{task_id}/live-results")
+    def live_results(task_id: str, limit: int = Query(20, ge=1, le=200)) -> dict[str, object]:
+        task = tasks.get_task(task_id)
+        with metadata.connect() as connection:
+            rows = connection.execute("SELECT source_id,current_status,top1_group_code,top1_score,second_score,score_gap,final_group_code,updated_at FROM match_items WHERE task_id=? ORDER BY rowid DESC LIMIT ?", (task_id, limit)).fetchall()
+        return {"interim": str(task["status"]) not in {"COMPLETED"}, "task_status": str(task["status"]), "counts": matches.live_counts(task_id), "rows": [dict(row) for row in rows]}
 
     @app.get("/api/tasks/{task_id}/workbench/items")
     def workbench_items(task_id:str, first_score_min:float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, page:int=Query(1,ge=1), page_size:int=Query(50,ge=1,le=200))->dict[str,object]:

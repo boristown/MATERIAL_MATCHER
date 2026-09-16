@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 import json
 from pathlib import Path
+import time
 from typing import Any
 import uuid
 
@@ -35,6 +36,51 @@ class MatchService:
         self.files = files
         self.settings = settings
         self.indexes = indexes or VectorIndexService(metadata, files, settings)
+        self._progress_window: dict[str, list[tuple[float, str, int, int]]] = {}
+
+    def observe_progress(self, task_id: str, kind: str, done: int, total: int, *, now: float | None = None) -> None:
+        """Feed a sliding-window throughput sample for progress ETA estimation."""
+        sample = (time.monotonic() if now is None else now, kind, int(done), int(total))
+        window = self._progress_window.setdefault(task_id, [])
+        window.append(sample)
+        if len(window) > 480:
+            del window[: len(window) - 480]
+
+    def progress_estimate(self, task_id: str, phase: str, *, now: float | None = None) -> dict[str, object] | None:
+        window = self._progress_window.get(task_id)
+        if not window:
+            return None
+        current = time.monotonic() if now is None else now
+        kind = "index" if phase == "INDEX" else "query"
+        samples = [item for item in window if item[1] == kind and current - item[0] <= 900.0]
+        samples = samples[-120:]
+        if len(samples) < 2:
+            return None
+        (_, _, done_first, _), (t_last, _, done_last, total_last) = samples[0], samples[-1]
+        elapsed = t_last - samples[0][0]
+        if elapsed <= 0 or done_last <= done_first or total_last <= 0:
+            return None
+        rate_per_minute = (done_last - done_first) / elapsed * 60.0
+        remaining_rows = max(0, total_last - done_last)
+        phase_remaining = remaining_rows / rate_per_minute * 60.0
+        shares = {"INDEX": 27.0, "RETRIEVE": 2.0, "RERANK": 63.0, "PERSIST": 5.0}
+        if phase in {"RERANK", "RETRIEVE"}:
+            whole_remaining = phase_remaining * (100.0 / 63.0) + 240.0
+        elif phase == "INDEX":
+            whole_remaining = phase_remaining * (100.0 / 27.0)
+        else:
+            whole_remaining = phase_remaining
+        return {
+            "kind": kind,
+            "phase": phase,
+            "phase_done": done_last,
+            "phase_total": total_last,
+            "rows_per_minute": round(rate_per_minute, 1),
+            "phase_remaining_seconds": round(phase_remaining),
+            "eta_seconds": round(whole_remaining),
+            "eta_at": (datetime.now().astimezone() + timedelta(seconds=round(whole_remaining))).isoformat(timespec="seconds") if phase in {"INDEX", "RETRIEVE", "RERANK"} else None,
+            "window_seconds": 900,
+        }
 
     def _set_runtime(self, task_id: str, execution_mode: str, phase: str, index_id: str | None = None) -> None:
         with self.meta.connect() as connection:
@@ -90,6 +136,7 @@ class MatchService:
         on_progress=None,
         on_index_progress=None,
         on_index_ready=None,
+        on_batch=None,
     ) -> list[RowResult]:
         source_path = Path(str(source["stored_path"]))
         target_path = Path(str(target["stored_path"]))
@@ -102,6 +149,7 @@ class MatchService:
                 max_target_rows=self.settings.baseline_max_target_rows,
                 max_source_rows=max_source_rows,
                 on_progress=on_progress,
+                on_batch=on_batch,
             )
         index, provider, index_info = self.indexes.ensure_index(
             catalog_version_id=str(catalog["version_id"]),
@@ -124,6 +172,7 @@ class MatchService:
             max_source_rows=max_source_rows,
             on_progress=on_progress,
             scan_workers=self.settings.index_scan_workers,
+            on_batch=on_batch,
         )
 
     def dry_run(self, draft_id: str, sample_rows: int = 100) -> dict[str, object]:
@@ -163,6 +212,32 @@ class MatchService:
             ).rowcount
         return task_id if updated else None
 
+    def _persist_rows(self, task_id: str, batch: list[RowResult]) -> None:
+        now = _now()
+        with self.meta.connect() as connection:
+            for item in batch:
+                connection.execute(
+                    "INSERT OR REPLACE INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (task_id, item.source_row_id, item.source_id, _json(item.source_payload), item.status, item.status, item.candidates[0].group_code if item.candidates else None, item.first_score, item.second_score, item.score_gap, 1 if item.critical_conflict else 0, item.final_group_code, now, now),
+                )
+                for candidate in item.candidates:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO match_candidates VALUES(?,?,?,?,?,?,?,?)",
+                        (task_id, item.source_row_id, candidate.rank, candidate.group_code, _json(candidate.target_payload), candidate.score, _json(candidate.field_scores), 1 if candidate.critical_conflict else 0),
+                    )
+
+    def live_counts(self, task_id: str) -> dict[str, int]:
+        with self.meta.connect() as connection:
+            rows = connection.execute("SELECT current_status, COUNT(*) AS n FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
+        counts = {str(row["current_status"]): int(row["n"]) for row in rows}
+        return {
+            "matched": counts.get("MATCHED", 0),
+            "review": counts.get("REVIEW", 0),
+            "confirmed": counts.get("CONFIRMED", 0),
+            "unmatched": counts.get("UNMATCHED", 0),
+            "matched_group_codes": counts.get("MATCHED", 0) + counts.get("CONFIRMED", 0),
+        }
+
     def execute_task(self, task_id: str) -> None:
         try:
             with self.meta.connect() as connection:
@@ -185,10 +260,12 @@ class MatchService:
 
             def index_progress(done: int, total: int) -> None:
                 pct = 3.0 + 27.0 * (done / max(total, 1))
+                self.observe_progress(task_id, "index", done, total)
                 with self.meta.connect() as connection:
                     connection.execute("UPDATE tasks SET progress=? WHERE task_id=?", (min(30.0, pct), task_id))
 
             def progress(done: int, total: int) -> None:
+                self.observe_progress(task_id, "query", done, total)
                 if done == 1:
                     self._set_runtime(task_id, execution_mode, "RERANK")
                 base = 32.0 if vector_mode else 5.0
@@ -200,6 +277,12 @@ class MatchService:
             def index_ready(index_id: str) -> None:
                 self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
 
+            persisted = [0]
+
+            def persist_batch(batch: list[RowResult]) -> None:
+                self._persist_rows(task_id, batch)
+                persisted[0] += len(batch)
+
             rows = self._run_rows(
                 source=source,
                 target=target,
@@ -208,24 +291,18 @@ class MatchService:
                 on_progress=progress,
                 on_index_progress=index_progress,
                 on_index_ready=index_ready if vector_mode else None,
+                on_batch=persist_batch,
             )
             self._set_runtime(task_id, execution_mode, "PERSIST")
             now = _now()
+            if persisted[0] < len(rows):
+                self._persist_rows(task_id, rows[persisted[0]:])
             with self.meta.connect() as connection:
-                for item in rows:
-                    connection.execute(
-                        "INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (task_id, item.source_row_id, item.source_id, _json(item.source_payload), item.status, item.status, item.candidates[0].group_code if item.candidates else None, item.first_score, item.second_score, item.score_gap, 1 if item.critical_conflict else 0, item.final_group_code, now, now),
-                    )
-                    for candidate in item.candidates:
-                        connection.execute(
-                            "INSERT INTO match_candidates VALUES(?,?,?,?,?,?,?,?)",
-                            (task_id, item.source_row_id, candidate.rank, candidate.group_code, _json(candidate.target_payload), candidate.score, _json(candidate.field_scores), 1 if candidate.critical_conflict else 0),
-                        )
                 review_count = connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0]
                 stage = "REVIEW" if review_count else "RESULT"
                 connection.execute("UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?", (stage, len(rows), len(rows), now, task_id))
             self._set_runtime(task_id, execution_mode, "DONE")
+            self._progress_window.pop(task_id, None)
         except Exception as exc:
             code = exc.code if isinstance(exc, DomainError) else "INTERNAL_ERROR"
             message = exc.message if isinstance(exc, DomainError) else str(exc)
