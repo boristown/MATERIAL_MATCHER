@@ -123,6 +123,28 @@ def test_disabled_account_invalidates_existing_session(tmp_path: Path) -> None:
         _assert_auth_required(client.get("/api/auth/me"))
 
 
+def test_role_change_invalidates_existing_session(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    with TestClient(create_app(settings)) as client:
+        admin_token = _ready_admin(client)
+        created = client.post(
+            "/api/users",
+            json={"username": "role-user", "password": "RoleUser12345", "role": "viewer"},
+        )
+        assert created.status_code == 200
+
+        user_token, _ = _login(client, "role-user", "RoleUser12345")
+        assert client.get("/api/auth/me").status_code == 200
+
+        client.cookies.set(COOKIE_NAME, admin_token)
+        changed = client.patch("/api/users/role-user", json={"role": "reviewer"})
+        assert changed.status_code == 200
+        assert changed.json()["role"] == "reviewer"
+
+        client.cookies.set(COOKIE_NAME, user_token)
+        _assert_auth_required(client.get("/api/auth/me"))
+
+
 def test_password_reset_invalidates_existing_session(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     with TestClient(create_app(settings)) as client:
