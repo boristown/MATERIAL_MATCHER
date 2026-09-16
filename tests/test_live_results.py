@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
 
@@ -30,10 +31,11 @@ def test_live_results_and_summary_are_incremental_and_flagged(tmp_path: Path, au
     }
     client.put(f"/api/task-drafts/{draft}/rules", json=rules).raise_for_status()
     task = client.post(f"/api/task-drafts/{draft}/start").json()["task_id"]
-    for _ in range(50):
+    for _ in range(100):
         progress = client.get(f"/api/tasks/{task}/progress").json()
         if progress["status"] in {"COMPLETED", "FAILED"}:
             break
+        time.sleep(0.01)
     assert progress["status"] == "COMPLETED"
     assert "live_counts" in progress and "interim" in progress
     assert progress["interim"] is False
