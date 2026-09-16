@@ -555,16 +555,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def item_candidates(task_id:str,source_row_id:str)->dict[str,object]: return {"candidates":matches.candidates(task_id,source_row_id)}
 
     @app.post("/api/tasks/{task_id}/items/{source_row_id}/confirm")
-    def confirm_item(task_id:str,source_row_id:str,payload:ConfirmRequest)->dict[str,object]: return matches.confirm(task_id,source_row_id,payload.target_id,payload.comment)
+    def confirm_item(task_id:str,source_row_id:str,payload:ConfirmRequest,request:Request)->dict[str,object]: return matches.confirm(task_id,source_row_id,payload.target_id,payload.comment,operator=str(request.state.username))
 
     @app.post("/api/tasks/{task_id}/items/{source_row_id}/reject")
-    def reject_item(task_id:str,source_row_id:str,payload:RejectRequest)->dict[str,object]: return matches.reject(task_id,source_row_id,payload.comment)
+    def reject_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return matches.reject(task_id,source_row_id,payload.comment,operator=str(request.state.username))
 
     @app.post("/api/tasks/{task_id}/workbench/batch-confirm-top1")
-    def batch_confirm(task_id:str,payload:BatchRequest)->dict[str,object]: return matches.batch_confirm_top1(task_id,payload.source_row_ids)
+    def batch_confirm(task_id:str,payload:BatchRequest,request:Request)->dict[str,object]: return matches.batch_confirm_top1(task_id,payload.source_row_ids,operator=str(request.state.username))
 
     @app.post("/api/tasks/{task_id}/workbench/batch-reject")
-    def batch_reject(task_id:str,payload:BatchRequest)->dict[str,object]: return matches.batch_reject(task_id,payload.source_row_ids)
+    def batch_reject(task_id:str,payload:BatchRequest,request:Request)->dict[str,object]: return matches.batch_reject(task_id,payload.source_row_ids,operator=str(request.state.username))
 
     @app.post("/api/tasks/{task_id}/re-decide")
     def re_decide(task_id: str, payload: ReDecideRequest) -> dict[str, object]:
