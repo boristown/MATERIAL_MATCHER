@@ -338,7 +338,6 @@ class ResultExportService:
         sheet.row_dimensions[1].height = 22
         sheet.row_dimensions[2].height = 34
         sheet.freeze_panes = "A3"
-        sheet.auto_filter.ref = f"A2:{get_column_letter(column - 1)}2"
         return ranges
 
     @staticmethod
@@ -355,6 +354,8 @@ class ResultExportService:
                 if cell.value is not None:
                     width = max(width, min(max_width, len(str(cell.value)) + 2))
             sheet.column_dimensions[letter].width = min(max_width, width)
+        if sheet.max_column:
+            sheet.auto_filter.ref = f"A2:{get_column_letter(sheet.max_column)}{max(2, sheet.max_row)}"
 
     @staticmethod
     def _write_text(cell: Any, value: object) -> None:
