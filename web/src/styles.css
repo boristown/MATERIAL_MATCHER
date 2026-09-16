@@ -193,3 +193,19 @@ code { word-break: break-all; background: #f1f5f9; padding: 1px 6px; border-radi
 .profile-actions { display: flex; gap: 8px; margin-top: 6px; }
 .drawer-source { background: var(--mm-bg); border-radius: 8px; padding: 8px 12px; font-size: 12.5px; }
 .payload-brief { color: #475569; font-size: 12px; }
+
+/* ===== 侧栏 STEP 导航 ===== */
+.step-nav { display: flex; flex-direction: column; margin-top: 4px; position: relative; }
+.step-nav::before { content: ''; position: absolute; left: 23px; top: 26px; bottom: 26px; width: 2px; background: rgba(147, 167, 207, 0.25); border-radius: 1px; }
+.step-nav button { display: flex; gap: 10px; align-items: flex-start; width: 100%; border: 0; background: transparent; color: #b9c6e4; text-align: left; padding: 10px 10px; border-radius: 10px; margin: 2px 0; cursor: pointer; position: relative; transition: background 0.15s, color 0.15s; }
+.step-nav button:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.step-nav button.active { background: linear-gradient(90deg, rgba(59, 130, 246, 0.28), rgba(59, 130, 246, 0.08)); color: #fff; }
+.step-no { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12.5px; font-weight: 700; background: #24365e; color: #93a7cf; border: 2px solid #33477a; z-index: 1; }
+.step-nav button.active .step-no { background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; border-color: transparent; box-shadow: 0 4px 12px -4px rgba(59, 130, 246, 0.8); }
+.step-body { display: flex; flex-direction: column; gap: 2px; }
+.step-title { font-size: 13px; font-weight: 600; letter-spacing: 0.3px; }
+.step-nav .nav-desc { font-size: 11px; color: #7d93c0; }
+.side-divider { margin: 16px 10px 8px; font-size: 10.5px; letter-spacing: 2px; color: #5d739f; text-transform: uppercase; }
+.support-nav button { display: block; width: 100%; border: 0; background: transparent; color: #b9c6e4; text-align: left; padding: 10px 12px; border-radius: 10px; margin: 2px 0; cursor: pointer; font-size: 13.5px; }
+.support-nav button:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.support-nav button.active { background: rgba(59, 130, 246, 0.18); color: #fff; }
