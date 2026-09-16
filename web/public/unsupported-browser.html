@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>浏览器版本过低 - 物料集团码智能匹配平台</title>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      color: #1f2937;
+      background: #eef3f9;
+    }
+    .page {
+      display: table;
+      width: 100%;
+      height: 100%;
+    }
+    .center {
+      display: table-cell;
+      vertical-align: middle;
+      text-align: center;
+      padding: 24px;
+    }
+    .card {
+      display: inline-block;
+      width: 560px;
+      max-width: 88%;
+      text-align: left;
+      background: #ffffff;
+      border: 1px solid #dbe3ef;
+      border-radius: 16px;
+      box-shadow: 0 18px 48px rgba(34, 61, 105, 0.12);
+      overflow: hidden;
+    }
+    .top {
+      padding: 28px 34px 24px;
+      background: #112444;
+      color: #ffffff;
+    }
+    .brand {
+      font-size: 14px;
+      color: #bfd2f2;
+      margin-bottom: 18px;
+      letter-spacing: 1px;
+    }
+    .icon {
+      display: inline-block;
+      width: 52px;
+      height: 52px;
+      line-height: 52px;
+      text-align: center;
+      border-radius: 14px;
+      background: #2563eb;
+      color: #ffffff;
+      font-size: 28px;
+      font-weight: bold;
+      vertical-align: middle;
+      margin-right: 14px;
+    }
+    .title-wrap {
+      display: inline-block;
+      vertical-align: middle;
+      max-width: 400px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+      line-height: 1.35;
+      font-weight: 700;
+    }
+    .top p {
+      margin: 0;
+      color: #c9d7ed;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .body {
+      padding: 28px 34px 32px;
+    }
+    .requirement {
+      padding: 16px 18px;
+      margin-bottom: 18px;
+      border: 1px solid #bfd2ff;
+      border-radius: 10px;
+      background: #eff5ff;
+      color: #173b7a;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .detected {
+      margin: 0 0 12px;
+      color: #64748b;
+      font-size: 13px;
+    }
+    .hint {
+      margin: 0;
+      color: #475569;
+      font-size: 14px;
+      line-height: 1.8;
+    }
+    .foot {
+      margin-top: 24px;
+      padding-top: 18px;
+      border-top: 1px solid #e5eaf2;
+      color: #94a3b8;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="center">
+      <div class="card">
+        <div class="top">
+          <div class="brand">物料集团码智能匹配平台</div>
+          <span class="icon">!</span>
+          <span class="title-wrap">
+            <h1>浏览器版本过低</h1>
+            <p>当前浏览器无法安全运行本系统，请升级浏览器后重新访问。</p>
+          </span>
+        </div>
+        <div class="body">
+          <div id="requirement" class="requirement">请使用 Chrome ≥87 或 Firefox ≥79</div>
+          <p id="detected" class="detected"></p>
+          <p class="hint">升级完成后，重新打开当前系统地址即可。系统不会因为本页面产生任何业务数据修改。</p>
+          <div class="foot">MATERIAL MATCHER · Browser Compatibility Guard</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      function queryValue(name) {
+        var query = window.location.search ? window.location.search.substring(1) : '';
+        var parts = query.split('&');
+        var i;
+        for (i = 0; i < parts.length; i += 1) {
+          var pair = parts[i].split('=');
+          if (decodeURIComponent(pair[0] || '') === name) {
+            return decodeURIComponent(pair.slice(1).join('=') || '');
+          }
+        }
+        return '';
+      }
+
+      var browser = queryValue('browser');
+      var version = queryValue('version');
+      var requirement = document.getElementById('requirement');
+      var detected = document.getElementById('detected');
+
+      if (browser === 'firefox') {
+        requirement.innerHTML = '请使用 Firefox &ge;79';
+        detected.innerHTML = version ? '检测到当前 Firefox 版本：' + version : '检测到当前浏览器为 Firefox';
+      } else if (browser === 'chrome') {
+        requirement.innerHTML = '请使用 Chrome &ge;87';
+        detected.innerHTML = version ? '检测到当前 Chrome 版本：' + version : '检测到当前浏览器为 Chrome';
+      } else {
+        requirement.innerHTML = '请使用 Chrome &ge;87 或 Firefox &ge;79';
+        detected.innerHTML = '检测到当前浏览器缺少本系统所需的基础 Web 能力';
+      }
+    })();
+  </script>
+</body>
+</html>
