@@ -4,19 +4,10 @@ import { useRouter } from 'vue-router'
 import { api } from '../api'
 
 type Row = { id: string; name: string; stage: string; progress: number; status: string; created_at: string; kind: 'task' | 'draft' }
-const props = defineProps<{ mode?: 'review' | 'result' }>()
 const router = useRouter()
-const allRows = ref<Row[]>([])
+const rows = ref<Row[]>([])
 const stageLabels: Record<string, string> = { CALCULATE: '比对计算', REVIEW: '人工处理', RESULT: '生成结果' }
 const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING']
-
-const rows = computed(() => {
-  if (props.mode === 'review') return allRows.value.filter(row => row.kind === 'task' && row.stage === '人工处理')
-  if (props.mode === 'result') return allRows.value.filter(row => row.kind === 'task' && row.stage === '生成结果')
-  return allRows.value
-})
-const pageTitle = computed(() => props.mode === 'review' ? 'STEP 3 · 人工调整' : props.mode === 'result' ? 'STEP 4 · 输出结果' : 'STEP 2 · 匹配计算')
-const pageDesc = computed(() => props.mode === 'review' ? '待确认任务:点击进入复核、阈值重判与候选对比。' : props.mode === 'result' ? '已完成任务:生成匹配摘要与样式化 Excel。' : '正在进行的任务实时呈现;历史任务与草稿在下方列表。')
 
 /* ---- 顶部运行态大屏 ---- */
 const running = ref<Row | null>(null)
@@ -57,12 +48,12 @@ async function refreshLive(): Promise<void> {
 async function load(): Promise<void> {
   try {
     const [tasks, drafts] = await Promise.all([api.get('/tasks'), api.get('/task-drafts')])
-    allRows.value = [
+    rows.value = [
       ...tasks.data.map((task: any) => ({ id: task.task_id, name: task.name, stage: stageLabels[task.stage] ?? task.stage, progress: task.progress, status: task.status, created_at: task.created_at, kind: 'task' as const })),
       ...drafts.data.map((draft: any) => ({ id: draft.draft_id, name: draft.name, stage: draft.current_step === 1 ? '选择数据' : '确认匹配规则', progress: 0, status: '草稿', created_at: draft.updated_at, kind: 'draft' as const })),
     ].sort((a, b) => b.created_at.localeCompare(a.created_at))
   } catch { await router.push('/login'); return }
-  const runningRow = allRows.value.find(row => row.kind === 'task' && RUNNING_STATUSES.includes(row.status)) ?? null
+  const runningRow = rows.value.find(row => row.kind === 'task' && RUNNING_STATUSES.includes(row.status)) ?? null
   running.value = runningRow
   if (runningRow) {
     await refreshLive()
@@ -78,43 +69,41 @@ onBeforeUnmount(() => { if (liveTimer) window.clearInterval(liveTimer) })
 </script>
 
 <template>
-  <div>
+  <div class="tasks-page">
     <div class="toolbar">
-      <div><h2>{{ pageTitle }}</h2><p>{{ pageDesc }}</p></div>
+      <div><h2>STEP 2 · 匹配计算</h2><p>正在进行的任务实时呈现;历史任务与草稿在下方列表。</p></div>
       <el-button type="primary" @click="router.push('/tasks/new')">新建匹配任务</el-button>
     </div>
 
-    <template v-if="!mode">
-      <div v-if="running" class="hero" @click="open(running)">
-        <div class="hero-ring">
-          <el-progress type="circle" :width="132" :percentage="heroPercent" :stroke-width="10">
-            <template #default><div class="hero-ring-inner"><b>{{ heroPercent }}%</b><span>{{ statusLabel(heroStatus) }}</span></div></template>
-          </el-progress>
-        </div>
-        <div class="hero-main">
-          <div class="hero-title"><b>{{ running.name }}</b><el-tag size="small" effect="dark" type="primary">{{ phaseLabel }}</el-tag><span class="hero-enter">点击进入实时看板 →</span></div>
-          <div class="hero-grid">
-            <div class="hero-cell"><span>已处理</span><b>{{ (live?.processed_rows ?? 0).toLocaleString() }} / {{ (live?.total_rows || '—') }}</b></div>
-            <div class="hero-cell"><span>已匹配集团码</span><b class="good">{{ Number(live?.live_counts?.matched_group_codes ?? 0).toLocaleString() }}</b></div>
-            <div class="hero-cell"><span>待人工确认</span><b>{{ Number(live?.live_counts?.review ?? 0).toLocaleString() }}</b></div>
-            <div class="hero-cell"><span>吞吐</span><b>{{ live?.estimate?.rows_per_minute ? Number(live.estimate.rows_per_minute).toFixed(0) + ' 行/分' : '—' }}</b></div>
-            <div class="hero-cell"><span>预计剩余</span><b>{{ live?.current_phase === 'INDEX' ? fmtDuration(live?.estimate?.phase_remaining_seconds) : fmtDuration(live?.estimate?.eta_seconds) }}</b></div>
-            <div class="hero-cell"><span>预计完成</span><b>{{ fmtClock(live?.estimate?.eta_at) }}</b></div>
-          </div>
+    <div v-if="running" class="hero" @click="open(running)">
+      <div class="hero-ring">
+        <el-progress type="circle" :width="132" :percentage="heroPercent" :stroke-width="10">
+          <template #default><div class="hero-ring-inner"><b>{{ heroPercent }}%</b><span>{{ statusLabel(heroStatus) }}</span></div></template>
+        </el-progress>
+      </div>
+      <div class="hero-main">
+        <div class="hero-title"><b>{{ running.name }}</b><el-tag size="small" effect="dark" type="primary">{{ phaseLabel }}</el-tag><span class="hero-enter">点击进入实时看板 →</span></div>
+        <div class="hero-grid">
+          <div class="hero-cell"><span>已处理</span><b>{{ (live?.processed_rows ?? 0).toLocaleString() }} / {{ (live?.total_rows || '—') }}</b></div>
+          <div class="hero-cell"><span>已匹配集团码</span><b class="good">{{ Number(live?.live_counts?.matched_group_codes ?? 0).toLocaleString() }}</b></div>
+          <div class="hero-cell"><span>待人工确认</span><b>{{ Number(live?.live_counts?.review ?? 0).toLocaleString() }}</b></div>
+          <div class="hero-cell"><span>吞吐</span><b>{{ live?.estimate?.rows_per_minute ? Number(live.estimate.rows_per_minute).toFixed(0) + ' 行/分' : '—' }}</b></div>
+          <div class="hero-cell"><span>预计剩余</span><b>{{ live?.current_phase === 'INDEX' ? fmtDuration(live?.estimate?.phase_remaining_seconds) : fmtDuration(live?.estimate?.eta_seconds) }}</b></div>
+          <div class="hero-cell"><span>预计完成</span><b>{{ fmtClock(live?.estimate?.eta_at) }}</b></div>
         </div>
       </div>
-      <div v-else class="hero idle">
-        <div class="idle-icon">◎</div>
-        <div class="idle-text">
-          <b>无正在进行的任务</b>
-          <p>请通过 STEP 1 选择方案、拖入数据并配置字段映射后启动匹配任务;运行中的进度、中间结果与预计完成时间会实时显示在这里。</p>
-        </div>
-        <el-button type="primary" size="large" @click="router.push('/profiles')">前往 STEP 1 配置并启动 →</el-button>
+    </div>
+    <div v-else class="hero idle">
+      <div class="idle-icon">◎</div>
+      <div class="idle-text">
+        <b>无正在进行的任务</b>
+        <p>请通过 STEP 1 选择方案、拖入数据并配置字段映射后启动匹配任务;运行中的进度、中间结果与预计完成时间会实时显示在这里。</p>
       </div>
-    </template>
+      <el-button type="primary" size="large" @click="router.push('/profiles')">前往 STEP 1 配置并启动 →</el-button>
+    </div>
 
     <div class="panel">
-      <div class="section-head"><h3 style="margin:0">{{ mode ? '任务列表' : '历史任务与草稿' }}</h3></div>
+      <div class="section-head"><h3 style="margin:0">历史任务与草稿</h3></div>
       <el-table :data="rows" size="default">
         <el-table-column label="名称" min-width="220"><template #default="scope"><a class="row-link" @click="open(scope.row)">{{ scope.row.name }}</a><div class="row-sub">{{ scope.row.id }}</div></template></el-table-column>
         <el-table-column prop="stage" label="阶段" width="120"/>
