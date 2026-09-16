@@ -1,0 +1,4 @@
+/* STEP 3 page-owned styles.
+   Page agents may edit this file without touching global styles.css.
+   Keep legacy-browser fallbacks in this file when adding modern CSS. */
+.review-page { min-width: 0; }
