@@ -11,6 +11,7 @@ from material_matcher.storage.metadata import MetadataRepository
 
 BOOTSTRAP_PASSWORD = "Bootstrap12345"
 READY_ADMIN_PASSWORD = "ReadyAdmin12345"
+TEST_COOKIE_DOMAIN = "testserver.local"
 
 
 def _settings(tmp_path: Path, *, ttl_seconds: int = 3600) -> Settings:
@@ -29,9 +30,13 @@ def _settings(tmp_path: Path, *, ttl_seconds: int = 3600) -> Settings:
 def _login(client: TestClient, username: str, password: str) -> tuple[str, dict[str, object]]:
     response = client.post("/api/auth/login", json={"username": username, "password": password})
     assert response.status_code == 200
-    token = client.cookies.get(COOKIE_NAME)
+    token = client.cookies.get(COOKIE_NAME, domain=TEST_COOKIE_DOMAIN, path="/")
     assert token
     return token, response.json()
+
+
+def _set_session_cookie(client: TestClient, token: str) -> None:
+    client.cookies.set(COOKIE_NAME, token, domain=TEST_COOKIE_DOMAIN, path="/")
 
 
 def _ready_admin(client: TestClient) -> str:
@@ -61,7 +66,7 @@ def test_login_cookie_survives_app_recreation_with_same_metadata_db(tmp_path: Pa
             json={"username": "admin", "password": BOOTSTRAP_PASSWORD},
         )
         assert response.status_code == 200
-        token = first.cookies.get(COOKIE_NAME)
+        token = first.cookies.get(COOKIE_NAME, domain=TEST_COOKIE_DOMAIN, path="/")
         assert token
         assert f"Max-Age={settings.session_ttl_seconds}" in response.headers["set-cookie"]
         assert first.get("/api/auth/me").status_code == 200
@@ -77,7 +82,7 @@ def test_login_cookie_survives_app_recreation_with_same_metadata_db(tmp_path: Pa
 
     # Simulate a normal service restart: a brand-new FastAPI app opens the same metadata DB.
     with TestClient(create_app(settings)) as restarted:
-        restarted.cookies.set(COOKIE_NAME, token)
+        _set_session_cookie(restarted, token)
         me = restarted.get("/api/auth/me")
         assert me.status_code == 200
         assert me.json()["username"] == "admin"
@@ -95,7 +100,7 @@ def test_expired_session_is_rejected_after_app_recreation(tmp_path: Path) -> Non
         )
 
     with TestClient(create_app(settings)) as restarted:
-        restarted.cookies.set(COOKIE_NAME, token)
+        _set_session_cookie(restarted, token)
         _assert_auth_required(restarted.get("/api/auth/me"))
 
     with MetadataRepository(settings.metadata_db_path).connect() as connection:
@@ -115,11 +120,11 @@ def test_disabled_account_invalidates_existing_session(tmp_path: Path) -> None:
         user_token, _ = _login(client, "disabled-user", "Disabled12345")
         assert client.get("/api/auth/me").status_code == 200
 
-        client.cookies.set(COOKIE_NAME, admin_token)
+        _set_session_cookie(client, admin_token)
         disabled = client.patch("/api/users/disabled-user", json={"enabled": False})
         assert disabled.status_code == 200
 
-        client.cookies.set(COOKIE_NAME, user_token)
+        _set_session_cookie(client, user_token)
         _assert_auth_required(client.get("/api/auth/me"))
 
 
@@ -136,12 +141,12 @@ def test_role_change_invalidates_existing_session(tmp_path: Path) -> None:
         user_token, _ = _login(client, "role-user", "RoleUser12345")
         assert client.get("/api/auth/me").status_code == 200
 
-        client.cookies.set(COOKIE_NAME, admin_token)
+        _set_session_cookie(client, admin_token)
         changed = client.patch("/api/users/role-user", json={"role": "reviewer"})
         assert changed.status_code == 200
         assert changed.json()["role"] == "reviewer"
 
-        client.cookies.set(COOKIE_NAME, user_token)
+        _set_session_cookie(client, user_token)
         _assert_auth_required(client.get("/api/auth/me"))
 
 
@@ -158,14 +163,14 @@ def test_password_reset_invalidates_existing_session(tmp_path: Path) -> None:
         user_token, _ = _login(client, "reset-user", "BeforeReset123")
         assert client.get("/api/auth/me").status_code == 200
 
-        client.cookies.set(COOKIE_NAME, admin_token)
+        _set_session_cookie(client, admin_token)
         reset = client.post(
             "/api/users/reset-user/reset-password",
             json={"password": "AfterReset1234", "must_change_password": False},
         )
         assert reset.status_code == 200
 
-        client.cookies.set(COOKIE_NAME, user_token)
+        _set_session_cookie(client, user_token)
         _assert_auth_required(client.get("/api/auth/me"))
 
         failed_old_password = client.post(
