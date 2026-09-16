@@ -218,7 +218,7 @@ class TaskService:
             )
         return self.get_draft(draft_id)
 
-    def start(self, draft_id: str) -> dict[str, object]:
+    def start(self, draft_id: str, actor: str = "system") -> dict[str, object]:
         draft = self.get_draft(draft_id)
         if not draft.get("source_file_id") or not draft.get("catalog_version_id"):
             raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据和集团码目录", status_code=422)
@@ -233,7 +233,12 @@ class TaskService:
         created_at = _now()
         with self.repo.connect() as connection:
             connection.execute(
-                "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                """INSERT INTO tasks(
+                    task_id,name,source_file_id,catalog_version_id,profile_id,profile_version,
+                    config_snapshot,config_sha256,stage,status,progress,processed_rows,total_rows,
+                    created_at,started_at,finished_at,error_code,error_message,result_file_id,
+                    created_by,started_by
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     task_id,
                     draft["name"],
@@ -254,11 +259,20 @@ class TaskService:
                     None,
                     None,
                     None,
+                    actor or "system",
+                    actor or "system",
                 ),
             )
             connection.execute(
                 "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
-                (uuid.uuid4().hex, "task", task_id, "CONFIG_SNAPSHOT_FROZEN", _canonical({"config_sha256": digest}), created_at),
+                (
+                    uuid.uuid4().hex,
+                    "task",
+                    task_id,
+                    "CONFIG_SNAPSHOT_FROZEN",
+                    _canonical({"config_sha256": digest, "created_by": actor or "system", "started_by": actor or "system"}),
+                    created_at,
+                ),
             )
         return self.get_task(task_id)
 
