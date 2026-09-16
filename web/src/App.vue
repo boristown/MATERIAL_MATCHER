@@ -8,13 +8,13 @@ const route = useRoute()
 const router = useRouter()
 const user = ref<{ username: string; role: string } | null>(null)
 const steps = [
-  { n: 1, title: '方案与配置', desc: '字段映射 · 过滤 · 阈值', path: '/profiles' },
-  { n: 2, title: '匹配计算', desc: '实时进度 · 中间结果', path: '/tasks' },
-  { n: 3, title: '人工调整', desc: '复核 · 重判 · 候选对比', path: '/review' },
-  { n: 4, title: '输出结果', desc: '匹配摘要 · Excel 下载', path: '/results' },
+  { n: 1, title: '第一步 · 数据上传', desc: '上传源 Excel 与目标集团码 Excel', path: '/profiles' },
+  { n: 2, title: '第二步 · 进度监控', desc: '查看任务进度与实时处理情况', path: '/tasks' },
+  { n: 3, title: '第三步 · 人工调整', desc: '集中处理需要人工确认的记录', path: '/review' },
+  { n: 4, title: '第四步 · 输出结果', desc: '查看结果摘要并下载 Excel', path: '/results' },
 ] as const
 const support = [
-  ['基础数据', '/data'],
+  ['业务字典', '/data'],
   ['系统设置', '/system'],
 ] as const
 const roleLabels: Record<string, string> = { admin: '管理员', operator: '操作员', reviewer: '复核员', viewer: '只读' }
@@ -27,7 +27,7 @@ const activeStep = computed<number | null>(() => {
 
 onMounted(async () => {
   if (route.path === '/login') return
-  try { user.value = (await api.get('/auth/me')).data } catch { /* 401 由拦截器处理 */ }
+  try { user.value = (await api.get('/auth/me')).data } catch { /* 401 由统一认证逻辑处理 */ }
 })
 async function logout(): Promise<void> {
   try { await api.post('/auth/logout') } finally { await router.push('/login') }
@@ -40,41 +40,21 @@ async function logout(): Promise<void> {
     <aside>
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">
-          <svg class="brand-logo" viewBox="0 0 44 44" role="img" aria-label="集团码匹配">
-            <defs>
-              <linearGradient id="brand-bg" x1="7" y1="5" x2="38" y2="40" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#48A6FF" />
-                <stop offset="0.46" stop-color="#2876F5" />
-                <stop offset="1" stop-color="#1847C9" />
-              </linearGradient>
-              <radialGradient id="brand-glow" cx="0" cy="0" r="1" gradientTransform="translate(12 8) rotate(47) scale(34)" gradientUnits="userSpaceOnUse">
-                <stop stop-color="white" stop-opacity="0.26" />
-                <stop offset="1" stop-color="white" stop-opacity="0" />
-              </radialGradient>
-              <linearGradient id="brand-accent" x1="15" y1="14" x2="29" y2="30" gradientUnits="userSpaceOnUse">
-                <stop stop-color="#E7FAFF" />
-                <stop offset="1" stop-color="#8EEBFF" />
-              </linearGradient>
-            </defs>
-            <rect x="2" y="2" width="40" height="40" rx="11" fill="url(#brand-bg)" />
-            <rect x="2.5" y="2.5" width="39" height="39" rx="10.5" fill="url(#brand-glow)" stroke="white" stroke-opacity="0.14" />
-            <path d="M11 13.5h6.1c2.15 0 3.9 1.75 3.9 3.9v1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M33 13.5h-6.1c-2.15 0-3.9 1.75-3.9 3.9v1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M11 30.5h6.1c2.15 0 3.9-1.75 3.9-3.9v-1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M33 30.5h-6.1c-2.15 0-3.9-1.75-3.9-3.9v-1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
-            <rect x="18.2" y="18.2" width="7.6" height="7.6" rx="2.15" transform="rotate(45 22 22)" fill="url(#brand-accent)" />
-            <circle cx="11" cy="13.5" r="1.7" fill="white" />
-            <circle cx="33" cy="13.5" r="1.7" fill="white" />
-            <circle cx="11" cy="30.5" r="1.7" fill="white" />
-            <circle cx="33" cy="30.5" r="1.7" fill="white" />
+          <svg class="brand-logo" viewBox="0 0 340 340" role="img" aria-label="小罡 AI">
+            <rect x="28" y="28" width="284" height="284" rx="68" fill="#F3F3F3" stroke="#DFDFDF" stroke-width="5" />
+            <path transform="translate(27.2 27.2) scale(.84)" fill="#BF2D2B" d="M205.01 21.76C277.37 114.16 126.85 160.8 103.94 239.52C7.77 157.08 172.37 93.36 205.01 21.76Z" />
+            <path transform="translate(27.2 27.2) scale(.84)" fill="#1C2B7E" d="M233.52 92.66C337.04 175.54 161.32 240.64 132.46 317.06C57.19 221.08 208.33 172.91 233.52 92.66Z" />
           </svg>
         </span>
-        <div class="brand-text"><b>集团码匹配</b></div>
+        <div class="brand-text">
+          <b>小罡 AI</b>
+          <span>物料智能匹配</span>
+        </div>
       </div>
       <div class="step-nav">
         <button v-for="step in steps" :key="step.n" :class="{ active: step.n === activeStep }" @click="router.push(step.path)">
-          <span class="step-no" :class="{ done: false }">{{ step.n }}</span>
-          <span class="step-body"><span class="step-title">STEP {{ step.n }} · {{ step.title }}</span><span class="nav-desc">{{ step.desc }}</span></span>
+          <span class="step-no">{{ step.n }}</span>
+          <span class="step-body"><span class="step-title">{{ step.title }}</span><span class="nav-desc">{{ step.desc }}</span></span>
         </button>
       </div>
       <nav class="support-nav">
@@ -82,7 +62,7 @@ async function logout(): Promise<void> {
           <span class="nav-title">{{ item[0] }}</span>
         </button>
       </nav>
-      <div class="side-foot">v1.0 · bge-base-zh-v1.5</div>
+      <div class="side-foot">小罡 AI · v1.0</div>
     </aside>
     <main>
       <header>
@@ -104,29 +84,40 @@ async function logout(): Promise<void> {
 }
 
 .brand-mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
   display: block;
-  background: transparent;
-  box-shadow: none;
-  overflow: visible;
 }
 
 .brand-logo {
   display: block;
-  width: 42px;
-  height: 42px;
-  filter: drop-shadow(0 7px 10px rgba(20, 87, 214, 0.34));
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(0 6px 10px rgba(8, 23, 70, 0.24));
+}
+
+.brand-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .brand-text b {
   color: #f7faff;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.9px;
-  line-height: 1.2;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+  line-height: 1.15;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.14);
+}
+
+.brand-text span {
+  color: rgba(238, 244, 255, 0.74);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .support-nav {
