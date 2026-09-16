@@ -7,7 +7,11 @@ from typing import Mapping
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import FieldRule, FieldSide, MatchingConfig
+from collections import OrderedDict
+
 from material_matcher.normalize.pipeline import ProcessedValue, apply_processing_pipeline
+
+_PIPELINE_DUMP_CACHE: "OrderedDict[int, tuple[object, list]]" = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -35,7 +39,20 @@ class CandidateScore:
 
 
 def _pipeline_dicts(side: FieldSide) -> list[dict[str, object]]:
-    return [step.model_dump(mode="json") for step in side.pipeline]
+    # FieldSide instances are immutable pydantic objects owned by one frozen task
+    # snapshot, so dumping them once per side keeps the normalize-memo keys stable
+    # and removes per-pair model_dump churn from the scoring hot path.
+    from collections import OrderedDict
+    cache = _PIPELINE_DUMP_CACHE
+    sid = id(side)
+    hit = cache.get(sid)
+    if hit is not None and hit[0] is side:
+        return hit[1]
+    dumped = [step.model_dump(mode="json") for step in side.pipeline]
+    if len(cache) > 4096:
+        cache.popitem(last=False)
+    cache[sid] = (side, dumped)
+    return dumped
 
 
 def _trace_dicts(value: ProcessedValue) -> list[dict[str, object]]:
