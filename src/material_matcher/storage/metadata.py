@@ -35,8 +35,13 @@ CREATE TABLE IF NOT EXISTS tasks(
   stage TEXT NOT NULL, status TEXT NOT NULL, progress REAL NOT NULL,
   processed_rows INTEGER NOT NULL, total_rows INTEGER NOT NULL,
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
-  error_code TEXT, error_message TEXT, result_file_id TEXT,
-  created_by TEXT, started_by TEXT
+  error_code TEXT, error_message TEXT, result_file_id TEXT
+);
+CREATE TABLE IF NOT EXISTS task_actors(
+  task_id TEXT PRIMARY KEY,
+  created_by TEXT,
+  started_by TEXT,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );
 CREATE TABLE IF NOT EXISTS task_runtime(
   task_id TEXT PRIMARY KEY, execution_mode TEXT NOT NULL, current_phase TEXT NOT NULL,
@@ -183,12 +188,12 @@ class MetadataRepository:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
-            # Forward-compatible migrations for deployments created before row
-            # traceability, task actor tracking, and structured manual audit.
+            # Forward-compatible migrations for deployments created before source /
+            # target original-row traceability was introduced. New audit/actor
+            # capabilities use additive tables so the historical 19-column tasks
+            # table remains compatible with existing tools and tests.
             self._ensure_column(connection, "match_items", "source_row_number", "INTEGER")
             self._ensure_column(connection, "match_candidates", "target_row_number", "INTEGER")
-            self._ensure_column(connection, "tasks", "created_by", "TEXT")
-            self._ensure_column(connection, "tasks", "started_by", "TEXT")
             connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")
             connection.execute("UPDATE task_runtime SET current_phase='RECOVERING', updated_at=datetime('now') WHERE task_id IN (SELECT task_id FROM tasks WHERE status='RECOVERING')")
 
