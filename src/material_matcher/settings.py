@@ -79,6 +79,7 @@ class Settings:
             config_dir=Path(os.getenv("MATERIAL_MATCHER_CONFIG_DIR", "/etc/material_matcher")),
             log_dir=Path(os.getenv("MATERIAL_MATCHER_LOG_DIR", "/var/log/material_matcher")),
             admin_password=os.getenv("MATERIAL_MATCHER_ADMIN_PASSWORD", ""),
+            session_ttl_seconds=int(os.getenv("MATERIAL_MATCHER_SESSION_TTL_SECONDS", "28800")),
             baseline_max_target_rows=int(os.getenv("MATERIAL_MATCHER_BASELINE_MAX_TARGET_ROWS", "20000")),
             embedding_provider=os.getenv("MATERIAL_MATCHER_EMBEDDING_PROVIDER", "onnx_local"),
             embedding_model_id=os.getenv("MATERIAL_MATCHER_EMBEDDING_MODEL_ID", "BAAI/bge-base-zh-v1.5"),

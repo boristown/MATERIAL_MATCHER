@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS upload_sessions(
   expected_size INTEGER NOT NULL, expected_sha256 TEXT, received_bytes INTEGER NOT NULL,
   next_chunk INTEGER NOT NULL, tmp_path TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sessions(
+  token TEXT PRIMARY KEY, username TEXT NOT NULL, role TEXT NOT NULL,
+  expires_at REAL NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS reviews(
   review_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, source_row_id TEXT NOT NULL,
   original_status TEXT NOT NULL, selected_group_code TEXT, action TEXT NOT NULL,
