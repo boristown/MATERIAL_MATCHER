@@ -93,7 +93,70 @@ def _trace_options(operator: str, options: dict[str, object]) -> dict[str, objec
     }
 
 
+from collections import OrderedDict
+import json as _json
+
+_PIPELINE_MEMO: "OrderedDict[tuple, ProcessedValue]" = OrderedDict()
+_PIPELINE_MEMO_LIMIT = 200_000
+
+
+def _step_key(step: Mapping[str, Any]) -> dict[str, object]:
+    options = dict(step.get("options") or {})
+    if options.get("dictionary_sha256") or options.get("dictionary_id"):
+        # The version digest pins the mapping content; drop the inline payload from the key.
+        options.pop("mapping", None)
+    return {"op": str(step.get("op")), "options": options}
+
+
+def clear_pipeline_memo() -> None:
+    _PIPELINE_MEMO.clear()
+
+
+_STEPS_CANONICAL: "OrderedDict[int, tuple[object, str]]" = OrderedDict()
+
+
+def _steps_canonical(steps: Sequence[Mapping[str, Any]]) -> str:
+    # Pipeline lists are immutable pydantic materializations per task snapshot,
+    # so identity caching is safe; a strong reference keeps id() from being reused.
+    sid = id(steps)
+    hit = _STEPS_CANONICAL.get(sid)
+    if hit is not None and hit[0] is steps:
+        return hit[1]
+    canonical = _json.dumps([_step_key(step) for step in steps], sort_keys=True, ensure_ascii=False, default=str)
+    if len(_STEPS_CANONICAL) > 4096:
+        _STEPS_CANONICAL.popitem(last=False)
+    _STEPS_CANONICAL[sid] = (steps, canonical)
+    return canonical
+
+
 def apply_processing_pipeline(
+    input_value: object,
+    steps: Sequence[Mapping[str, Any]] | None,
+) -> ProcessedValue:
+    """Memoized wrapper: pipelines are pure over (value, steps) because dictionary
+    steps carry their immutable version inside `steps`; the hot matching loop
+    re-processes the same target values for every query."""
+    if not steps:
+        return _apply_pipeline_uncached(input_value, steps)
+    key = (type(input_value).__name__, repr(input_value), _steps_canonical(steps))
+    cached = _PIPELINE_MEMO.get(key)
+    if cached is not None:
+        return ProcessedValue(
+            raw_value=cached.raw_value,
+            value=cached.value,
+            text=cached.text,
+            is_missing=cached.is_missing,
+            structured=dict(cached.structured),
+            trace=list(cached.trace),
+        )
+    result = _apply_pipeline_uncached(input_value, steps)
+    _PIPELINE_MEMO[key] = result
+    if len(_PIPELINE_MEMO) > _PIPELINE_MEMO_LIMIT:
+        _PIPELINE_MEMO.popitem(last=False)
+    return result
+
+
+def _apply_pipeline_uncached(
     input_value: object,
     steps: Sequence[Mapping[str, Any]] | None,
 ) -> ProcessedValue:
