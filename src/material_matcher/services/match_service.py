@@ -348,39 +348,39 @@ class MatchService:
             item=dict(row); item["target_payload"]=json.loads(str(item["target_payload"])); item["field_scores"]=json.loads(str(item["field_scores"])); item["critical_conflict"]=bool(item["critical_conflict"]); result.append(item)
         return result
 
-    def confirm(self, task_id: str, source_row_id: str, target_group_code: str, comment: str="") -> dict[str, object]:
+    def confirm(self, task_id: str, source_row_id: str, target_group_code: str, comment: str="", operator: str="system") -> dict[str, object]:
         candidates=self.candidates(task_id,source_row_id)
         if target_group_code not in {str(item["target_group_code"]) for item in candidates}: raise DomainError("CANDIDATE_NOT_FOUND","所选候选不存在",status_code=404)
-        return self._review_action(task_id,source_row_id,"CONFIRM_CANDIDATE",target_group_code,comment)
+        return self._review_action(task_id,source_row_id,"CONFIRM_CANDIDATE",target_group_code,comment,operator)
 
-    def reject(self, task_id: str, source_row_id: str, comment: str="") -> dict[str, object]:
-        return self._review_action(task_id,source_row_id,"REJECT_ALL",None,comment)
+    def reject(self, task_id: str, source_row_id: str, comment: str="", operator: str="system") -> dict[str, object]:
+        return self._review_action(task_id,source_row_id,"REJECT_ALL",None,comment,operator)
 
-    def _review_action(self,task_id:str,source_row_id:str,action:str,group_code:str|None,comment:str)->dict[str,object]:
+    def _review_action(self,task_id:str,source_row_id:str,action:str,group_code:str|None,comment:str,operator:str="system")->dict[str,object]:
         with self.meta.connect() as connection:
             row=connection.execute("SELECT * FROM match_items WHERE task_id=? AND source_row_id=?",(task_id,source_row_id)).fetchone()
             if row is None: raise DomainError("MATCH_ITEM_NOT_FOUND","待处理记录不存在",status_code=404)
             if row["current_status"] != "REVIEW": raise DomainError("TASK_STATE_CONFLICT","该记录已经处理",status_code=409)
             new_status="CONFIRMED" if action=="CONFIRM_CANDIDATE" else "UNMATCHED"; now=_now()
             connection.execute("UPDATE match_items SET current_status=?, final_group_code=?, updated_at=? WHERE task_id=? AND source_row_id=?",(new_status,group_code,now,task_id,source_row_id))
-            connection.execute("INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,task_id,source_row_id,str(row["original_status"]),group_code,action,"admin",comment,now))
-            connection.execute("INSERT INTO audit_events VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,"match_item",f"{task_id}:{source_row_id}",action,_json({"selected_group_code":group_code,"comment":comment}),now))
+            connection.execute("INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)",(uuid.uuid4().hex,task_id,source_row_id,str(row["original_status"]),group_code,action,operator or "system",comment,now))
+            connection.execute("INSERT INTO audit_events VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,"match_item",f"{task_id}:{source_row_id}",action,_json({"selected_group_code":group_code,"comment":comment,"operator":operator}),now))
         return {"source_row_id":source_row_id,"status":new_status,"final_group_code":group_code}
 
-    def batch_confirm_top1(self,task_id:str,source_row_ids:list[str])->dict[str,object]:
-        return self._batch(task_id,source_row_ids,confirm=True)
-    def batch_reject(self,task_id:str,source_row_ids:list[str])->dict[str,object]:
-        return self._batch(task_id,source_row_ids,confirm=False)
-    def _batch(self,task_id:str,ids:list[str],*,confirm:bool)->dict[str,object]:
+    def batch_confirm_top1(self,task_id:str,source_row_ids:list[str],operator:str="system")->dict[str,object]:
+        return self._batch(task_id,source_row_ids,confirm=True,operator=operator)
+    def batch_reject(self,task_id:str,source_row_ids:list[str],operator:str="system")->dict[str,object]:
+        return self._batch(task_id,source_row_ids,confirm=False,operator=operator)
+    def _batch(self,task_id:str,ids:list[str],*,confirm:bool,operator:str="system")->dict[str,object]:
         success=[]; failed=[]
         for source_row_id in ids:
             try:
                 if confirm:
                     candidates=self.candidates(task_id,source_row_id)
                     if not candidates: raise DomainError("NO_CANDIDATE","没有可确认候选",status_code=409)
-                    self.confirm(task_id,source_row_id,str(candidates[0]["target_group_code"])); success.append(source_row_id)
+                    self.confirm(task_id,source_row_id,str(candidates[0]["target_group_code"]),operator=operator); success.append(source_row_id)
                 else:
-                    self.reject(task_id,source_row_id); success.append(source_row_id)
+                    self.reject(task_id,source_row_id,operator=operator); success.append(source_row_id)
             except DomainError as exc: failed.append({"source_row_id":source_row_id,"code":exc.code,"message":exc.message})
         return {"success":success,"failed":failed}
 
@@ -396,13 +396,19 @@ class MatchService:
                 raise DomainError("TASK_STATE_CONFLICT", "任务尚未完成比对,不能调整阈值", status_code=409)
             if task["result_file_id"]:
                 raise DomainError("TASK_STATE_CONFLICT", "最终结果已生成;调整阈值请先联系管理员重置结果或新建任务", status_code=409)
-            rows = connection.execute("SELECT source_row_id,current_status,top1_score,top1_group_code FROM match_items WHERE task_id=? AND current_status IN ('MATCHED','REVIEW')", (task_id,)).fetchall()
-            before = {"matched": 0, "review": 0}
-            after = {"matched": 0, "review": 0, "unchanged": 0}
+            rows = connection.execute(
+                """SELECT m.source_row_id,m.current_status,m.top1_score,m.top1_group_code FROM match_items m
+                   WHERE m.task_id=? AND m.current_status IN ('MATCHED','REVIEW','UNMATCHED')
+                     AND NOT EXISTS(SELECT 1 FROM reviews r WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id)""",
+                (task_id,),
+            ).fetchall()
+            before = {"matched": 0, "review": 0, "unmatched": 0}
+            after = {"matched": 0, "review": 0, "unmatched": 0}
             now = _now()
             for row in rows:
                 old = str(row["current_status"])
-                before["matched" if old == "MATCHED" else "review"] += 1
+                key = "matched" if old == "MATCHED" else ("review" if old == "REVIEW" else "unmatched")
+                before[key] += 1
                 score = float(row["top1_score"] or 0.0)
                 if score > float(success_threshold):
                     new, final = "MATCHED", row["top1_group_code"]
@@ -410,12 +416,8 @@ class MatchService:
                     new, final = "REVIEW", None
                 else:
                     new, final = "UNMATCHED", None
-                if new in after:
-                    after[new] += 1
-                else:
-                    after["unchanged"] += 1
-                if new != old or final != row["top1_group_code"] and new == "MATCHED":
-                    connection.execute("UPDATE match_items SET current_status=?, final_group_code=?, updated_at=? WHERE task_id=? AND source_row_id=?", (new, final, now, task_id, row["source_row_id"]))
+                after["matched" if new == "MATCHED" else ("review" if new == "REVIEW" else "unmatched")] += 1
+                connection.execute("UPDATE match_items SET current_status=?, final_group_code=?, updated_at=? WHERE task_id=? AND source_row_id=?", (new, final, now, task_id, row["source_row_id"]))
             unresolved = int(connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0])
             connection.execute("UPDATE tasks SET stage=? WHERE task_id=?", ("REVIEW" if unresolved else "RESULT", task_id))
         return {"task_id": task_id, "success_threshold": success_threshold, "review_threshold": review_threshold, "before": before, "after": after, "summary": self.summary(task_id)}
