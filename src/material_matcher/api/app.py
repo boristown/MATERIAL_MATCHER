@@ -25,6 +25,7 @@ from material_matcher.services.benchmark_service import BenchmarkService
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.catalog_service import CatalogService
 from material_matcher.services.dictionary_service import DictionaryService
+from material_matcher.services.manual_review_service import ManualReviewService
 from material_matcher.services.match_service import MatchService
 from material_matcher.services.profile_service import ProfileService
 from material_matcher.services.task_service import TaskService
@@ -190,8 +191,9 @@ def _sha256_file(path: Path) -> str:
 
 def _reviewer_mutation_allowed(path: str) -> bool:
     return bool(
-        re.fullmatch(r"/api/tasks/[^/]+/items/[^/]+/(confirm|reject)", path)
+        re.fullmatch(r"/api/tasks/[^/]+/items/[^/]+/(confirm|reject|match|mark-unmatched|cancel|cancel-match|cancel-unmatched|rematch)", path)
         or re.fullmatch(r"/api/tasks/[^/]+/workbench/(batch-confirm-top1|batch-reject)", path)
+        or re.fullmatch(r"/api/tasks/[^/]+/manual-review/import", path)
         or re.fullmatch(r"/api/tasks/[^/]+/finalize", path)
         or re.fullmatch(r"/api/tasks/[^/]+/re-decide", path)
         or re.fullmatch(r"/api/tasks/[^/]+/evaluations", path)
@@ -210,6 +212,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     tasks = TaskService(metadata)
     profiles = ProfileService(metadata)
     matches = MatchService(metadata, files, cfg)
+    manual_reviews = ManualReviewService(metadata)
     benchmarks = BenchmarkService(metadata, cfg)
     evaluations = BusinessEvaluationService(metadata, files)
     text_profiles = TextProfileService(metadata, files, cfg, matches.indexes)
@@ -462,7 +465,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/task-drafts/{draft_id}/text-profile")
     def text_profile(draft_id: str, payload: TextProfileRequest) -> dict[str, object]: return text_profiles.profile_draft(draft_id, sample_rows=payload.sample_rows, scan_limit=payload.scan_limit)
     @app.post("/api/task-drafts/{draft_id}/start",status_code=202)
-    def start_task(draft_id: str) -> dict[str, object]: task=tasks.start(draft_id); worker.notify(); return task
+    def start_task(draft_id: str, request: Request) -> dict[str, object]: task=tasks.start(draft_id, actor=str(request.state.username)); worker.notify(); return task
 
     @app.get("/api/tasks")
     def list_tasks() -> list[dict[str, object]]: return tasks.list_tasks()
@@ -505,20 +508,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks.get_task(task_id); return matches.workbench_items(task_id,first_score_min=first_score_min,first_score_max=first_score_max,second_score_min=second_score_min,second_score_max=second_score_max,gap_min=gap_min,gap_max=gap_max,critical_conflict=critical_conflict,q=q,page=page,page_size=page_size)
     @app.get("/api/tasks/{task_id}/items/{source_row_id}/candidates")
     def item_candidates(task_id:str,source_row_id:str)->dict[str,object]: return {"candidates":matches.candidates(task_id,source_row_id)}
+
+    # Legacy STEP3 mutation paths stay stable but now use the dedicated audited service.
     @app.post("/api/tasks/{task_id}/items/{source_row_id}/confirm")
-    def confirm_item(task_id:str,source_row_id:str,payload:ConfirmRequest,request:Request)->dict[str,object]: return matches.confirm(task_id,source_row_id,payload.target_id,payload.comment,operator=str(request.state.username))
+    def confirm_item(task_id:str,source_row_id:str,payload:ConfirmRequest,request:Request)->dict[str,object]: return manual_reviews.match(task_id,source_row_id,payload.target_id,operator=str(request.state.username),comment=payload.comment)
     @app.post("/api/tasks/{task_id}/items/{source_row_id}/reject")
-    def reject_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return matches.reject(task_id,source_row_id,payload.comment,operator=str(request.state.username))
+    def reject_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return manual_reviews.mark_unmatched(task_id,source_row_id,operator=str(request.state.username),comment=payload.comment)
     @app.post("/api/tasks/{task_id}/workbench/batch-confirm-top1")
-    def batch_confirm(task_id:str,payload:BatchRequest,request:Request)->dict[str,object]: return matches.batch_confirm_top1(task_id,payload.source_row_ids,operator=str(request.state.username))
+    def batch_confirm(task_id:str,payload:BatchRequest,request:Request)->dict[str,object]: return manual_reviews.batch_confirm_top1(task_id,payload.source_row_ids,operator=str(request.state.username))
     @app.post("/api/tasks/{task_id}/workbench/batch-reject")
-    def batch_reject(task_id:str,payload:BatchRequest,request:Request)->dict[str,object]: return matches.batch_reject(task_id,payload.source_row_ids,operator=str(request.state.username))
+    def batch_reject(task_id:str,payload:BatchRequest,request:Request)->dict[str,object]: return manual_reviews.batch_mark_unmatched(task_id,payload.source_row_ids,operator=str(request.state.username))
+
+    @app.post("/api/tasks/{task_id}/items/{source_row_id}/match")
+    def match_item(task_id:str,source_row_id:str,payload:ConfirmRequest,request:Request)->dict[str,object]: return manual_reviews.match(task_id,source_row_id,payload.target_id,operator=str(request.state.username),comment=payload.comment)
+    @app.post("/api/tasks/{task_id}/items/{source_row_id}/mark-unmatched")
+    def mark_unmatched_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return manual_reviews.mark_unmatched(task_id,source_row_id,operator=str(request.state.username),comment=payload.comment)
+    @app.post("/api/tasks/{task_id}/items/{source_row_id}/cancel")
+    def cancel_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return manual_reviews.undo(task_id,source_row_id,operator=str(request.state.username),comment=payload.comment)
+    @app.post("/api/tasks/{task_id}/items/{source_row_id}/cancel-match")
+    def cancel_match_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return manual_reviews.cancel_match(task_id,source_row_id,operator=str(request.state.username),comment=payload.comment)
+    @app.post("/api/tasks/{task_id}/items/{source_row_id}/cancel-unmatched")
+    def cancel_unmatched_item(task_id:str,source_row_id:str,payload:RejectRequest,request:Request)->dict[str,object]: return manual_reviews.cancel_unmatched(task_id,source_row_id,operator=str(request.state.username),comment=payload.comment)
+    @app.post("/api/tasks/{task_id}/items/{source_row_id}/rematch")
+    def rematch_item(task_id:str,source_row_id:str,payload:ConfirmRequest,request:Request)->dict[str,object]: return manual_reviews.rematch(task_id,source_row_id,payload.target_id,operator=str(request.state.username),comment=payload.comment)
+
+    @app.get("/api/tasks/{task_id}/manual-review.xlsx")
+    def download_manual_review(task_id: str) -> Response:
+        workbook = manual_reviews.export_workbook(task_id)
+        return Response(
+            content=workbook.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="manual_review_{task_id}.xlsx"'},
+        )
+
+    @app.post("/api/tasks/{task_id}/manual-review/import")
+    async def import_manual_review(task_id: str, request: Request, file: UploadFile = File(...)) -> dict[str, object]:
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in {".xlsx", ".xlsm"}:
+            raise DomainError("UNSUPPORTED_FILE", "人工匹配结果仅支持 .xlsx / .xlsm", status_code=400)
+        return manual_reviews.import_workbook(task_id, file.file, operator=str(request.state.username), filename=file.filename or "")
+
+    @app.get("/api/tasks/{task_id}/operations")
+    def task_operations(task_id: str, source_row_id: str | None = None, limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0)) -> dict[str, object]:
+        return manual_reviews.logs(task_id, source_row_id=source_row_id, limit=limit, offset=offset)
+
+    @app.get("/api/tasks/{task_id}/items/{source_row_id}/operations")
+    def item_operations(task_id: str, source_row_id: str, limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0)) -> dict[str, object]:
+        return manual_reviews.logs(task_id, source_row_id=source_row_id, limit=limit, offset=offset)
+
     @app.post("/api/tasks/{task_id}/re-decide")
     def re_decide(task_id: str, payload: ReDecideRequest) -> dict[str, object]: return matches.re_decide(task_id, payload.success_threshold, payload.review_threshold, payload.mode)
     @app.post("/api/tasks/{task_id}/finalize")
     def finalize(task_id:str,payload:FinalizeRequest)->dict[str,object]: return matches.finalize(task_id,payload.allow_unresolved_review)
     @app.get("/api/tasks/{task_id}/exports")
-    def exports(task_id:str)->dict[str,object]: task=tasks.get_task(task_id); file_id=task.get("result_file_id"); return {"final_result":({"file_id":file_id,"download_url":f"/api/tasks/{task_id}/result"} if file_id else None)}
+    def exports(task_id:str)->dict[str,object]: task=tasks.get_task(task_id); file_id=task.get("result_file_id"); return {"final_result":({"file_id":file_id,"download_url":f"/api/tasks/{task_id}/result"} if file_id else None),"manual_review":{"download_url":f"/api/tasks/{task_id}/manual-review.xlsx","import_url":f"/api/tasks/{task_id}/manual-review/import"}}
     @app.get("/api/tasks/{task_id}/result")
     def result_file(task_id:str):
         task=tasks.get_task(task_id); file_id=task.get("result_file_id")
@@ -548,5 +591,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def system_info() -> dict[str, object]:
         return {"version":__version__,"data_dir":str(cfg.data_dir),"database":str(metadata.db_path),"max_upload_bytes":cfg.max_upload_bytes,"max_total_upload_bytes":cfg.max_total_upload_bytes,"chunk_size_bytes":cfg.chunk_size_bytes,"baseline_max_target_rows":cfg.baseline_max_target_rows,"embedding":{"provider":cfg.embedding_provider,"model_id":cfg.embedding_model_id,"dimensions":cfg.embedding_dimensions,"max_length":cfg.embedding_max_length,"precision":cfg.embedding_precision},"authorization":{"roles":list(ROLES)},"index_dir":str(cfg.index_dir),"embedding_cache_dir":str(cfg.embedding_cache_dir)}
 
-    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.dictionaries=dictionaries; app.state.users=users; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
+    app.state.meta=metadata; app.state.files=files; app.state.catalogs=catalogs; app.state.dictionaries=dictionaries; app.state.users=users; app.state.tasks=tasks; app.state.profiles=profiles; app.state.matches=matches; app.state.manual_reviews=manual_reviews; app.state.benchmarks=benchmarks; app.state.evaluations=evaluations; app.state.text_profiles=text_profiles; app.state.worker=worker
     return app
