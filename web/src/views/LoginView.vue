@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { consumeAuthExpiredNotice, consumeAuthReturnTo } from '../auth'
 
 const username = ref('admin')
 const password = ref('')
@@ -12,6 +14,12 @@ const busy = ref(false)
 const passwordChangeRequired = ref(false)
 const router = useRouter()
 
+onMounted(() => {
+  if (consumeAuthExpiredNotice()) {
+    ElMessage.warning('登录已失效，请重新登录')
+  }
+})
+
 async function login(): Promise<void> {
   error.value = ''
   busy.value = true
@@ -21,7 +29,7 @@ async function login(): Promise<void> {
       passwordChangeRequired.value = true
       return
     }
-    await router.push('/tasks')
+    await router.replace(consumeAuthReturnTo('/tasks'))
   } catch (exception) {
     error.value = (exception as Error).message
   } finally {

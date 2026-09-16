@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from './api'
+import { activeWorkspaceStep } from './workspaceStage'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,13 +19,11 @@ const support = [
 ] as const
 const roleLabels: Record<string, string> = { admin: '管理员', operator: '操作员', reviewer: '复核员', viewer: '只读' }
 
-function stepActive(path: string): boolean {
-  if (path === '/profiles') return route.path.startsWith('/profiles') || route.path.startsWith('/tasks/new') || route.path.startsWith('/tasks/workspace')
-  if (path === '/tasks') return route.path === '/tasks' || (route.path.startsWith('/tasks/') && !route.path.endsWith('/evaluation'))
-  if (path === '/review') return route.path.startsWith('/review')
-  if (path === '/results') return route.path.startsWith('/results')
-  return false
-}
+const activeStep = computed<number | null>(() => {
+  if (route.meta.workspace && activeWorkspaceStep.value) return activeWorkspaceStep.value
+  const fromRoute = Number(route.meta.navStep)
+  return Number.isInteger(fromRoute) && fromRoute >= 1 && fromRoute <= 4 ? fromRoute : null
+})
 
 onMounted(async () => {
   if (route.path === '/login') return
@@ -73,7 +72,7 @@ async function logout(): Promise<void> {
         <div class="brand-text"><b>集团码匹配</b></div>
       </div>
       <div class="step-nav">
-        <button v-for="step in steps" :key="step.n" :class="{ active: stepActive(step.path) }" @click="router.push(step.path)">
+        <button v-for="step in steps" :key="step.n" :class="{ active: step.n === activeStep }" @click="router.push(step.path)">
           <span class="step-no" :class="{ done: false }">{{ step.n }}</span>
           <span class="step-body"><span class="step-title">STEP {{ step.n }} · {{ step.title }}</span><span class="nav-desc">{{ step.desc }}</span></span>
         </button>

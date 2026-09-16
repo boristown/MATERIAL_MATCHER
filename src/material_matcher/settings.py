@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 
 
+DEFAULT_SESSION_TTL_SECONDS = 14 * 24 * 60 * 60
+
+
 def _optional_int(name: str) -> int | None:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -25,7 +28,7 @@ class Settings:
     config_dir: Path
     log_dir: Path
     admin_password: str
-    session_ttl_seconds: int = 28_800
+    session_ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS
     max_upload_bytes: int = 120 * 1024 * 1024
     max_total_upload_bytes: int = 2 * 1024 * 1024 * 1024
     chunk_size_bytes: int = 8 * 1024 * 1024
@@ -54,6 +57,10 @@ class Settings:
     acceptance_max_scale_hours: float | None = None
 
     @property
+    def metadata_db_path(self) -> Path:
+        return self.data_dir / "meta" / "material_matcher.db"
+
+    @property
     def index_dir(self) -> Path:
         return self.data_dir / "indexes"
 
@@ -79,7 +86,7 @@ class Settings:
             config_dir=Path(os.getenv("MATERIAL_MATCHER_CONFIG_DIR", "/etc/material_matcher")),
             log_dir=Path(os.getenv("MATERIAL_MATCHER_LOG_DIR", "/var/log/material_matcher")),
             admin_password=os.getenv("MATERIAL_MATCHER_ADMIN_PASSWORD", ""),
-            session_ttl_seconds=int(os.getenv("MATERIAL_MATCHER_SESSION_TTL_SECONDS", "28800")),
+            session_ttl_seconds=int(os.getenv("MATERIAL_MATCHER_SESSION_TTL_SECONDS", str(DEFAULT_SESSION_TTL_SECONDS))),
             baseline_max_target_rows=int(os.getenv("MATERIAL_MATCHER_BASELINE_MAX_TARGET_ROWS", "20000")),
             embedding_provider=os.getenv("MATERIAL_MATCHER_EMBEDDING_PROVIDER", "onnx_local"),
             embedding_model_id=os.getenv("MATERIAL_MATCHER_EMBEDDING_MODEL_ID", "BAAI/bge-base-zh-v1.5"),

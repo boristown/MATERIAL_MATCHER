@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
+import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 
 type FileRecord = { file_id: string; original_name: string }
 type ColumnInfo = { header: string; business_hint?: string | null }
@@ -44,8 +46,14 @@ const groupCodeColumn = ref('')
 const catalogs = ref<any[]>([])
 const catalogVersionId = ref('')
 const draftId = ref('')
+const draftSaveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+const restoringWorkspace = ref(true)
 const busy = ref(false)
 const embeddingReady = ref(false)
+let draftSaveTimer: number | undefined
+let draftSaveInFlight = false
+let draftSaveQueued = false
+let lastDraftSignature = ''
 
 /* ---------- 配置:规则/过滤/阈值 ---------- */
 const rules = ref<Rule[]>([])
@@ -82,12 +90,7 @@ const candidates = ref<Candidate[]>([]), candidateIndex = ref(0)
 const finalized = ref(false)
 
 /* ---------- 连线画布 ---------- */
-const canvasRef = ref<HTMLElement | null>(null)
-const chipRefs: Record<string, HTMLElement | null> = {}
-const linePositions = ref<Array<{ id: string; x1: number; y1: number; x2: number; y2: number }>>([])
 const pendingSource = ref<string | null>(null)
-
-function setChipRef(side: string, header: string, el: any): void { chipRefs[`${side}:${header}`] = (el as HTMLElement) ?? null }
 
 const srcHeaders = computed(() => sourceColumns.value.map(column => column.header))
 const tgtHeaders = computed(() => targetColumns.value.map(column => column.header))
@@ -141,6 +144,7 @@ const profileFilterSummary = computed(() => {
   return `${filterField.value} ${filterMode.value === 'exclude' ? '排除' : '包含'} ${filterValues.value.join('、')}`
 })
 const profileScopeSummary = computed(() => ({ GLOBAL: '全库匹配', STRICT: '同组匹配', MAPPED: '分类映射' }[scopeMode.value] ?? scopeMode.value))
+const draftStateLabel = computed(() => ({ idle: '草稿待保存', saving: '草稿保存中…', saved: '草稿已保存', error: '草稿保存失败' }[draftSaveState.value]))
 
 function cloneDocument<T>(value: T): T {
   return JSON.parse(JSON.stringify(value ?? {})) as T
@@ -194,7 +198,6 @@ function autoMap(): void {
   if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
   rules.value = out
   normalizeWeights()
-  void nextTick(updateLines)
   ElMessage.success(`已根据字段语义自动生成 ${out.length} 条映射,可手动连线调整`)
 }
 
@@ -211,45 +214,20 @@ function onSourceChip(header: string): void {
   pendingSource.value = pendingSource.value === header ? null : header
 }
 function onTargetChip(header: string): void {
-  if (!pendingSource.value) { ElMessage.info('请先点击左侧源字段,再点击右侧目标字段完成连线'); return }
-  const existing = rules.value.find(rule => rule.source.fields[0] === pendingSource.value && rule.target.fields[0] === header)
+  const sourceField = pendingSource.value
+  if (!sourceField) { ElMessage.info('请先点击左侧源字段,再点击右侧目标字段完成连线'); return }
+  const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(header))
   if (existing) { ElMessage.warning('该连线已存在'); pendingSource.value = null; return }
-  rules.value = rules.value.filter(rule => rule.source.fields[0] !== pendingSource.value)
-  rules.value.push(makeRule([pendingSource.value], [header], 'hybrid', rules.value.length ? 20 : 100))
+  rules.value.push(makeRule([sourceField], [header], 'hybrid', rules.value.length ? 20 : 100))
   normalizeWeights()
   pendingSource.value = null
-  void nextTick(updateLines)
 }
 function removeRule(ruleId: string): void {
-  rules.value = rules.value.filter(rule => rule.id !== ruleId)
-  void nextTick(updateLines)
+  const index = rules.value.findIndex(rule => rule.id === ruleId)
+  if (index >= 0) rules.value.splice(index, 1)
 }
 function ruleSideLabel(side: FieldSide): string {
   return side.fields.join(side.combine === 'coalesce' ? ' / ' : ' + ')
-}
-
-function updateLines(): void {
-  const canvas = canvasRef.value
-  if (!canvas) { linePositions.value = []; return }
-  const box = canvas.getBoundingClientRect()
-  const positions: Array<{ id: string; x1: number; y1: number; x2: number; y2: number }> = []
-  for (const rule of rules.value) {
-    const sKey = `s:${rule.source.fields[0] ?? ''}`
-    const tKey = `t:${rule.target.fields[0] ?? ''}`
-    const sEl = chipRefs[sKey], tEl = chipRefs[tKey]
-    if (!sEl || !tEl) continue
-    const sBox = sEl.getBoundingClientRect(), tBox = tEl.getBoundingClientRect()
-    positions.push({
-      id: rule.id,
-      x1: sBox.right - box.left, y1: sBox.top + sBox.height / 2 - box.top,
-      x2: tBox.left - box.left, y2: tBox.top + tBox.height / 2 - box.top,
-    })
-  }
-  linePositions.value = positions
-}
-function linePath(line: { x1: number; y1: number; x2: number; y2: number }): string {
-  const dx = Math.max(36, Math.abs(line.x2 - line.x1) / 2)
-  return `M ${line.x1} ${line.y1} C ${line.x1 + dx} ${line.y1}, ${line.x2 - dx} ${line.y2}, ${line.x2} ${line.y2}`
 }
 
 /* ---------- 数据加载 ---------- */
@@ -277,7 +255,6 @@ async function loadFileColumns(fileId: string, kind: 'source' | 'target'): Promi
       groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
     }
   }
-  void nextTick(updateLines)
 }
 async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
   busy.value = true
@@ -303,7 +280,6 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
     }
     ElMessage.success(`已解析 ${columns.length} 个字段`)
     if (!isProfileTaskCreateMode.value && source.value && target.value && !rules.value.length) autoMap()
-    void nextTick(updateLines)
   } catch (error) { ElMessage.error((error as Error).message) } finally { busy.value = false }
 }
 async function loadCatalogs(): Promise<void> {
@@ -332,7 +308,6 @@ async function applyProfile(profileId: string): Promise<void> {
   loadDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   ElMessage.success(`已应用方案「${detail.name}」v${published.version_no},字段映射与阈值已载入`)
-  void nextTick(updateLines)
 }
 async function loadProfileForEdit(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
@@ -343,7 +318,6 @@ async function loadProfileForEdit(profileId: string): Promise<void> {
   name.value = detail.name
   const editable = detail.draft ?? detail.latest_published
   loadDocument(editable?.document ?? {})
-  void nextTick(updateLines)
 }
 async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
@@ -354,7 +328,6 @@ async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   profileTaskMeta.value = { name: detail.name, version: Number(published.version_no), sha256: String(published.sha256 ?? '') }
   name.value = `${detail.name} - 匹配任务`
-  void nextTick(updateLines)
 }
 function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
@@ -450,31 +423,94 @@ async function publishProfileChanges(): Promise<void> {
   } catch (error) { ElMessage.error((error as Error).message ?? '发布失败') } finally { busy.value = false }
 }
 
+function buildDraftPayload(catalogVersion: string | null = catalogVersionId.value || null): Record<string, unknown> {
+  return {
+    name: name.value.trim() || '未命名匹配任务',
+    source_file_id: source.value?.file_id ?? null,
+    catalog_version_id: catalogVersion,
+    template_profile_id: appliedProfile.value?.id ?? null,
+    template_profile_version: appliedProfile.value?.version ?? null,
+    config_document: documentBody(),
+  }
+}
+
 async function ensureDraft(): Promise<void> {
   if (draftId.value) return
-  const draft = (await api.post('/task-drafts', { name: name.value || '未命名匹配任务' })).data
-  draftId.value = draft.draft_id
+  const draft = (await api.post('/task-drafts', { name: name.value.trim() || '未命名匹配任务' })).data
+  draftId.value = String(draft.draft_id)
+  if (!route.params.taskId && route.query.draft !== draftId.value) {
+    await router.replace({ path: route.path, query: { ...route.query, draft: draftId.value } })
+  }
 }
-async function saveConfig(): Promise<void> {
-  await ensureDraft()
-  let versionId = catalogVersionId.value
-  if (targetMode.value === 'upload') {
-    if (!target.value || !groupCodeColumn.value) throw new Error('请先上传集团码文件并选择集团码列')
-    const existing = catalogs.value.find((item: any) => item.source_file_id === target.value!.file_id)
-    if (existing) versionId = existing.version_id
-    else {
-      const catalog = (await api.post('/catalogs', { name: `${name.value || '任务'}-集团码目录`, source_file_id: target.value.file_id, group_code_column: groupCodeColumn.value })).data
-      versionId = catalog.version_id
-      await loadCatalogs()
+
+async function resolveCatalogVersionForDraft(): Promise<string | null> {
+  if (targetMode.value === 'existing') return catalogVersionId.value || null
+  if (!target.value || !groupCodeColumn.value) return null
+  const existing = catalogs.value.find((item: any) => item.source_file_id === target.value!.file_id && item.group_code_column === groupCodeColumn.value)
+  if (existing) {
+    catalogVersionId.value = String(existing.version_id)
+    return catalogVersionId.value
+  }
+  const catalog = (await api.post('/catalogs', {
+    name: `${name.value.trim() || '任务'}-集团码目录`,
+    source_file_id: target.value.file_id,
+    group_code_column: groupCodeColumn.value,
+  })).data
+  catalogVersionId.value = String(catalog.version_id)
+  await loadCatalogs()
+  return catalogVersionId.value
+}
+
+async function persistWorkspaceDraft(): Promise<void> {
+  if (restoringWorkspace.value || isProfileEditorMode.value || route.params.taskId || stage.value !== 0) return
+  if (draftSaveInFlight) { draftSaveQueued = true; return }
+  draftSaveInFlight = true
+  try {
+    await ensureDraft()
+    const versionId = await resolveCatalogVersionForDraft()
+    const payload = buildDraftPayload(versionId)
+    const signature = JSON.stringify(payload)
+    if (signature === lastDraftSignature) {
+      draftSaveState.value = 'saved'
+      return
+    }
+    draftSaveState.value = 'saving'
+    await api.patch(`/task-drafts/${draftId.value}`, payload)
+    lastDraftSignature = signature
+    draftSaveState.value = 'saved'
+  } catch {
+    draftSaveState.value = 'error'
+  } finally {
+    draftSaveInFlight = false
+    if (draftSaveQueued) {
+      draftSaveQueued = false
+      window.setTimeout(() => void persistWorkspaceDraft(), 0)
     }
   }
+}
+
+function scheduleDraftPersist(): void {
+  if (restoringWorkspace.value || isProfileEditorMode.value || route.params.taskId || stage.value !== 0) return
+  if (draftSaveTimer) window.clearTimeout(draftSaveTimer)
+  draftSaveState.value = draftId.value ? 'idle' : draftSaveState.value
+  draftSaveTimer = window.setTimeout(() => void persistWorkspaceDraft(), 300)
+}
+
+async function saveConfig(): Promise<void> {
+  await ensureDraft()
+  const versionId = await resolveCatalogVersionForDraft()
+  if (!source.value || !versionId) throw new Error('请先选择客户物料数据和集团码目录')
+  const payload = buildDraftPayload(versionId)
+  await api.patch(`/task-drafts/${draftId.value}`, payload)
   await api.put(`/task-drafts/${draftId.value}/data`, {
-    source_file_id: source.value!.file_id,
+    source_file_id: source.value.file_id,
     catalog_version_id: versionId,
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
   })
   await api.put(`/task-drafts/${draftId.value}/rules`, documentBody())
+  lastDraftSignature = JSON.stringify(payload)
+  draftSaveState.value = 'saved'
 }
 async function saveAsProfile(): Promise<void> {
   if (!rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
@@ -635,11 +671,11 @@ async function reDecide(): Promise<void> {
 
 /* ---------- 输出结果 ---------- */
 const finalTotal = computed(() => Number(reviewSummary.value.pending_review ?? 0) + Number(reviewSummary.value.confirmed ?? 0) + Number(reviewSummary.value.unmatched ?? 0) + Number(reviewSummary.value.automatic_matched ?? 0))
-async function finalize(): Promise<void> {
+async function finalize(): Promise<boolean> {
   await loadReviewSummary()
   let allow = false
   if (Number(reviewSummary.value.pending_review ?? 0) > 0) {
-    try { await ElMessageBox.confirm(`仍有 ${reviewSummary.value.pending_review} 条待确认。继续生成后这些行集团码为空。`, '生成最终结果', { confirmButtonText: '继续生成', cancelButtonText: '返回处理', type: 'warning' }); allow = true } catch { return }
+    try { await ElMessageBox.confirm(`仍有 ${reviewSummary.value.pending_review} 条待确认。继续生成后这些行集团码为空。`, '生成最终结果', { confirmButtonText: '继续生成', cancelButtonText: '返回处理', type: 'warning' }); allow = true } catch { return false }
   }
   try {
     await api.post(`/tasks/${task.value.task_id}/finalize`, { allow_unresolved_review: allow })
@@ -647,15 +683,22 @@ async function finalize(): Promise<void> {
     finalized.value = true
     await loadReviewSummary()
     ElMessage.success('最终结果已生成(含匹配摘要与样式)')
-  } catch (error) { ElMessage.error((error as Error).message) }
+    return true
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+    return false
+  }
+}
+async function finalizeAndOpenResults(): Promise<void> {
+  if (await finalize()) stage.value = 3
 }
 function downloadResult(): void { window.location.href = `/api/tasks/${task.value.task_id}/result` }
 
 /* ---------- 恢复 ---------- */
 async function restoreDraft(id: string): Promise<void> {
   const draft = (await api.get(`/task-drafts/${id}`)).data
-  draftId.value = draft.draft_id
-  name.value = draft.name
+  draftId.value = String(draft.draft_id)
+  name.value = String(draft.name ?? '')
   if (draft.source_file_id) await loadFileColumns(String(draft.source_file_id), 'source')
   if (draft.catalog_version_id) {
     catalogVersionId.value = String(draft.catalog_version_id)
@@ -663,7 +706,18 @@ async function restoreDraft(id: string): Promise<void> {
     await selectCatalog(catalogVersionId.value)
   }
   loadDocument(draft.config_document ?? {})
-  if (draft.template_profile_id) appliedProfile.value = { id: String(draft.template_profile_id), version: Number(draft.template_profile_version ?? 1) }
+  if (draft.template_profile_id) {
+    const profileId = String(draft.template_profile_id)
+    const version = Number(draft.template_profile_version ?? 1)
+    appliedProfile.value = { id: profileId, version }
+    profilePicker.value = profileId
+    try {
+      const detail = await getProfileDetail(profileId)
+      profileTaskMeta.value = { name: detail.name, version, sha256: '' }
+    } catch { /* 草稿本身仍可恢复 */ }
+  }
+  lastDraftSignature = JSON.stringify(buildDraftPayload())
+  draftSaveState.value = 'saved'
   stage.value = 0
 }
 async function restoreTask(taskId: string): Promise<void> {
@@ -677,39 +731,78 @@ async function restoreTask(taskId: string): Promise<void> {
   else { stage.value = 1; startPolling() }
 }
 
-watch([rules, scopeMode, successThreshold, reviewThreshold, topN], () => void nextTick(updateLines), { deep: true })
+function syncWorkspaceStep(value = stage.value): void {
+  setActiveWorkspaceStep((value + 1) as WorkspaceStep)
+}
+
+watch(stage, value => syncWorkspaceStep(value))
+watch([
+  name,
+  source,
+  catalogVersionId,
+  targetMode,
+  target,
+  groupCodeColumn,
+  appliedProfile,
+  sourceIdColumn,
+  rules,
+  scopeMode,
+  scopeSourceField,
+  scopeTargetField,
+  filterEnabled,
+  filterField,
+  filterValues,
+  filterMode,
+  successThreshold,
+  reviewThreshold,
+  topN,
+  retrievalMaxLength,
+  retrievalDocument,
+  documentBase,
+], scheduleDraftPersist, { deep: true })
+
 onMounted(async () => {
-  window.addEventListener('resize', updateLines)
   try {
-    const status = (await api.get('/system/vector-status')).data
-    embeddingReady.value = Boolean(status.embedding?.ready)
-  } catch { embeddingReady.value = false }
-  await loadProfiles()
-  if (!isProfileEditorMode.value) await loadCatalogs()
-  if (route.params.taskId) { await restoreTask(String(route.params.taskId)).catch(() => router.push('/tasks')); return }
-  const draft = typeof route.query.draft === 'string' ? route.query.draft : ''
-  if (draft) { await restoreDraft(draft).catch(() => undefined); return }
-  const profileParam = profileQueryId.value
-  if (isProfileEditorMode.value) {
-    if (profileParam) {
-      try { await loadProfileForEdit(profileParam) }
-      catch (error) { ElMessage.error((error as Error).message ?? '方案加载失败'); await router.push('/profiles') }
-    } else {
-      editingProfileId.value = ''
-      editingProfileHasDraft.value = false
-      editingProfilePublishedVersion.value = null
-      editingProfileOriginalName.value = ''
-      name.value = ''
-      loadDocument({})
+    try {
+      const status = (await api.get('/system/vector-status')).data
+      embeddingReady.value = Boolean(status.embedding?.ready)
+    } catch { embeddingReady.value = false }
+    await loadProfiles()
+    if (!isProfileEditorMode.value) await loadCatalogs()
+    if (route.params.taskId) { await restoreTask(String(route.params.taskId)).catch(() => router.push('/tasks')); return }
+    const draft = typeof route.query.draft === 'string' ? route.query.draft : ''
+    if (draft) { await restoreDraft(draft).catch(() => undefined); return }
+    const profileParam = profileQueryId.value
+    if (isProfileEditorMode.value) {
+      if (profileParam) {
+        try { await loadProfileForEdit(profileParam) }
+        catch (error) { ElMessage.error((error as Error).message ?? '方案加载失败'); await router.push('/profiles') }
+      } else {
+        editingProfileId.value = ''
+        editingProfileHasDraft.value = false
+        editingProfilePublishedVersion.value = null
+        editingProfileOriginalName.value = ''
+        name.value = ''
+        loadDocument({})
+      }
+      return
     }
-    return
-  }
-  if (profileParam) {
-    try { await loadPublishedProfileForTask(profileParam) }
-    catch (error) { ElMessage.error((error as Error).message ?? '已发布方案加载失败'); await router.push('/profiles') }
+    if (profileParam) {
+      try { await loadPublishedProfileForTask(profileParam) }
+      catch (error) { ElMessage.error((error as Error).message ?? '已发布方案加载失败'); await router.push('/profiles') }
+    }
+  } finally {
+    restoringWorkspace.value = false
+    syncWorkspaceStep()
   }
 })
-onBeforeUnmount(() => { stopPolling(); window.removeEventListener('resize', updateLines) })
+onBeforeUnmount(() => {
+  stopPolling()
+  if (searchTimer) window.clearTimeout(searchTimer)
+  if (draftSaveTimer) window.clearTimeout(draftSaveTimer)
+  if (!restoringWorkspace.value && stage.value === 0 && !isProfileEditorMode.value && !route.params.taskId) void persistWorkspaceDraft()
+  setActiveWorkspaceStep(null)
+})
 </script>
 
 <template>
@@ -724,6 +817,7 @@ onBeforeUnmount(() => { stopPolling(); window.removeEventListener('resize', upda
         <p v-else>配置(数据+字段映射) → 计算(实时进度) → 人工调整 → 输出结果</p>
       </div>
       <div class="toolbar-actions">
+        <el-tag v-if="!isProfileEditorMode && draftId" size="small" :type="draftSaveState === 'error' ? 'danger' : draftSaveState === 'saved' ? 'success' : 'info'">{{ draftStateLabel }}</el-tag>
         <template v-if="isProfileEditorMode">
           <el-tag v-if="editingProfileHasDraft" type="warning">后端草稿</el-tag>
           <el-tag v-else-if="editingProfilePublishedVersion" type="success">基于已发布 v{{ editingProfilePublishedVersion }}</el-tag>
@@ -841,26 +935,20 @@ onBeforeUnmount(() => { stopPolling(); window.removeEventListener('resize', upda
           <div v-if="!sourceColumns.length || !targetColumns.length" class="canvas-empty">
             <el-empty description="先在上方拖入源数据与目标数据,字段清单会自动解析到这里" :image-size="70"/>
           </div>
-          <div v-else ref="canvasRef" class="mapping-canvas">
-            <svg class="lines" :style="{width:'100%',height:'100%'}">
-              <path v-for="line in linePositions" :key="line.id" :d="linePath(line)" class="map-line" :class="{critical: rules.find(r=>r.id===line.id)?.critical}"/>
-            </svg>
-            <div class="field-col">
-              <div class="field-col-title">源字段(SAP)</div>
-              <div v-for="column in sourceColumns" :key="'s'+column.header" :ref="el=>setChipRef('s', column.header, el)" class="field-chip" :class="{selected: pendingSource===column.header, used: rules.some(r=>r.source.fields.includes(column.header)), idcol: column.header===sourceIdColumn}" @click="column.header!==sourceIdColumn && onSourceChip(column.header)">
-                {{ column.header }}<em v-if="column.business_hint" class="hint">{{ {source_id:'编码',material_name:'名称',model:'型号',specification:'规格',manufacturer:'厂商',material_group:'物料组',group_code:'集团码'}[column.business_hint] ?? '' }}</em>
-              </div>
-            </div>
-            <div class="field-col">
-              <div class="field-col-title">目标字段(集团码)</div>
-              <div v-for="column in targetColumns" :key="'t'+column.header" :ref="el=>setChipRef('t', column.header, el)" class="field-chip right" :class="{used: rules.some(r=>r.target.fields.includes(column.header)), idcol: column.header===groupCodeColumn}" @click="column.header!==groupCodeColumn && onTargetChip(column.header)">
-                {{ column.header }}<em v-if="column.business_hint" class="hint">{{ {source_id:'编码',material_name:'名称',model:'型号',specification:'规格',manufacturer:'厂商',material_group:'物料组',group_code:'集团码'}[column.business_hint] ?? '' }}</em>
-              </div>
-            </div>
-          </div>
+          <FieldMappingCanvas
+            v-else
+            :source-columns="sourceColumns"
+            :target-columns="targetColumns"
+            :rules="rules"
+            :source-id-column="sourceIdColumn"
+            :group-code-column="groupCodeColumn"
+            :pending-source="pendingSource"
+            @source-click="onSourceChip"
+            @target-click="onTargetChip"
+          />
         </template>
         <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
-        <el-table v-if="rules.length" :data="rules" size="small" class="rules-table">
+        <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
           <el-table-column label="源字段" min-width="180"><template #default="scope">
             <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
             <span v-else class="chip-text">{{ ruleSideLabel(scope.row.source) }}</span>
@@ -1001,7 +1089,7 @@ onBeforeUnmount(() => { stopPolling(); window.removeEventListener('resize', upda
           <el-button link type="danger" size="small" @click="rejectItem(scope.row)">未匹配</el-button>
         </template></el-table-column>
       </el-table>
-      <div class="actions"><el-button @click="stage=1">← 查看进度</el-button><el-button type="primary" @click="finalize(); stage=3">下一步:输出结果 →</el-button></div>
+      <div class="actions"><el-button @click="stage=1">← 查看进度</el-button><el-button type="primary" @click="finalizeAndOpenResults">下一步:输出结果 →</el-button></div>
     </div>
 
     <!-- 第四步:输出结果 -->
