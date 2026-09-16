@@ -15,7 +15,11 @@ from material_matcher.embedding.base import EmbeddingProvider
 from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.embedding.providers import create_embedding_provider
 from material_matcher.embedding.text import retrieval_text_signature
-from material_matcher.ingestion.reader import detect_layout, iter_tabular_rows
+from material_matcher.ingestion.reader import (
+    ORIGINAL_ROW_NUMBER_KEY,
+    detect_layout,
+    iter_tabular_rows_with_position,
+)
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
@@ -70,7 +74,9 @@ class VectorIndexService:
             "provider": asdict(provider.spec),
             "target_text_signature": retrieval_text_signature(config, "target"),
             "scope_target_field": config.scope.target_field if config.scope_mode != "GLOBAL" else None,
-            "algorithm": "embedded_bbq_flat_v2",
+            # v3 deliberately invalidates old READY indexes because index records
+            # now persist the original target spreadsheet row number.
+            "algorithm": "embedded_bbq_flat_v3_rowtrace",
             "coarse_kernel": EmbeddedBBQFlatIndex.COARSE_KERNEL,
         }
         return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
@@ -139,7 +145,7 @@ class VectorIndexService:
             "catalog_version_id": catalog_version_id,
             "target_file_sha256": target_file["sha256"],
             "group_code_column": group_code_column,
-            "algorithm_version": "embedded_bbq_flat_v2",
+            "algorithm_version": "embedded_bbq_flat_v3_rowtrace",
             "coarse_kernel": EmbeddedBBQFlatIndex.COARSE_KERNEL,
         }
         with self.meta.connect() as connection:
@@ -155,11 +161,15 @@ class VectorIndexService:
                 if on_progress:
                     on_progress(done, total_estimate)
 
+            def positioned_target_rows():
+                for original_row_number, row in iter_tabular_rows_with_position(target_path):
+                    yield {**row, ORIGINAL_ROW_NUMBER_KEY: original_row_number}
+
             index, stats = EmbeddedBBQFlatIndex.build(
                 final_root,
                 provider=provider,
                 cache=cache,
-                target_rows=iter_tabular_rows(target_path),
+                target_rows=positioned_target_rows(),
                 config=config,
                 group_code_column=group_code_column,
                 metadata=base_metadata,
