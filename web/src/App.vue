@@ -7,8 +7,8 @@ const route = useRoute()
 const router = useRouter()
 const user = ref<{ username: string; role: string } | null>(null)
 const nav = [
-  ['匹配任务', '/tasks', '任务创建、比对执行与人工复核'],
-  ['匹配方案', '/profiles', '版本化可复用匹配规则模板'],
+  ['匹配方案', '/profiles', '字段映射模板:可复用、版本化'],
+  ['匹配任务', '/tasks', '配置 → 计算 → 人工调整 → 输出'],
   ['基础数据', '/data', '集团码目录、文件与业务字典'],
   ['系统设置', '/system', '账号、模型与运行诊断'],
 ] as const

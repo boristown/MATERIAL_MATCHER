@@ -134,6 +134,11 @@ class BatchRequest(BaseModel):
     source_row_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
+class ReDecideRequest(BaseModel):
+    success_threshold: int = Field(ge=1, le=100)
+    review_threshold: int = Field(ge=0, le=99)
+
+
 class FinalizeRequest(BaseModel):
     allow_unresolved_review: bool = False
 
@@ -174,6 +179,7 @@ def _reviewer_mutation_allowed(path: str) -> bool:
         re.fullmatch(r"/api/tasks/[^/]+/items/[^/]+/(confirm|reject)", path)
         or re.fullmatch(r"/api/tasks/[^/]+/workbench/(batch-confirm-top1|batch-reject)", path)
         or re.fullmatch(r"/api/tasks/[^/]+/finalize", path)
+        or re.fullmatch(r"/api/tasks/[^/]+/re-decide", path)
         or re.fullmatch(r"/api/tasks/[^/]+/evaluations", path)
     )
 
@@ -528,8 +534,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"interim": str(task["status"]) not in {"COMPLETED"}, "task_status": str(task["status"]), "counts": matches.live_counts(task_id), "rows": [dict(row) for row in rows]}
 
     @app.get("/api/tasks/{task_id}/workbench/items")
-    def workbench_items(task_id:str, first_score_min:float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, page:int=Query(1,ge=1), page_size:int=Query(50,ge=1,le=200))->dict[str,object]:
-        tasks.get_task(task_id); return matches.workbench_items(task_id,first_score_min=first_score_min,first_score_max=first_score_max,second_score_min=second_score_min,second_score_max=second_score_max,gap_min=gap_min,gap_max=gap_max,critical_conflict=critical_conflict,page=page,page_size=page_size)
+    def workbench_items(task_id:str, first_score_min:float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, q:str|None=None, page:int=Query(1,ge=1), page_size:int=Query(50,ge=1,le=200))->dict[str,object]:
+        tasks.get_task(task_id); return matches.workbench_items(task_id,first_score_min=first_score_min,first_score_max=first_score_max,second_score_min=second_score_min,second_score_max=second_score_max,gap_min=gap_min,gap_max=gap_max,critical_conflict=critical_conflict,q=q,page=page,page_size=page_size)
 
     @app.get("/api/tasks/{task_id}/items/{source_row_id}/candidates")
     def item_candidates(task_id:str,source_row_id:str)->dict[str,object]: return {"candidates":matches.candidates(task_id,source_row_id)}
@@ -545,6 +551,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/tasks/{task_id}/workbench/batch-reject")
     def batch_reject(task_id:str,payload:BatchRequest)->dict[str,object]: return matches.batch_reject(task_id,payload.source_row_ids)
+
+    @app.post("/api/tasks/{task_id}/re-decide")
+    def re_decide(task_id: str, payload: ReDecideRequest) -> dict[str, object]:
+        return matches.re_decide(task_id, payload.success_threshold, payload.review_threshold)
 
     @app.post("/api/tasks/{task_id}/finalize")
     def finalize(task_id:str,payload:FinalizeRequest)->dict[str,object]: return matches.finalize(task_id,payload.allow_unresolved_review)
