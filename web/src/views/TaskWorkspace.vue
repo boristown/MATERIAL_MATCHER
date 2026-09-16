@@ -23,6 +23,7 @@ const stageTitles = ['配置', '计算', '人工调整', '输出结果']
 const name = ref('')
 const profiles = ref<ProfileRow[]>([])
 const appliedProfile = ref<{ id: string; version: number } | null>(null)
+const editingProfileId = ref('')
 const profilePicker = ref('')
 const source = ref<FileRecord | null>(null)
 const sourceColumns = ref<ColumnInfo[]>([])
@@ -320,6 +321,16 @@ async function saveConfig(): Promise<void> {
   })
   await api.put(`/task-drafts/${draftId.value}/rules`, documentBody())
 }
+async function saveProfileChanges(): Promise<void> {
+  if (!editingProfileId.value || !rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
+  try {
+    await api.put(`/profiles/${editingProfileId.value}/draft`, documentBody())
+    await api.post(`/profiles/${editingProfileId.value}/validate`)
+    const published = (await api.post(`/profiles/${editingProfileId.value}/publish`)).data
+    await loadProfiles()
+    ElMessage.success(`已保存并发布新版本 v${published.version_no}(历史版本不变,引用旧版的任务不受影响)`)
+  } catch (error) { ElMessage.error((error as Error).message ?? '保存失败') }
+}
 async function saveAsProfile(): Promise<void> {
   if (!rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
   try {
@@ -529,7 +540,14 @@ onMounted(async () => {
   } catch { embeddingReady.value = false }
   await Promise.all([loadCatalogs(), loadProfiles()])
   const profileParam = typeof route.query.profile === 'string' ? route.query.profile : ''
-  if (profileParam) { profilePicker.value = profileParam; await applyProfile(profileParam).catch(() => undefined) }
+  if (profileParam) {
+    profilePicker.value = profileParam
+    await applyProfile(profileParam).catch(() => undefined)
+    if (route.query.edit === '1') {
+      editingProfileId.value = profileParam
+      name.value = profiles.value.find(item => item.profile_id === profileParam)?.name ?? name.value
+    }
+  }
   if (route.params.taskId) { await restoreTask(String(route.params.taskId)).catch(() => router.push('/tasks')); return }
   const draft = typeof route.query.draft === 'string' ? route.query.draft : ''
   if (draft) { await restoreDraft(draft).catch(() => undefined) }
@@ -548,7 +566,8 @@ onBeforeUnmount(() => { stopPolling(); window.removeEventListener('resize', upda
         <el-select v-model="profilePicker" placeholder="选用已发布方案…" clearable filterable style="width:280px" @change="applyProfile">
           <el-option v-for="item in profiles" :key="item.profile_id" :value="item.profile_id" :label="`${item.name}${item.latest_published_version ? ' · v' + item.latest_published_version : ''}`"/>
         </el-select>
-        <el-button @click="saveAsProfile">存为方案</el-button>
+        <el-button v-if="editingProfileId" type="primary" plain @click="saveProfileChanges">保存修改并发布新版本</el-button>
+        <el-button @click="saveAsProfile">存为新方案</el-button>
       </div>
     </div>
     <el-steps :active="stage" align-center finish-status="success" class="stage-steps">

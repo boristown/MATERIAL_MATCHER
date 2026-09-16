@@ -9,6 +9,7 @@ type VersionRow = { version_no: number; status: string; sha256: string; created_
 
 const router = useRouter()
 const profiles = ref<ProfileRow[]>([])
+const canDelete = ref(false)
 const loading = ref(false)
 const versionsVisible = ref(false)
 const versionsOf = ref<ProfileRow | null>(null)
@@ -20,6 +21,23 @@ async function load(): Promise<void> {
 }
 function createProfile(): void { router.push('/tasks/new') }
 function useProfile(row: ProfileRow): void { router.push({ path: '/tasks/new', query: { profile: row.profile_id } }) }
+function editProfile(row: ProfileRow): void { router.push({ path: '/tasks/new', query: { profile: row.profile_id, edit: '1' } }) }
+async function renameProfile(row: ProfileRow): Promise<void> {
+  try {
+    const { value } = await ElMessageBox.prompt('方案名称(建议代码在前,如 A001 元器件)', '重命名方案', { inputValue: row.name, confirmButtonText: '保存', cancelButtonText: '取消' })
+    await api.patch(`/profiles/${row.profile_id}`, { name: value.trim() })
+    ElMessage.success('已重命名')
+    await load()
+  } catch (error) { if (error !== 'cancel') ElMessage.error((error as Error).message ?? '重命名失败') }
+}
+async function deleteProfile(row: ProfileRow): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除方案「${row.name}」及其全部版本?被任务或草稿引用的方案无法删除。`, '删除方案', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+    await api.delete(`/profiles/${row.profile_id}`)
+    ElMessage.success('已删除')
+    await load()
+  } catch (error) { if (error !== 'cancel') ElMessage.error((error as Error).message ?? '删除失败') }
+}
 async function openVersions(row: ProfileRow): Promise<void> {
   versionsOf.value = row
   versions.value = (await api.get(`/profiles/${row.profile_id}/versions`)).data ?? []
@@ -37,7 +55,10 @@ function originOf(row: ProfileRow): string {
   const version = versions.value.find(item => item.status === 'PUBLISHED')
   return String(version?.document?.advanced?.origin ?? '')
 }
-onMounted(load)
+onMounted(async () => {
+  await load()
+  try { canDelete.value = ((await api.get('/auth/me')).data?.role ?? '') === 'admin' } catch { canDelete.value = false }
+})
 </script>
 
 <template>
@@ -53,7 +74,10 @@ onMounted(load)
         <p class="muted">更新:{{ String(row.updated_at ?? row.created_at ?? '').slice(0, 19).replace('T', ' ') }}</p>
         <div class="profile-actions">
           <el-button type="primary" size="small" :disabled="!row.latest_published_version" @click="useProfile(row)">用此方案建任务</el-button>
+          <el-button size="small" @click="editProfile(row)">编辑</el-button>
           <el-button size="small" @click="openVersions(row)">版本</el-button>
+          <el-button size="small" @click="renameProfile(row)">重命名</el-button>
+          <el-button v-if="canDelete" size="small" type="danger" plain @click="deleteProfile(row)">删除</el-button>
         </div>
       </div>
     </div>

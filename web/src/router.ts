@@ -14,6 +14,8 @@ export const router = createRouter({
     { path: '/login', component: LoginView },
     { path: '/profiles', component: ProfilesView },
     { path: '/tasks', component: TasksView },
+    { path: '/review', component: TasksView, props: { mode: 'review' } },
+    { path: '/results', component: TasksView, props: { mode: 'result' } },
     { path: '/tasks/new', component: TaskWorkspace },
     { path: '/tasks/workspace', component: TaskWorkspace },
     { path: '/tasks/:taskId/evaluation', component: TaskEvaluationView },

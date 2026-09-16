@@ -82,7 +82,7 @@ class ProfileService:
                        (SELECT MAX(version_no) FROM profile_versions v WHERE v.profile_id=p.profile_id AND v.status='PUBLISHED') AS latest_published_version,
                        EXISTS(SELECT 1 FROM profile_versions d WHERE d.profile_id=p.profile_id AND d.status='DRAFT') AS has_draft,
                        (SELECT created_at FROM profile_versions v2 WHERE v2.profile_id=p.profile_id ORDER BY CASE WHEN status='DRAFT' THEN 1 ELSE 0 END DESC, version_no DESC LIMIT 1) AS updated_at
-                FROM profiles p ORDER BY COALESCE(updated_at,p.created_at) DESC
+                FROM profiles p ORDER BY p.name ASC, COALESCE(updated_at,p.created_at) DESC
                 """
             ).fetchall()
         return [dict(row) for row in rows]
@@ -120,6 +120,31 @@ class ProfileService:
                     (profile_id, 0, _canonical(document), _sha(document), "DRAFT", now),
                 )
         return self.get(profile_id)
+
+    def rename(self, profile_id: str, name: str) -> dict[str, object]:
+        name = str(name or "").strip()
+        if not name or len(name) > 120:
+            raise DomainError("INVALID_PROFILE_NAME", "方案名称不能为空且不能超过120个字符", status_code=422)
+        self._profile(profile_id)
+        with self.meta.connect() as connection:
+            connection.execute("UPDATE profiles SET name=? WHERE profile_id=?", (name, profile_id))
+        return {"profile_id": profile_id, "name": name}
+
+    def delete(self, profile_id: str) -> dict[str, object]:
+        self._profile(profile_id)
+        with self.meta.connect() as connection:
+            draft_refs = int(connection.execute("SELECT COUNT(*) FROM task_drafts WHERE template_profile_id=?", (profile_id,)).fetchone()[0])
+            task_refs = int(connection.execute("SELECT COUNT(*) FROM tasks WHERE profile_id=?", (profile_id,)).fetchone()[0])
+            if draft_refs or task_refs:
+                raise DomainError(
+                    "PROFILE_IN_USE",
+                    f"方案已被 {task_refs} 个任务 / {draft_refs} 个草稿引用,不能删除;可改名或停用引用后再删",
+                    status_code=409,
+                    details={"task_refs": task_refs, "draft_refs": draft_refs},
+                )
+            connection.execute("DELETE FROM profile_versions WHERE profile_id=?", (profile_id,))
+            connection.execute("DELETE FROM profiles WHERE profile_id=?", (profile_id,))
+        return {"deleted": profile_id}
 
     def validate(self, profile_id: str) -> dict[str, object]:
         profile = self.get(profile_id)
