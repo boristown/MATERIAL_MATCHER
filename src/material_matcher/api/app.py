@@ -70,6 +70,15 @@ class DraftCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 
 
+class DraftPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    source_file_id: str | None = None
+    catalog_version_id: str | None = None
+    template_profile_id: str | None = None
+    template_profile_version: int | None = None
+    config_document: dict[str, object] | None = None
+
+
 class DraftData(BaseModel):
     source_file_id: str
     catalog_version_id: str
@@ -479,6 +488,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/task-drafts/{draft_id}")
     def get_draft(draft_id: str) -> dict[str, object]: return tasks.get_draft(draft_id)
+
+    @app.patch("/api/task-drafts/{draft_id}")
+    def patch_draft(draft_id: str, payload: DraftPatch) -> dict[str, object]:
+        changes = payload.model_dump(exclude_unset=True)
+        source_file_id = changes.get("source_file_id")
+        catalog_version_id = changes.get("catalog_version_id")
+        if source_file_id is not None:
+            files.get(str(source_file_id))
+        if catalog_version_id is not None:
+            get_catalog_version(str(catalog_version_id))
+        return tasks.patch_draft(draft_id, changes)
 
     @app.put("/api/task-drafts/{draft_id}/data")
     def save_draft_data(draft_id: str, payload: DraftData) -> dict[str, object]:
