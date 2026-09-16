@@ -1,4 +1,255 @@
 /* STEP 3 page-owned styles.
-   Page agents may edit this file without touching global styles.css.
-   Keep legacy-browser fallbacks in this file when adding modern CSS. */
+   Keep every selector scoped under .review-page so STEP3 can evolve independently. */
 .review-page { min-width: 0; }
+
+.review-page .review-console {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-top: 20px;
+  padding: 24px 26px;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-left: 5px solid #94a3b8;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px -28px rgba(15, 23, 42, 0.42);
+}
+
+.review-page .review-console.is-ready {
+  border-color: #bfdbfe;
+  border-left-color: #2563eb;
+  background: linear-gradient(112deg, #eff6ff 0%, #ffffff 48%, #f8fbff 100%);
+}
+
+.review-page .review-console.is-waiting {
+  border-color: #cbd5e1;
+  border-left-color: #64748b;
+  background: linear-gradient(112deg, #f8fafc 0%, #ffffff 58%, #f8fafc 100%);
+}
+
+.review-page .review-console.is-empty {
+  border-color: #e2e8f0;
+  border-left-color: #94a3b8;
+  background: #fbfcfe;
+}
+
+.review-page .review-console.is-error {
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+  background: #fffafa;
+}
+
+.review-page .review-console-main {
+  flex: 1 1 380px;
+  min-width: 260px;
+  padding-right: 28px;
+}
+
+.review-page .review-console-kicker {
+  display: flex;
+  align-items: center;
+  margin-bottom: 7px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.review-page .review-status-dot {
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.14);
+}
+
+.review-page .is-ready .review-status-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.13);
+}
+
+.review-page .is-waiting .review-status-dot {
+  background: #64748b;
+  animation: review-wait-pulse 1.6s ease-in-out infinite;
+}
+
+.review-page .is-error .review-status-dot {
+  background: #dc2626;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.1);
+}
+
+.review-page .review-console h3 {
+  margin: 0 0 7px;
+  color: #172033;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.review-page .review-console-main > p {
+  max-width: 720px;
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.review-page .review-console-meta {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 13px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.review-page .review-console-meta span {
+  margin: 0 18px 5px 0;
+}
+
+.review-page .review-console-metrics {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: stretch;
+  margin: 0 24px 0 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.review-page .review-console-metric {
+  min-width: 108px;
+  padding: 13px 16px;
+  border-left: 1px solid #e2e8f0;
+  text-align: center;
+}
+
+.review-page .review-console-metric:first-child { border-left: 0; }
+
+.review-page .review-console-metric span {
+  display: block;
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 11.5px;
+}
+
+.review-page .review-console-metric b {
+  color: #1e293b;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-page .review-console-metric small {
+  margin-left: 3px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.review-page .review-console-metric.is-emphasis b { color: #1d4ed8; }
+
+.review-page .review-console-action {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 170px;
+}
+
+.review-page .review-console-action > small {
+  margin-top: 7px;
+  color: #94a3b8;
+  font-size: 10.5px;
+  text-align: center;
+}
+
+.review-page .review-empty-actions {
+  flex-direction: row;
+  min-width: auto;
+}
+
+.review-page .review-empty-actions .el-button + .el-button { margin-left: 10px; }
+
+.review-page .review-wait-progress {
+  flex: 0 1 300px;
+  min-width: 230px;
+  margin-right: 28px;
+}
+
+.review-page .review-wait-percent {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.review-page .review-wait-percent b {
+  color: #334155;
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-page .review-wait-percent span {
+  color: #64748b;
+  font-size: 11.5px;
+}
+
+.review-page .review-failure-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 15px;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fff7f7;
+  color: #991b1b;
+  font-size: 12px;
+}
+
+.review-page .review-failure-note b { margin-right: 12px; }
+.review-page .review-failure-note span { flex: 1 1 260px; color: #b91c1c; }
+
+.review-page .review-list-panel .section-head { align-items: flex-start; }
+.review-page .review-list-panel .section-head h3 { margin: 0; }
+
+.review-page .review-section-desc {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.review-page .review-done-hint {
+  margin-left: 8px;
+  color: #64748b;
+  font-size: 11.5px;
+}
+
+.review-page .review-list-panel .el-empty { padding: 30px 0 18px; }
+
+@keyframes review-wait-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.12); }
+  50% { opacity: 0.45; box-shadow: 0 0 0 7px rgba(100, 116, 139, 0.05); }
+}
+
+@media (max-width: 1180px) {
+  .review-page .review-console { align-items: flex-start; flex-wrap: wrap; }
+  .review-page .review-console-main { flex-basis: 100%; padding-right: 0; }
+  .review-page .review-console-metrics { margin: 18px 18px 0 0; }
+  .review-page .review-wait-progress { margin-top: 18px; }
+  .review-page .review-console-action { margin-top: 18px; }
+}
+
+@media (max-width: 760px) {
+  .review-page .review-console { padding: 20px; }
+  .review-page .review-console-metrics { width: 100%; margin-right: 0; overflow-x: auto; }
+  .review-page .review-console-metric { flex: 1 0 105px; min-width: 105px; }
+  .review-page .review-wait-progress { flex-basis: 100%; margin-right: 0; }
+  .review-page .review-console-action { width: 100%; }
+  .review-page .review-empty-actions { flex-direction: column; }
+  .review-page .review-empty-actions .el-button { width: 100%; margin-left: 0; }
+  .review-page .review-empty-actions .el-button + .el-button { margin: 8px 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-page .is-waiting .review-status-dot { animation: none; }
+}
