@@ -157,7 +157,7 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
             :model-value="sourceIdColumn"
             filterable
             placeholder="系统未识别，请选择"
-            @update:model-value="value => emit('update:sourceIdColumn', String(value ?? ''))"
+            @update:model-value="(value: unknown) => emit('update:sourceIdColumn', String(value ?? ''))"
           >
             <el-option v-for="column in sourceColumns" :key="column.header" :label="column.header" :value="column.header"/>
           </el-select>
@@ -198,7 +198,7 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
         <div class="drop-content">
           <span class="upload-icon">⬆</span>
           <b>{{ target ? '重新上传集团码 Excel' : '拖入集团码标准 Excel' }}</b>
-          <small>无需提前创建目录；系统会在后台自动创建或复用标准数据版本</small>
+          <small>无需提前维护基础数据，上传后系统会自动完成后续准备</small>
         </div>
       </el-upload>
       <div v-if="target" class="parsed-block">
@@ -215,7 +215,7 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
             :model-value="groupCodeColumn"
             filterable
             placeholder="系统未识别，请选择"
-            @update:model-value="value => emit('update:groupCodeColumn', String(value ?? ''))"
+            @update:model-value="(value: unknown) => emit('update:groupCodeColumn', String(value ?? ''))"
           >
             <el-option v-for="column in targetColumns" :key="column.header" :label="column.header" :value="column.header"/>
           </el-select>
