@@ -108,6 +108,8 @@ def match_rows(
     max_target_rows: int,
     max_source_rows: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    on_batch: Callable[[list["RowResult"]], None] | None = None,
+    batch_rows: int = 256,
 ) -> list[RowResult]:
     target_rows = load_target_rows(target_path, max_target_rows=max_target_rows)
     _validate_target_columns(target_rows, config, group_code_column)
@@ -125,6 +127,8 @@ def match_rows(
             scored.append((score.display_score,str(code),target_row,score.to_dict()))
         results.append(_row_result(source_row,row_index,scored,config))
         if on_progress: on_progress(row_index,max(total,row_index))
+        if on_batch and len(results) % max(1, batch_rows) == 0:
+            on_batch(list(results[-batch_rows:]))
     return results
 
 
@@ -140,6 +144,8 @@ def match_rows_indexed(
     max_source_rows: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     scan_workers: int = 0,
+    on_batch: Callable[[list["RowResult"]], None] | None = None,
+    batch_rows: int = 256,
 ) -> list[RowResult]:
     source_layout=detect_layout(source_path); total=min(source_layout.row_count_estimate,max_source_rows) if max_source_rows is not None else source_layout.row_count_estimate
     source_signature=retrieval_text_signature(config,"source")
@@ -171,6 +177,8 @@ def match_rows_indexed(
                 scored.append((score.display_score,str(code),target_row,score.to_dict()))
             results.append(_row_result(source_row,row_index,scored,config))
             if on_progress: on_progress(row_index,max(total,row_index))
+            if on_batch and len(results) % max(1, batch_rows) == 0:
+                on_batch(list(results[-batch_rows:]))
 
     for row_index,source_raw in enumerate(iter_tabular_rows(source_path,max_rows=max_source_rows),start=1):
         source_row=_to_plain(source_raw)
