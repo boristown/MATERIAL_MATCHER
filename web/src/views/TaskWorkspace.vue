@@ -3,11 +3,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import DualExcelUploadPanel from '../components/DualExcelUploadPanel.vue'
 import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 
-type FileRecord = { file_id: string; original_name: string }
-type ColumnInfo = { header: string; business_hint?: string | null }
+type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
+type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
+type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
 type FieldSide = { fields: string[]; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
@@ -23,8 +25,8 @@ const isProfileEditorMode = computed(() => route.query.edit === '1' && !route.pa
 const isProfileTaskCreateMode = computed(() => !isProfileEditorMode.value && Boolean(profileQueryId.value) && !route.params.taskId)
 
 /* ---------- 阶段 ---------- */
-const stage = ref(0) // 0配置 1计算 2人工调整 3输出结果
-const stageTitles = ['配置', '计算', '人工调整', '输出结果']
+const stage = ref(0) // 0数据上传与配置 1计算 2人工调整 3输出结果
+const stageTitles = ['数据上传', '计算', '人工调整', '输出结果']
 
 /* ---------- 配置:方案与数据 ---------- */
 const name = ref('')
@@ -39,7 +41,7 @@ const profilePicker = ref('')
 const source = ref<FileRecord | null>(null)
 const sourceColumns = ref<ColumnInfo[]>([])
 const sourceIdColumn = ref('')
-const targetMode = ref<'existing' | 'upload'>('existing')
+const targetMode = ref<'existing' | 'upload'>('upload')
 const target = ref<FileRecord | null>(null)
 const targetColumns = ref<ColumnInfo[]>([])
 const groupCodeColumn = ref('')
@@ -112,8 +114,9 @@ const profileTargetFields = computed(() => uniqueFields([
 const profileTaskIssues = computed(() => {
   if (!isProfileTaskCreateMode.value) return [] as string[]
   const issues: string[] = []
-  if (!source.value) issues.push('请先上传本次任务的源数据')
-  if (!catalogVersionId.value) issues.push('请选择集团码目录版本')
+  if (!source.value) issues.push('请先上传本次任务的待匹配数据')
+  if (!target.value) issues.push('请上传本次任务的集团码标准数据')
+  if (target.value && !groupCodeColumn.value) issues.push('请确认集团码所在列')
   if (source.value) {
     const sourceSet = new Set(srcHeaders.value)
     const requiredSource = uniqueFields([
@@ -123,19 +126,19 @@ const profileTaskIssues = computed(() => {
       ...rules.value.flatMap(rule => rule.source.fields),
     ])
     const missing = requiredSource.filter(field => !sourceSet.has(field))
-    if (missing.length) issues.push(`源数据缺少方案字段: ${missing.join('、')}`)
+    if (missing.length) issues.push(`待匹配数据缺少方案字段: ${missing.join('、')}`)
   }
-  if (catalogVersionId.value && targetColumns.value.length) {
+  if (target.value && targetColumns.value.length) {
     const targetSet = new Set(tgtHeaders.value)
     const requiredTarget = uniqueFields([
       scopeMode.value !== 'GLOBAL' ? scopeTargetField.value : '',
       ...rules.value.flatMap(rule => rule.target.fields),
     ])
     const missing = requiredTarget.filter(field => !targetSet.has(field))
-    if (missing.length) issues.push(`集团码目录缺少方案字段: ${missing.join('、')}`)
+    if (missing.length) issues.push(`集团码标准数据缺少方案字段: ${missing.join('、')}`)
   }
   if (!rules.value.length) issues.push('已发布方案没有字段映射规则')
-  if (!sourceIdColumn.value) issues.push('已发布方案未配置客户物料标识字段')
+  if (!sourceIdColumn.value) issues.push('已发布方案未配置源数据标识字段')
   return [...new Set(issues)]
 })
 const profileTaskValid = computed(() => Boolean(name.value.trim()) && Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
@@ -198,7 +201,7 @@ function autoMap(): void {
   if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
   rules.value = out
   normalizeWeights()
-  ElMessage.success(`已根据字段语义自动生成 ${out.length} 条映射,可手动连线调整`)
+  ElMessage.success(`已根据字段语义自动生成 ${out.length} 条映射，可继续人工调整`)
 }
 
 function defaultRule(): Rule {
@@ -215,7 +218,7 @@ function onSourceChip(header: string): void {
 }
 function onTargetChip(header: string): void {
   const sourceField = pendingSource.value
-  if (!sourceField) { ElMessage.info('请先点击左侧源字段,再点击右侧目标字段完成连线'); return }
+  if (!sourceField) { ElMessage.info('请先点击左侧源字段，再点击右侧目标字段完成连线'); return }
   const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(header))
   if (existing) { ElMessage.warning('该连线已存在'); pendingSource.value = null; return }
   rules.value.push(makeRule([sourceField], [header], 'hybrid', rules.value.length ? 20 : 100))
@@ -256,43 +259,49 @@ async function loadFileColumns(fileId: string, kind: 'source' | 'target'): Promi
     }
   }
 }
-async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
-  busy.value = true
-  try {
-    const form = new FormData()
-    form.append('role', kind)
-    form.append('file', selected.raw)
-    const response = (await api.post('/files/upload', form)).data
-    const columns = columnsFromInspection(response.inspection)
-    if (kind === 'source') {
-      source.value = response.file
-      sourceColumns.value = columns
-      if (!isProfileTaskCreateMode.value) {
-        sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
-        filterField.value = findHint(columns, 'material_group') || ''
-      }
-    } else {
-      target.value = response.file
-      targetColumns.value = columns
-      groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
-      targetMode.value = 'upload'
-      catalogVersionId.value = ''
-    }
-    ElMessage.success(`已解析 ${columns.length} 个字段`)
-    if (!isProfileTaskCreateMode.value && source.value && target.value && !rules.value.length) autoMap()
-  } catch (error) { ElMessage.error((error as Error).message) } finally { busy.value = false }
+function onWorkbookParsed(payload: ParsedWorkbookPayload): void {
+  const columns = payload.columns ?? []
+  if (payload.kind === 'source') {
+    source.value = payload.file
+    sourceColumns.value = columns
+    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
+    if (!preserveProfileField) sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
+    if (!filterField.value && !isProfileTaskCreateMode.value) filterField.value = findHint(columns, 'material_group') || findHint(columns, 'material_type') || ''
+  } else {
+    target.value = payload.file
+    targetColumns.value = columns
+    groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
+    targetMode.value = 'upload'
+    catalogVersionId.value = ''
+  }
+  if (source.value && target.value && !rules.value.length) autoMap()
 }
-async function loadCatalogs(): Promise<void> {
+function onSourceIdColumnChange(value: string): void {
+  sourceIdColumn.value = value
+}
+function onGroupCodeColumnChange(value: string): void {
+  groupCodeColumn.value = value
+  targetMode.value = 'upload'
+  catalogVersionId.value = ''
+}
+async function loadCatalogs(selectCurrent = false): Promise<void> {
   catalogs.value = ((await api.get('/catalogs')).data ?? []).filter((item: any) => item.status === 'READY')
     .sort((a: any, b: any) => Number(b.active) - Number(a.active) || String(b.created_at).localeCompare(String(a.created_at)))
-  if (!catalogVersionId.value && catalogs.value.length) catalogVersionId.value = catalogs.value[0].version_id
-  if (catalogVersionId.value) await selectCatalog(catalogVersionId.value)
+  if (selectCurrent && catalogVersionId.value) await selectCatalog(catalogVersionId.value)
 }
-async function selectCatalog(versionId: string): Promise<void> {
-  const catalog = catalogs.value.find((item: any) => item.version_id === versionId)
-  if (!catalog) return
-  groupCodeColumn.value = catalog.group_code_column
-  try { await loadFileColumns(catalog.source_file_id, 'target') } catch (error) { ElMessage.error((error as Error).message) }
+async function selectCatalog(versionId: string, preferredTargetFileId = ''): Promise<void> {
+  let catalog = catalogs.value.find((item: any) => item.version_id === versionId)
+  if (!catalog) {
+    try { catalog = (await api.get(`/catalogs/versions/${versionId}`)).data } catch { return }
+  }
+  groupCodeColumn.value = String(catalog.group_code_column ?? groupCodeColumn.value)
+  const targetFileId = preferredTargetFileId || String(catalog.source_file_id ?? '')
+  if (!targetFileId) return
+  try { await loadFileColumns(targetFileId, 'target') } catch (error) {
+    if (preferredTargetFileId && catalog.source_file_id && String(catalog.source_file_id) !== preferredTargetFileId) {
+      await loadFileColumns(String(catalog.source_file_id), 'target')
+    } else ElMessage.error((error as Error).message)
+  }
 }
 async function loadProfiles(): Promise<void> {
   try { profiles.value = (await api.get('/profiles')).data ?? [] } catch { profiles.value = [] }
@@ -304,10 +313,10 @@ async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
   const detail = await getProfileDetail(profileId)
   const published = detail.latest_published
-  if (!published) { ElMessage.warning('该方案尚未发布,不能用于任务'); return }
+  if (!published) { ElMessage.warning('该方案尚未发布，不能用于任务'); return }
   loadDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
-  ElMessage.success(`已应用方案「${detail.name}」v${published.version_no},字段映射与阈值已载入`)
+  ElMessage.success(`已应用方案「${detail.name}」v${published.version_no}，字段映射与阈值已载入`)
 }
 async function loadProfileForEdit(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
@@ -322,7 +331,7 @@ async function loadProfileForEdit(profileId: string): Promise<void> {
 async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
   const published = detail.latest_published
-  if (!published) throw new Error('该方案尚未发布,不能创建任务')
+  if (!published) throw new Error('该方案尚未发布，不能创建任务')
   profilePicker.value = profileId
   loadDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
@@ -351,11 +360,26 @@ function loadDocument(document: any): void {
   filterMode.value = flt?.mode === 'exclude' ? 'exclude' : 'include'
   advanced.value = false
 }
-function documentBody(): Record<string, unknown> {
+function workspaceTargetFromDocument(document: any): { fileId: string; groupCodeColumn: string } {
+  const state = document?.advanced?.workspace_target
+  if (!state || typeof state !== 'object') return { fileId: '', groupCodeColumn: '' }
+  return {
+    fileId: String(state.file_id ?? ''),
+    groupCodeColumn: String(state.group_code_column ?? ''),
+  }
+}
+function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const base = cloneDocument(documentBase.value)
   const baseScope = base.scope && typeof base.scope === 'object' ? base.scope : {}
   const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
-  const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? base.advanced : {}
+  const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
+  delete baseAdvanced.workspace_target
+  if (includeWorkspaceTarget && target.value) {
+    baseAdvanced.workspace_target = {
+      file_id: target.value.file_id,
+      group_code_column: groupCodeColumn.value || null,
+    }
+  }
   const retrieval = {
     mode: 'auto', provider: 'onnx_local', model_id: 'BAAI/bge-base-zh-v1.5', dimensions: 768, precision: 'fp32', retrieval_top_k: 200, oversample: 4,
     ...(base.retrieval && typeof base.retrieval === 'object' ? base.retrieval : {}),
@@ -377,15 +401,15 @@ function documentBody(): Record<string, unknown> {
       top_n: topN.value,
     },
     retrieval,
-    advanced: cloneDocument(baseAdvanced),
+    advanced: baseAdvanced,
   }
 }
-const configValid = computed(() => Boolean(source.value) && Boolean(sourceIdColumn.value) && (targetMode.value === 'existing' ? Boolean(catalogVersionId.value) : Boolean(target.value && groupCodeColumn.value)) && rules.value.length > 0 && reviewThreshold.value < successThreshold.value)
+const configValid = computed(() => Boolean(source.value) && Boolean(sourceIdColumn.value) && Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0 && reviewThreshold.value < successThreshold.value)
 
 async function persistProfileDraft(showMessage = true): Promise<string | null> {
   const profileName = name.value.trim()
   if (!profileName) { ElMessage.warning('请输入方案名称'); return null }
-  const body = documentBody()
+  const body = documentBody(false)
   let profileId = editingProfileId.value
   if (!profileId) {
     const created = (await api.post('/profiles', { name: profileName, document: body })).data
@@ -419,7 +443,7 @@ async function publishProfileChanges(): Promise<void> {
     const published = (await api.post(`/profiles/${profileId}/publish`)).data
     await loadProfiles()
     await loadProfileForEdit(profileId)
-    ElMessage.success(`方案已发布为 v${published.version_no};历史发布版本保持不可变,已有任务不受影响`)
+    ElMessage.success(`方案已发布为 v${published.version_no}；历史发布版本保持不可变，已有任务不受影响`)
   } catch (error) { ElMessage.error((error as Error).message ?? '发布失败') } finally { busy.value = false }
 }
 
@@ -430,7 +454,7 @@ function buildDraftPayload(catalogVersion: string | null = catalogVersionId.valu
     catalog_version_id: catalogVersion,
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
-    config_document: documentBody(),
+    config_document: documentBody(true),
   }
 }
 
@@ -444,20 +468,31 @@ async function ensureDraft(): Promise<void> {
 }
 
 async function resolveCatalogVersionForDraft(): Promise<string | null> {
-  if (targetMode.value === 'existing') return catalogVersionId.value || null
   if (!target.value || !groupCodeColumn.value) return null
-  const existing = catalogs.value.find((item: any) => item.source_file_id === target.value!.file_id && item.group_code_column === groupCodeColumn.value)
+  await loadCatalogs(false)
+  let existing = catalogs.value.find((item: any) => item.source_file_id === target.value!.file_id && item.group_code_column === groupCodeColumn.value)
+  if (!existing && target.value.sha256) {
+    try {
+      const fileRows = (await api.get('/files')).data ?? []
+      const equivalentFileIds = new Set(
+        fileRows
+          .filter((item: any) => item.role === 'target' && item.sha256 === target.value!.sha256)
+          .map((item: any) => String(item.file_id)),
+      )
+      existing = catalogs.value.find((item: any) => equivalentFileIds.has(String(item.source_file_id)) && item.group_code_column === groupCodeColumn.value)
+    } catch { /* SHA 复用失败时退化为新建后台版本 */ }
+  }
   if (existing) {
     catalogVersionId.value = String(existing.version_id)
     return catalogVersionId.value
   }
   const catalog = (await api.post('/catalogs', {
-    name: `${name.value.trim() || '任务'}-集团码目录`,
+    name: `${name.value.trim() || '任务'}-自动标准数据`,
     source_file_id: target.value.file_id,
     group_code_column: groupCodeColumn.value,
   })).data
   catalogVersionId.value = String(catalog.version_id)
-  await loadCatalogs()
+  await loadCatalogs(false)
   return catalogVersionId.value
 }
 
@@ -499,7 +534,7 @@ function scheduleDraftPersist(): void {
 async function saveConfig(): Promise<void> {
   await ensureDraft()
   const versionId = await resolveCatalogVersionForDraft()
-  if (!source.value || !versionId) throw new Error('请先选择客户物料数据和集团码目录')
+  if (!source.value || !target.value || !versionId) throw new Error('请先上传左侧待匹配 Excel 和右侧集团码标准 Excel')
   const payload = buildDraftPayload(versionId)
   await api.patch(`/task-drafts/${draftId.value}`, payload)
   await api.put(`/task-drafts/${draftId.value}/data`, {
@@ -508,7 +543,7 @@ async function saveConfig(): Promise<void> {
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
   })
-  await api.put(`/task-drafts/${draftId.value}/rules`, documentBody())
+  await api.put(`/task-drafts/${draftId.value}/rules`, documentBody(true))
   lastDraftSignature = JSON.stringify(payload)
   draftSaveState.value = 'saved'
 }
@@ -516,11 +551,11 @@ async function saveAsProfile(): Promise<void> {
   if (!rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
   try {
     const { value } = await ElMessageBox.prompt('方案名称(发布后不可变,可被任务复用)', '存为匹配方案', { inputValue: name.value || '', confirmButtonText: '校验并发布', cancelButtonText: '取消' })
-    const created = (await api.post('/profiles', { name: value.trim() || `方案-${Date.now()}`, document: documentBody() })).data
+    const created = (await api.post('/profiles', { name: value.trim() || `方案-${Date.now()}`, document: documentBody(false) })).data
     await api.post(`/profiles/${created.profile_id}/validate`)
     await api.post(`/profiles/${created.profile_id}/publish`)
     await loadProfiles()
-    ElMessage.success('方案已发布,可在新建任务时直接选用')
+    ElMessage.success('方案已发布，可在新建任务时直接选用')
   } catch (error) { if (error !== 'cancel') ElMessage.error((error as Error).message ?? '保存失败') }
 }
 async function dryRun(): Promise<void> {
@@ -563,7 +598,7 @@ function elapsedSeconds(startedAt: string | null | undefined): number | null {
   return Number.isNaN(started) ? null : Math.max(0, (Date.now() - started) / 1000)
 }
 const statusLabel = computed(() => ({ PENDING: '排队中', PREPARING: '准备中', RECOVERING: '重启恢复中', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败' }[String(task.value?.status ?? '')] ?? String(task.value?.status ?? '')))
-const phaseLabel = computed(() => ({ INDEX: '构建向量索引(首次建库较慢,索引就绪后长期复用)', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
+const phaseLabel = computed(() => ({ INDEX: '正在准备标准数据（首次处理可能稍慢，后续可直接复用）', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
 const isInterim = computed(() => Boolean(progress.value?.interim))
 const liveProgressPercent = computed(() => Math.round(Number(progress.value?.progress ?? task.value?.progress ?? 0)))
 
@@ -699,13 +734,19 @@ async function restoreDraft(id: string): Promise<void> {
   const draft = (await api.get(`/task-drafts/${id}`)).data
   draftId.value = String(draft.draft_id)
   name.value = String(draft.name ?? '')
+  const configDocument = draft.config_document ?? {}
+  loadDocument(configDocument)
+  const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (draft.source_file_id) await loadFileColumns(String(draft.source_file_id), 'source')
   if (draft.catalog_version_id) {
     catalogVersionId.value = String(draft.catalog_version_id)
-    targetMode.value = 'existing'
-    await selectCatalog(catalogVersionId.value)
+    targetMode.value = 'upload'
+    if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
+    await selectCatalog(catalogVersionId.value, workspaceTarget.fileId)
+  } else if (workspaceTarget.fileId) {
+    if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
+    await loadFileColumns(workspaceTarget.fileId, 'target')
   }
-  loadDocument(draft.config_document ?? {})
   if (draft.template_profile_id) {
     const profileId = String(draft.template_profile_id)
     const version = Number(draft.template_profile_version ?? 1)
@@ -723,9 +764,15 @@ async function restoreDraft(id: string): Promise<void> {
 async function restoreTask(taskId: string): Promise<void> {
   task.value = (await api.get(`/tasks/${taskId}`)).data
   name.value = task.value.name
-  loadDocument(task.value.config_snapshot ?? {})
+  const configDocument = task.value.config_snapshot ?? {}
+  loadDocument(configDocument)
+  const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (task.value.source_file_id) await loadFileColumns(String(task.value.source_file_id), 'source').catch(() => undefined)
-  if (task.value.catalog_version_id) { catalogVersionId.value = String(task.value.catalog_version_id); await selectCatalog(catalogVersionId.value).catch(() => undefined) }
+  if (task.value.catalog_version_id) {
+    catalogVersionId.value = String(task.value.catalog_version_id)
+    if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
+    await selectCatalog(catalogVersionId.value, workspaceTarget.fileId).catch(() => undefined)
+  }
   if (task.value.status === 'COMPLETED') { await enterStage2Or3() }
   else if (task.value.status === 'FAILED') { stage.value = 1 }
   else { stage.value = 1; startPolling() }
@@ -768,7 +815,7 @@ onMounted(async () => {
       embeddingReady.value = Boolean(status.embedding?.ready)
     } catch { embeddingReady.value = false }
     await loadProfiles()
-    if (!isProfileEditorMode.value) await loadCatalogs()
+    if (!isProfileEditorMode.value) await loadCatalogs(false)
     if (route.params.taskId) { await restoreTask(String(route.params.taskId)).catch(() => router.push('/tasks')); return }
     const draft = typeof route.query.draft === 'string' ? route.query.draft : ''
     if (draft) { await restoreDraft(draft).catch(() => undefined); return }
@@ -813,8 +860,8 @@ onBeforeUnmount(() => {
         <h2 v-else-if="isProfileTaskCreateMode">用方案创建匹配任务</h2>
         <h2 v-else>{{ name || '新建匹配任务' }}</h2>
         <p v-if="isProfileEditorMode">方案配置/编辑模式：这里只维护字段映射、过滤、权重、阈值与发布，不创建或启动业务任务。</p>
-        <p v-else-if="isProfileTaskCreateMode">创建任务模式：只读取已发布方案配置，补充本次源数据和任务信息后直接启动；不会修改原方案。</p>
-        <p v-else>配置(数据+字段映射) → 计算(实时进度) → 人工调整 → 输出结果</p>
+        <p v-else-if="isProfileTaskCreateMode">上传本次左右两份 Excel；已发布方案作为初始配置，当前任务内仍可调整映射、权重和阈值。</p>
+        <p v-else>上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始任务</p>
       </div>
       <div class="toolbar-actions">
         <el-tag v-if="!isProfileEditorMode && draftId" size="small" :type="draftSaveState === 'error' ? 'danger' : draftSaveState === 'saved' ? 'success' : 'info'">{{ draftStateLabel }}</el-tag>
@@ -841,15 +888,14 @@ onBeforeUnmount(() => {
       <el-step v-for="(title, index) in stageTitles" :key="title" :title="`${index + 1}. ${title}`" :status="index < stage ? 'success' : index === stage ? 'process' : 'wait'"/>
     </el-steps>
 
-    <!-- 第一步:配置 -->
+    <!-- 第一步:数据上传与配置 -->
     <template v-if="stage === 0">
       <div v-if="isProfileTaskCreateMode" class="panel profile-template-summary">
         <div class="section-head">
           <div>
-            <h3 style="margin:0">已发布方案</h3>
+            <h3 style="margin:0">已应用匹配方案</h3>
             <p class="profile-template-name">{{ profileTaskMeta?.name ?? '—' }} <el-tag type="success" size="small">v{{ profileTaskMeta?.version ?? appliedProfile?.version }}</el-tag></p>
           </div>
-          <span v-if="profileTaskMeta?.sha256" class="muted">SHA-256 {{ profileTaskMeta.sha256.slice(0, 12) }}…</span>
         </div>
         <div class="profile-summary-grid">
           <div><span>字段规则</span><b>{{ rules.length }} 条</b></div>
@@ -858,82 +904,60 @@ onBeforeUnmount(() => {
           <div><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
           <div class="wide"><span>源数据过滤</span><b>{{ profileFilterSummary }}</b></div>
         </div>
-        <el-alert type="info" :closable="false" title="本任务固定引用上方已发布版本；页面不会写回方案。启动任务时后端会再次冻结完整配置快照。"/>
+        <el-alert type="info" :closable="false" title="这是本次任务的初始配置；后续调整只作用于当前任务，不会修改已发布方案。"/>
       </div>
 
-      <div v-if="!isProfileEditorMode" class="panel">
-        <h3>{{ isProfileTaskCreateMode ? '本次任务' : '① 数据' }}</h3>
+      <div v-if="!isProfileEditorMode" class="panel step1-data-panel">
+        <div class="section-head step1-heading">
+          <div>
+            <h3 style="margin:0">第一步 · 数据上传</h3>
+            <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
+          </div>
+        </div>
         <div class="task-name-row">
           <label>任务名称</label>
           <el-input v-model="name" maxlength="120" show-word-limit placeholder="例如：2026年9月集团码匹配"/>
         </div>
-        <div class="uploads" :class="{ 'profile-task-uploads': isProfileTaskCreateMode }">
-          <div class="upload-card">
-            <b>源数据(SAP 物料)</b>
-            <el-upload drag :auto-upload="false" :show-file-list="false" :on-change="(file:any)=>upload('source',file)" accept=".xlsx,.xlsm,.csv">
-              <div class="upload-inner"><span class="upload-icon">⬆</span><div>拖入 Excel / CSV,自动解析字段</div><small v-if="source" class="ok">{{ source.original_name }} · {{ sourceColumns.length }} 字段</small></div>
-            </el-upload>
-            <el-select v-if="sourceColumns.length && !isProfileTaskCreateMode" v-model="sourceIdColumn" placeholder="物料编码列">
-              <el-option v-for="column in srcHeaders" :key="column" :label="column" :value="column"/>
-            </el-select>
-            <small v-if="isProfileTaskCreateMode && source" class="muted">方案要求物料标识字段：{{ sourceIdColumn || '未配置' }}</small>
-          </div>
-          <div class="upload-card">
-            <template v-if="isProfileTaskCreateMode">
-              <b>集团码目录</b>
-              <el-select v-model="catalogVersionId" filterable placeholder="选择集团码目录版本" @change="selectCatalog">
-                <el-option v-for="item in catalogs" :key="item.version_id" :value="item.version_id" :label="`${item.name}${item.active ? ' · 当前' : ''} · ${item.version_id.slice(0,8)}`"/>
-              </el-select>
-              <small class="muted">只选择本次任务使用的目录版本；不修改方案规则。</small>
-            </template>
-            <template v-else>
-              <b>目标数据(集团码)</b>
-              <el-radio-group v-model="targetMode" size="small" class="target-mode">
-                <el-radio-button value="existing">选择已有目录</el-radio-button>
-                <el-radio-button value="upload">拖入新文件</el-radio-button>
-              </el-radio-group>
-              <el-select v-if="targetMode==='existing'" v-model="catalogVersionId" filterable placeholder="选择集团码目录版本" @change="selectCatalog">
-                <el-option v-for="item in catalogs" :key="item.version_id" :value="item.version_id" :label="`${item.name}${item.active ? ' · 当前' : ''} · ${item.version_id.slice(0,8)}`"/>
-              </el-select>
-              <el-upload v-else drag :auto-upload="false" :show-file-list="false" :on-change="(file:any)=>upload('target',file)" accept=".xlsx,.xlsm,.csv">
-                <div class="upload-inner"><span class="upload-icon">⬆</span><div>拖入集团码 Excel / CSV</div><small v-if="target" class="ok">{{ target.original_name }} · {{ targetColumns.length }} 字段</small></div>
-              </el-upload>
-              <el-select v-if="targetColumns.length" v-model="groupCodeColumn" placeholder="集团码列">
-                <el-option v-for="column in tgtHeaders" :key="column" :label="column" :value="column"/>
-              </el-select>
-            </template>
-          </div>
-        </div>
+        <DualExcelUploadPanel
+          :source="source"
+          :target="target"
+          :source-columns="sourceColumns"
+          :target-columns="targetColumns"
+          :source-id-column="sourceIdColumn"
+          :group-code-column="groupCodeColumn"
+          @parsed="onWorkbookParsed"
+          @update:sourceIdColumn="onSourceIdColumnChange"
+          @update:groupCodeColumn="onGroupCodeColumnChange"
+        />
         <template v-if="isProfileTaskCreateMode">
-          <el-alert v-if="profileTaskIssues.length" type="warning" :closable="false" title="当前任务数据与已发布方案尚不能直接运行">
+          <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前两份数据与方案配置还需要确认">
             <div class="compatibility-list"><div v-for="issue in profileTaskIssues" :key="issue">• {{ issue }}</div></div>
           </el-alert>
-          <el-alert v-else-if="source" type="success" :closable="false" title="字段兼容检查通过，可按已发布方案启动任务。"/>
-          <div class="actions">
-            <el-button @click="router.push('/profiles')">取消</el-button>
-            <el-button type="primary" :loading="busy" :disabled="!profileTaskValid" @click="start">启动任务 →</el-button>
-          </div>
+          <el-alert v-else-if="source && target" class="profile-compatibility-alert" type="success" :closable="false" title="字段兼容检查通过，可继续确认映射和匹配设置。"/>
         </template>
       </div>
 
-      <div v-if="!isProfileTaskCreateMode" class="panel">
+      <div class="panel">
         <div v-if="isProfileEditorMode" class="profile-editor-meta">
           <label><span>方案名称</span><el-input v-model="name" maxlength="120" show-word-limit placeholder="输入可复用方案名称"/></label>
           <label><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
         </div>
         <div class="section-head">
-          <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射(点击左侧字段 → 点击右侧字段即连线)' }}</h3>
+          <div>
+            <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
+            <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
+          </div>
           <div>
             <el-button v-if="isProfileEditorMode" size="small" type="primary" plain @click="addProfileRule">＋ 添加字段映射</el-button>
             <template v-else>
-              <el-button size="small" type="primary" plain :disabled="!sourceColumns.length || !targetColumns.length" @click="autoMap">自动识别映射</el-button>
+              <el-button size="small" type="primary" plain :disabled="!sourceColumns.length || !targetColumns.length" @click="autoMap">自动推荐映射</el-button>
               <el-button size="small" :disabled="!sourceColumns.length || !targetColumns.length" @click="rules.push(defaultRule()); normalizeWeights()">手动加一条</el-button>
             </template>
           </div>
         </div>
         <template v-if="!isProfileEditorMode">
           <div v-if="!sourceColumns.length || !targetColumns.length" class="canvas-empty">
-            <el-empty description="先在上方拖入源数据与目标数据,字段清单会自动解析到这里" :image-size="70"/>
+            <el-empty description="先在上方上传左右两份 Excel，字段清单会自动解析到这里" :image-size="70"/>
           </div>
           <FieldMappingCanvas
             v-else
@@ -949,14 +973,14 @@ onBeforeUnmount(() => {
         </template>
         <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
         <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
-          <el-table-column label="源字段" min-width="180"><template #default="scope">
+          <el-table-column label="源字段" min-width="200"><template #default="scope">
             <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
-            <span v-else class="chip-text">{{ ruleSideLabel(scope.row.source) }}</span>
+            <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
-          <el-table-column label="目标字段" min-width="180"><template #default="scope">
+          <el-table-column label="目标字段" min-width="200"><template #default="scope">
             <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
-            <span v-else class="chip-text">{{ ruleSideLabel(scope.row.target) }}</span>
+            <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
             <el-select v-model="scope.row.matcher" size="small">
@@ -964,13 +988,13 @@ onBeforeUnmount(() => {
             </el-select>
           </template></el-table-column>
           <el-table-column label="权重" width="130"><template #default="scope"><el-input-number v-model="scope.row.weight" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
-          <el-table-column label="关键" width="70"><template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template></el-table-column>
+          <el-table-column v-if="isProfileEditorMode" label="冲突阻断" width="90"><template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template></el-table-column>
           <el-table-column label="" width="60"><template #default="scope"><el-button link type="danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
         </el-table>
       </div>
 
-      <div v-if="!isProfileTaskCreateMode" class="panel">
-        <h3>{{ isProfileEditorMode ? '过滤、匹配范围与阈值' : '③ 过滤与阈值' }}</h3>
+      <div class="panel">
+        <h3>{{ isProfileEditorMode ? '过滤、匹配范围与阈值' : '③ 匹配设置' }}</h3>
         <div class="filter-row">
           <el-switch v-model="filterEnabled"/><span>仅处理满足条件的源数据行</span>
           <template v-if="filterEnabled">
@@ -989,17 +1013,19 @@ onBeforeUnmount(() => {
           <span>人工确认下限 ≥</span><el-slider v-model="reviewThreshold" :min="0" :max="99" style="width:180px"/>
           <span>候选 TopN</span><el-input-number v-model="topN" :min="1" :max="50" size="small"/>
         </div>
-        <h4 class="click" @click="advanced=!advanced">高级(向量检索参数){{ advanced ? ' ▲' : ' ▼' }}</h4>
-        <div v-if="advanced" class="threshold">
-          <span>max_length</span>
-          <el-select v-model="retrievalMaxLength" style="width:110px"><el-option :value="128" label="128"/><el-option :value="192" label="192"/><el-option :value="256" label="256"/><el-option :value="512" label="512"/></el-select>
-          <span class="muted">匹配范围</span>
-          <el-select v-model="scopeMode" style="width:150px"><el-option label="全库匹配" value="GLOBAL"/><el-option label="同组匹配" value="STRICT"/><el-option label="分类映射" value="MAPPED"/></el-select>
-          <template v-if="scopeMode!=='GLOBAL'">
-            <el-select v-model="scopeSourceField" filterable :allow-create="isProfileEditorMode" default-first-option placeholder="源分类字段" style="width:160px"><el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/></el-select>
-            <el-select v-model="scopeTargetField" filterable :allow-create="isProfileEditorMode" default-first-option placeholder="目标分类字段" style="width:160px"><el-option v-for="column in (isProfileEditorMode ? profileTargetFields : tgtHeaders)" :key="column" :label="column" :value="column"/></el-select>
-          </template>
-        </div>
+        <template v-if="isProfileEditorMode">
+          <h4 class="click" @click="advanced=!advanced">高级配置{{ advanced ? ' ▲' : ' ▼' }}</h4>
+          <div v-if="advanced" class="threshold">
+            <span>max_length</span>
+            <el-select v-model="retrievalMaxLength" style="width:110px"><el-option :value="128" label="128"/><el-option :value="192" label="192"/><el-option :value="256" label="256"/><el-option :value="512" label="512"/></el-select>
+            <span class="muted">匹配范围</span>
+            <el-select v-model="scopeMode" style="width:150px"><el-option label="全库匹配" value="GLOBAL"/><el-option label="同组匹配" value="STRICT"/><el-option label="分类映射" value="MAPPED"/></el-select>
+            <template v-if="scopeMode!=='GLOBAL'">
+              <el-select v-model="scopeSourceField" filterable allow-create default-first-option placeholder="源分类字段" style="width:160px"><el-option v-for="column in profileSourceFields" :key="column" :label="column" :value="column"/></el-select>
+              <el-select v-model="scopeTargetField" filterable allow-create default-first-option placeholder="目标分类字段" style="width:160px"><el-option v-for="column in profileTargetFields" :key="column" :label="column" :value="column"/></el-select>
+            </template>
+          </div>
+        </template>
         <div class="actions">
           <template v-if="isProfileEditorMode">
             <el-button :loading="busy" @click="saveProfileDraft">保存草稿</el-button>
@@ -1007,7 +1033,7 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <el-button :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
-            <el-button type="primary" :loading="busy" :disabled="!configValid" @click="start">开始匹配 →</el-button>
+            <el-button type="primary" :loading="busy" :disabled="!configValid" @click="start">保存并开始任务 →</el-button>
           </template>
         </div>
       </div>
@@ -1072,7 +1098,7 @@ onBeforeUnmount(() => {
         <el-button :type="filterMode2==='all'?'primary':'default'" size="small" @click="filterMode2='all';loadWorkbench()">全部</el-button>
         <el-button :type="filterMode2==='high'?'primary':'default'" size="small" @click="filterMode2='high';loadWorkbench()">90分以上无冲突</el-button>
         <el-button :type="filterMode2==='gap'?'primary':'default'" size="small" @click="filterMode2='gap';loadWorkbench()">分差&lt;5</el-button>
-        <el-button :type="filterMode2==='conflict'?'primary':'default'" size="small" @click="filterMode2='conflict';loadWorkbench()">关键字段冲突</el-button>
+        <el-button :type="filterMode2==='conflict'?'primary':'default'" size="small" @click="filterMode2='conflict';loadWorkbench()">重要信息冲突</el-button>
         <el-button size="small" :disabled="!selectedRows.length" @click="batchConfirm">批量确认第一候选</el-button>
         <el-button size="small" :disabled="!selectedRows.length" @click="batchReject">批量标记未匹配</el-button>
       </div>
@@ -1155,6 +1181,22 @@ onBeforeUnmount(() => {
 .toolbar-actions :deep(.el-button + .el-button) {
   margin-left: 0;
 }
+.step1-data-panel {
+  overflow: visible;
+}
+.step1-heading {
+  margin-bottom: 16px;
+}
+.step1-subtitle,
+.section-note {
+  margin: 6px 0 0;
+  color: var(--mm-muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.profile-compatibility-alert {
+  margin-top: 14px;
+}
 .task-name-row {
   display: grid;
   grid-template-columns: 100px minmax(0, 520px);
@@ -1219,9 +1261,6 @@ onBeforeUnmount(() => {
   gap: 7px;
   min-width: 0;
 }
-.profile-task-uploads > div {
-  min-height: 225px;
-}
 .compatibility-list {
   padding-top: 6px;
   line-height: 1.8;
@@ -1245,9 +1284,6 @@ onBeforeUnmount(() => {
   }
   .profile-editor-meta,
   .task-name-row {
-    grid-template-columns: 1fr;
-  }
-  .profile-task-uploads {
     grid-template-columns: 1fr;
   }
 }
