@@ -43,6 +43,48 @@ def test_draft_to_immutable_task_snapshot(authed: TestClient)->None:
     rules['rules'][0]['weight']=20; authed.put(f"/api/task-drafts/{draft['draft_id']}/rules",json=rules)
     reloaded=authed.get(f"/api/tasks/{task['task_id']}").json(); assert reloaded['config_snapshot']['rules'][0]['weight']==80
 
+def test_task_workspace_draft_survives_relogin_with_full_step1_state(authed: TestClient)->None:
+    source=authed.post('/api/files/upload',data={'role':'source'},files={'file':('source.xlsx',workbook_bytes(),'application/octet-stream')}).json()
+    target=authed.post('/api/files/upload',data={'role':'target'},files={'file':('target.xlsx',target_bytes(),'application/octet-stream')}).json()
+    catalog=authed.post('/api/catalogs',json={'name':'恢复目录','source_file_id':target['file']['file_id'],'group_code_column':'集团码'}).json()
+    draft=authed.post('/api/task-drafts',json={'name':'初始任务'}).json()
+    document={
+        'source_id_column':'物料号',
+        'scope_mode':'GLOBAL',
+        'rules':[{
+            'id':'recover-rule',
+            'source':{'fields':['物料名称','型号'],'combine':'concat','separator':' / ','pipeline':[{'op':'trim','options':{}}]},
+            'target':{'fields':['物料名称'],'combine':'coalesce','separator':' ','pipeline':[]},
+            'matcher':'hybrid','weight':73,'critical':True,'matcher_options':{'boost':1.1},
+        }],
+        'decision':{'success_threshold':91,'review_enabled':True,'review_threshold':76,'top_n':7},
+        'retrieval':{'mode':'auto','provider':'onnx_local','model_id':'BAAI/bge-base-zh-v1.5','dimensions':768,'max_length':512,'precision':'fp32','retrieval_top_k':200,'oversample':4},
+        'advanced':{'normalization':{'enabled':True}},
+    }
+    saved=authed.patch(f"/api/task-drafts/{draft['draft_id']}",json={
+        'name':'可恢复任务',
+        'source_file_id':source['file']['file_id'],
+        'catalog_version_id':catalog['version_id'],
+        'config_document':document,
+    })
+    assert saved.status_code==200
+    assert saved.json()['name']=='可恢复任务'
+    assert saved.json()['config_document']==document
+
+    assert authed.post('/api/auth/logout').status_code==200
+    assert authed.post('/api/auth/login',json={'username':'admin','password':'ChangedAdmin123'}).status_code==200
+    restored=authed.get(f"/api/task-drafts/{draft['draft_id']}")
+    assert restored.status_code==200
+    body=restored.json()
+    assert body['source_file_id']==source['file']['file_id']
+    assert body['catalog_version_id']==catalog['version_id']
+    assert body['config_document']['rules'][0]['source']['pipeline'][0]['op']=='trim'
+    assert body['config_document']['rules'][0]['matcher']=='hybrid'
+    assert body['config_document']['rules'][0]['weight']==73
+    assert body['config_document']['rules'][0]['critical'] is True
+    assert body['config_document']['decision']==document['decision']
+    assert body['config_document']['retrieval']['max_length']==512
+
 def test_chunk_upload_validates_hash_and_order(authed: TestClient)->None:
     payload=workbook_bytes(); digest=sha256(payload).hexdigest(); initialized=authed.post('/api/uploads/init',json={'role':'source','original_name':'chunked.xlsx','total_size':len(payload),'sha256':digest}).json(); upload_id=initialized['upload_id']
     wrong=authed.put(f'/api/uploads/{upload_id}/chunks/1',content=payload); assert wrong.status_code==409
