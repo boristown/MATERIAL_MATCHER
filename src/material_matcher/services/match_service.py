@@ -217,10 +217,66 @@ class MatchService:
             if isinstance(exc, DomainError): return
             raise
 
-    def summary(self, task_id: str) -> dict[str, int]:
-        with self.meta.connect() as connection: rows = connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
+    def summary(self, task_id: str) -> dict[str, object]:
+        with self.meta.connect() as connection:
+            rows = connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
+            task_row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            preview_rows = connection.execute(
+                """SELECT
+                    m.source_row_id,m.source_row_number,m.source_id,m.current_status,
+                    m.top1_group_code,m.top1_score,m.final_group_code,m.created_at,m.updated_at,
+                    (SELECT c.target_row_number FROM match_candidates c
+                     WHERE c.task_id=m.task_id AND c.source_row_id=m.source_row_id
+                       AND m.final_group_code IS NOT NULL AND c.target_group_code=m.final_group_code
+                     ORDER BY c.rank LIMIT 1) AS target_row_number,
+                    (SELECT c.score FROM match_candidates c
+                     WHERE c.task_id=m.task_id AND c.source_row_id=m.source_row_id
+                       AND m.final_group_code IS NOT NULL AND c.target_group_code=m.final_group_code
+                     ORDER BY c.rank LIMIT 1) AS selected_score,
+                    (SELECT r.operator FROM reviews r
+                     WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id
+                     ORDER BY r.created_at DESC LIMIT 1) AS last_operator,
+                    (SELECT r.created_at FROM reviews r
+                     WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id
+                     ORDER BY r.created_at DESC LIMIT 1) AS last_operation_time
+                FROM match_items m
+                WHERE m.task_id=?
+                ORDER BY COALESCE(m.source_row_number, 2147483647), CAST(m.source_row_id AS INTEGER)
+                LIMIT 50""",
+                (task_id,),
+            ).fetchall()
         counts = {str(row["current_status"]): int(row["count"]) for row in rows}
-        return {"pending_review": counts.get("REVIEW", 0), "confirmed": counts.get("CONFIRMED", 0), "unmatched": counts.get("UNMATCHED", 0), "automatic_matched": counts.get("MATCHED", 0)}
+        task = dict(task_row) if task_row is not None else {}
+        business_rows: list[dict[str, object]] = []
+        for row in preview_rows:
+            item = dict(row)
+            status = str(item.get("current_status") or "")
+            operator = item.get("last_operator")
+            if status == "MATCHED":
+                method = "自动匹配"
+            elif status == "CONFIRMED":
+                method = "人工匹配"
+            elif status == "REVIEW":
+                method = "待人工处理"
+            elif operator:
+                method = "人工标记未匹配"
+            else:
+                method = "自动判定未匹配"
+            item["similarity"] = item.get("selected_score") if item.get("selected_score") is not None else item.get("top1_score")
+            item["match_method"] = method
+            if not item.get("last_operation_time"):
+                item["last_operation_time"] = item.get("updated_at")
+            item.pop("selected_score", None)
+            business_rows.append(item)
+        return {
+            "pending_review": counts.get("REVIEW", 0),
+            "confirmed": counts.get("CONFIRMED", 0),
+            "unmatched": counts.get("UNMATCHED", 0),
+            "automatic_matched": counts.get("MATCHED", 0),
+            "created_by": self.result_exporter._task_actor(task_id, task, "created") or None,
+            "started_by": self.result_exporter._task_actor(task_id, task, "started") or None,
+            "preview_rows": business_rows,
+        }
 
     def workbench_items(self, task_id: str, *, first_score_min: float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, q:str|None=None, page:int=1, page_size:int=50) -> dict[str, object]:
         conditions=["task_id=?","current_status='REVIEW'"]; params:list[object]=[task_id]
