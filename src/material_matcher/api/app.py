@@ -105,6 +105,10 @@ class ProfileCreate(BaseModel):
     document: dict[str, object] | None = None
 
 
+class ProfileRename(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class UploadInit(BaseModel):
     role: str
     original_name: str
@@ -444,6 +448,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         document = await request.json()
         if not isinstance(document, dict): raise DomainError("INVALID_PROFILE", "匹配方案格式不正确", status_code=422)
         return profiles.save_draft(profile_id, document)
+
+    @app.patch("/api/profiles/{profile_id}")
+    def rename_profile(profile_id: str, payload: ProfileRename) -> dict[str, object]:
+        return profiles.rename(profile_id, payload.name)
+
+    @app.delete("/api/profiles/{profile_id}")
+    def delete_profile(profile_id: str, request: Request) -> dict[str, object]:
+        if str(request.state.role) != "admin":
+            raise DomainError("PERMISSION_DENIED", "仅管理员可删除匹配方案", status_code=403)
+        return profiles.delete(profile_id)
 
     @app.post("/api/profiles/{profile_id}/validate")
     def validate_profile(profile_id: str) -> dict[str, object]: return profiles.validate(profile_id)
