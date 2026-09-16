@@ -98,6 +98,81 @@ class TaskService:
             raise DomainError("TASK_DRAFT_NOT_FOUND", "任务草稿不存在", status_code=404)
         return self.repo.decode(row, ("config_document",)) or {}
 
+    def patch_draft(self, draft_id: str, payload: dict[str, Any]) -> dict[str, object]:
+        """Persist an in-progress workspace without requiring a runnable MatchingConfig.
+
+        STEP1 is intentionally allowed to be incomplete: users can have only a source file,
+        half-finished field mappings, or temporarily invalid thresholds while editing. Full
+        validation still happens in ``save_rules`` / ``start`` before execution.
+        """
+        draft = self.get_draft(draft_id)
+        allowed = {
+            "name",
+            "source_file_id",
+            "catalog_version_id",
+            "template_profile_id",
+            "template_profile_version",
+            "config_document",
+        }
+        unknown = set(payload) - allowed
+        if unknown:
+            raise DomainError(
+                "INVALID_REQUEST",
+                "任务草稿包含不支持的字段",
+                status_code=422,
+                details={"fields": sorted(unknown)},
+            )
+
+        template_profile_id = payload.get("template_profile_id", draft.get("template_profile_id"))
+        template_profile_version = payload.get("template_profile_version", draft.get("template_profile_version"))
+        if template_profile_id is None and template_profile_version is None:
+            pass
+        elif template_profile_id is None or template_profile_version is None:
+            raise DomainError("PROFILE_VERSION_NOT_FOUND", "匹配方案来源必须同时包含方案和版本", status_code=422)
+        else:
+            self._validate_template_source(str(template_profile_id), int(template_profile_version))
+
+        updates: list[str] = []
+        values: list[object] = []
+        for field in (
+            "name",
+            "source_file_id",
+            "catalog_version_id",
+            "template_profile_id",
+            "template_profile_version",
+        ):
+            if field in payload:
+                value = payload[field]
+                if field == "name":
+                    value = str(value or "").strip()
+                    if not value:
+                        raise DomainError("INVALID_REQUEST", "任务名称不能为空", status_code=422)
+                updates.append(f"{field}=?")
+                values.append(value)
+
+        if "config_document" in payload:
+            document = payload.get("config_document")
+            if document is None:
+                document = {}
+            if not isinstance(document, dict):
+                raise DomainError("INVALID_PROFILE", "匹配规则格式不正确", status_code=422)
+            updates.append("config_document=?")
+            values.append(_canonical(document))
+
+        if not updates:
+            return draft
+        if any(key in payload for key in ("source_file_id", "catalog_version_id", "config_document")):
+            updates.append("current_step=2")
+        updates.append("updated_at=?")
+        values.append(_now())
+        values.append(draft_id)
+        with self.repo.connect() as connection:
+            connection.execute(
+                f"UPDATE task_drafts SET {', '.join(updates)} WHERE draft_id=?",
+                tuple(values),
+            )
+        return self.get_draft(draft_id)
+
     def save_data(self, draft_id: str, payload: dict[str, Any]) -> dict[str, object]:
         draft = self.get_draft(draft_id)
         template_profile_id = payload.get("template_profile_id")
