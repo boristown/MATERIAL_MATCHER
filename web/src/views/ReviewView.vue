@@ -39,55 +39,65 @@ type ProgressState = {
   current_phase?: string | null
 }
 
-type WorkbenchItem = {
-  source_row_id: string
-  source_id: string
-  source_payload: Record<string, unknown>
-  top1_group_code?: string | null
-  top1_score: number
-  second_score: number
-  score_gap: number
-  critical_conflict: boolean
-  current_status?: string
-}
-
 type FieldScore = {
   rule_id: string
   score: number
-  weight: number
-  source_value: string
-  target_value: string
-  critical: boolean
-  conflict: boolean
+  source_value?: string
+  target_value?: string
 }
 
 type Candidate = {
   rank: number
   target_group_code: string
+  target_row_number?: number | null
   score: number
-  critical_conflict: boolean
   target_payload: Record<string, unknown>
-  field_scores: FieldScore[]
+  field_scores?: FieldScore[]
 }
 
-type RiskMode = 'all' | 'high' | 'gap' | 'conflict' | 'medium' | 'low'
+type WorkbenchItem = {
+  source_row_id: string
+  source_row_number?: number | null
+  source_id: string
+  source_payload: Record<string, unknown>
+  top1_group_code?: string | null
+  top1_score?: number
+  second_score?: number
+  score_gap?: number
+  current_status?: string
+  final_group_code?: string | null
+  candidates?: Candidate[]
+}
 
-type RiskCounts = Record<RiskMode, number>
+type FieldDescriptor = {
+  id: string
+  label: string
+  sourceFields: string[]
+  targetFields: string[]
+  ruleId?: string
+}
+
+type StatusFilter = 'all' | 'auto' | 'review' | 'confirmed' | 'unmatched'
+type ComparisonKind = 'exact' | 'partial' | 'different' | 'empty'
 
 type ThresholdPreview = {
-  exact: boolean
-  reviewToMatched: number
-  remainingReview: number
-  protectedConflicts: number
-  resultingUnmatched: number
-  note: string
+  addedAutomatic: number
+  remainingManual: number
+  unmatched: number
 }
 
 const route = useRoute()
 const router = useRouter()
 const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING']
-const PAGE_SIZE_OPTIONS = [20, 50, 100]
-const RISK_MODES: RiskMode[] = ['all', 'high', 'gap', 'conflict', 'medium', 'low']
+const PAGE_SIZE_OPTIONS = [10, 20, 50]
+const NONE_SELECTION = '__NONE__'
+const STATUS_TABS: Array<{ key: StatusFilter; label: string; backend?: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'auto', label: '已自动匹配', backend: 'MATCHED' },
+  { key: 'review', label: '待人工匹配', backend: 'REVIEW' },
+  { key: 'confirmed', label: '已人工匹配', backend: 'CONFIRMED' },
+  { key: 'unmatched', label: '未匹配', backend: 'UNMATCHED' },
+]
 
 const reviewRows = ref<ReviewTask[]>([])
 const activeTaskId = ref('')
@@ -101,36 +111,42 @@ const summary = ref<ReviewSummary>({ pending_review: 0, confirmed: 0, unmatched:
 const workbenchItems = ref<WorkbenchItem[]>([])
 const workbenchTotal = ref(0)
 const page = ref(1)
-const pageSize = ref(50)
+const pageSize = ref(10)
 const listLoading = ref(false)
-const riskMode = ref<RiskMode>('all')
-const riskCounts = ref<RiskCounts>({ all: 0, high: 0, gap: 0, conflict: 0, medium: 0, low: 0 })
-const riskCountsLoading = ref(false)
+const statusFilter = ref<StatusFilter>('review')
 const searchQ = ref('')
-const selectedRows = ref<WorkbenchItem[]>([])
-const mutationBusy = ref(false)
+const candidateMap = ref<Record<string, Candidate[]>>({})
+const candidateLoading = ref<Record<string, boolean>>({})
+const candidateError = ref<Record<string, boolean>>({})
+const selectedByRow = ref<Record<string, string>>({})
+const mutationBusyRow = ref('')
+
+const mappingRules = ref<FieldDescriptor[]>([])
+const selectedFieldIds = ref<string[]>([])
+const fieldSelectionTouched = ref(false)
+const showAllFields = ref(true)
 
 const currentSuccessThreshold = ref(88)
 const currentReviewThreshold = ref(75)
 const draftSuccessThreshold = ref(88)
-const draftReviewThreshold = ref(75)
 const thresholdPreview = ref<ThresholdPreview | null>(null)
 const thresholdPreviewSignature = ref('')
 const previewBusy = ref(false)
 const applyBusy = ref(false)
 
 const drawerVisible = ref(false)
-const drawerLoading = ref(false)
 const drawerItem = ref<WorkbenchItem | null>(null)
-const candidates = ref<Candidate[]>([])
-const candidateIndex = ref(0)
 
 let pollTimer: number | undefined
 let progressRefreshing = false
 let contextVersion = 0
 
 const activeTask = computed(() => reviewRows.value.find(task => task.id === activeTaskId.value) ?? null)
-const actionableTasks = computed(() => reviewRows.value.filter(task => !task.summaryError && Number(task.summary?.pending_review ?? 0) > 0 && !task.result_file_id))
+const workspaceTasks = computed(() => reviewRows.value.filter(task => {
+  if (task.summaryError || task.result_file_id) return false
+  const s = task.summary
+  return Boolean(s && (s.pending_review + s.confirmed + s.unmatched + s.automatic_matched) > 0)
+}))
 const hasUnknownReviewState = computed(() => reviewRows.value.some(task => task.summaryError))
 const consoleMode = computed<'ready' | 'waiting' | 'empty' | 'error'>(() => {
   if (loadError.value) return 'error'
@@ -142,24 +158,47 @@ const consoleMode = computed<'ready' | 'waiting' | 'empty' | 'error'>(() => {
 const waitingPercent = computed(() => percent(calculatingProgress.value?.progress ?? calculatingTask.value?.progress ?? 0))
 const waitingProcessed = computed(() => Number(calculatingProgress.value?.processed_rows ?? 0))
 const waitingTotal = computed(() => Number(calculatingProgress.value?.total_rows ?? 0))
-const totalRecords = computed(() => Number(summary.value.pending_review) + Number(summary.value.confirmed) + Number(summary.value.unmatched) + Number(summary.value.automatic_matched))
-const thresholdDirty = computed(() => draftSuccessThreshold.value !== currentSuccessThreshold.value || draftReviewThreshold.value !== currentReviewThreshold.value)
-const thresholdValid = computed(() => draftReviewThreshold.value >= 0 && draftReviewThreshold.value < draftSuccessThreshold.value && draftSuccessThreshold.value <= 100)
-const currentPreviewSignature = computed(() => `${draftSuccessThreshold.value}:${draftReviewThreshold.value}`)
-const canApplyThresholds = computed(() => Boolean(thresholdPreview.value) && thresholdPreviewSignature.value === currentPreviewSignature.value && thresholdValid.value && thresholdDirty.value)
-const currentCandidate = computed(() => candidates.value[candidateIndex.value] ?? null)
-const topCandidates = computed(() => candidates.value.slice(0, 2))
-const matchingFields = computed(() => (currentCandidate.value?.field_scores ?? []).filter(field => !field.conflict && Number(field.score) >= 80))
-const conflictFields = computed(() => (currentCandidate.value?.field_scores ?? []).filter(field => field.conflict))
-const deductionFields = computed(() => (currentCandidate.value?.field_scores ?? []).filter(field => Number(field.score) < 99.999).sort((a, b) => Number(a.score) - Number(b.score)))
-const candidatePayloadDiffs = computed(() => {
-  const first = candidates.value[0]?.target_payload ?? {}
-  const second = candidates.value[1]?.target_payload ?? {}
-  const keys = [...new Set([...Object.keys(first), ...Object.keys(second)])]
-  return keys
-    .filter(key => displayValue(first[key]) !== displayValue(second[key]))
-    .slice(0, 8)
-    .map(key => ({ key, first: displayValue(first[key]), second: displayValue(second[key]) }))
+const totalRecords = computed(() => summary.value.pending_review + summary.value.confirmed + summary.value.unmatched + summary.value.automatic_matched)
+const thresholdDirty = computed(() => draftSuccessThreshold.value !== currentSuccessThreshold.value)
+const thresholdValid = computed(() => draftSuccessThreshold.value > currentReviewThreshold.value && draftSuccessThreshold.value <= 100)
+const currentPreviewSignature = computed(() => String(draftSuccessThreshold.value))
+const canApplyThreshold = computed(() => thresholdDirty.value && thresholdValid.value && thresholdPreview.value && thresholdPreviewSignature.value === currentPreviewSignature.value)
+const drawerCandidates = computed(() => drawerItem.value ? candidatesFor(drawerItem.value) : [])
+
+const pageFieldDescriptors = computed<FieldDescriptor[]>(() => {
+  const descriptors: FieldDescriptor[] = mappingRules.value.map(rule => ({ ...rule }))
+  const referencedSource = new Set(descriptors.flatMap(item => item.sourceFields))
+  const referencedTarget = new Set(descriptors.flatMap(item => item.targetFields))
+  const sourceKeys = new Set<string>()
+  const targetKeys = new Set<string>()
+
+  for (const item of workbenchItems.value) {
+    Object.keys(item.source_payload ?? {}).forEach(key => sourceKeys.add(key))
+    for (const candidate of candidatesFor(item)) {
+      Object.keys(candidate.target_payload ?? {}).forEach(key => targetKeys.add(key))
+    }
+  }
+
+  for (const key of [...new Set([...sourceKeys, ...targetKeys])]) {
+    if (referencedSource.has(key) || referencedTarget.has(key)) continue
+    descriptors.push({
+      id: `raw:${key}`,
+      label: key,
+      sourceFields: sourceKeys.has(key) ? [key] : [],
+      targetFields: targetKeys.has(key) ? [key] : [],
+    })
+  }
+  return descriptors
+})
+
+const visibleFieldDescriptors = computed(() => {
+  const selected = pageFieldDescriptors.value.filter(field => selectedFieldIds.value.includes(field.id))
+  return showAllFields.value ? selected : selected.slice(0, 6)
+})
+
+const drawerFieldDescriptors = computed(() => {
+  if (!drawerItem.value) return []
+  return descriptorsFor([drawerItem.value], drawerCandidates.value)
 })
 
 function normalizeTask(task: any): ReviewTask {
@@ -200,28 +239,68 @@ function formatDate(value: string | null | undefined): string {
   return value.slice(0, 19).replace('T', ' ')
 }
 
-function deductionPoints(field: FieldScore): string {
-  const weight = Number(field.weight ?? 0)
-  const score = Number(field.score ?? 0)
-  if (!Number.isFinite(weight) || !Number.isFinite(score)) return '0'
-  return Math.max(0, weight * (100 - score) / 100).toFixed(1).replace(/\.0$/, '')
-}
-
 function displayValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
 
-function sourceBrief(item: WorkbenchItem): string {
-  return Object.values(item.source_payload ?? {}).filter(value => value !== null && value !== undefined && value !== '').slice(0, 4).map(displayValue).join(' · ').slice(0, 90) || '—'
+function rawValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function fieldValue(payload: Record<string, unknown>, fields: string[]): string {
+  const values = fields.map(field => rawValue(payload?.[field])).filter(Boolean)
+  return values.length ? values.join(' / ') : ''
+}
+
+function normalizedText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function scoreAsPercent(score: unknown): number | null {
+  const value = Number(score)
+  if (!Number.isFinite(value)) return null
+  return value <= 1 ? value * 100 : value
+}
+
+function comparisonKind(item: WorkbenchItem, candidate: Candidate, field: FieldDescriptor): ComparisonKind {
+  const source = fieldValue(item.source_payload, field.sourceFields)
+  const target = fieldValue(candidate.target_payload, field.targetFields)
+  if (!source || !target) return 'empty'
+  if (normalizedText(source) === normalizedText(target)) return 'exact'
+  const fieldScore = candidate.field_scores?.find(score => score.rule_id === field.ruleId)
+  const percentScore = scoreAsPercent(fieldScore?.score)
+  if (percentScore !== null && percentScore >= 55) return 'partial'
+  return 'different'
+}
+
+function comparisonLabel(kind: ComparisonKind): string {
+  return ({ exact: '一致', partial: '部分一致', different: '不一致', empty: '无数据' } as Record<ComparisonKind, string>)[kind]
+}
+
+function comparisonIcon(kind: ComparisonKind): string {
+  return ({ exact: '✓', partial: '≈', different: '×', empty: '—' } as Record<ComparisonKind, string>)[kind]
+}
+
+function statusLabel(status: string | undefined): string {
+  return ({ MATCHED: '已自动匹配', REVIEW: '待人工匹配', CONFIRMED: '已人工匹配', UNMATCHED: '未匹配' } as Record<string, string>)[String(status ?? '')] ?? '未知状态'
+}
+
+function statusTagType(status: string | undefined): 'success' | 'warning' | 'info' | 'primary' {
+  if (status === 'MATCHED') return 'success'
+  if (status === 'REVIEW') return 'warning'
+  if (status === 'CONFIRMED') return 'primary'
+  return 'info'
 }
 
 function phaseLabel(phase: string | null | undefined): string {
   return ({ INDEX: '构建向量索引', RETRIEVE: '候选召回', RERANK: '逐条匹配评分', PERSIST: '结果持久化', DONE: '计算完成', WAITING: '等待调度', FAILED: '计算失败' } as Record<string, string>)[String(phase ?? '')] ?? '准备计算'
 }
 
-function statusLabel(status: string): string {
+function runStatusLabel(status: string): string {
   return ({ RUNNING: '运行中', PREPARING: '准备中', RECOVERING: '恢复中', PENDING: '排队中', COMPLETED: '已完成', FAILED: '失败' } as Record<string, string>)[status] ?? status
 }
 
@@ -233,6 +312,99 @@ function errorStatus(error: any): number {
   return Number(error?.response?.status ?? 0)
 }
 
+function candidatesFor(item: WorkbenchItem): Candidate[] {
+  return (candidateMap.value[item.source_row_id] ?? item.candidates ?? []).slice(0, 5)
+}
+
+function filterCount(key: StatusFilter): number {
+  if (key === 'all') return totalRecords.value
+  if (key === 'auto') return summary.value.automatic_matched
+  if (key === 'review') return summary.value.pending_review
+  if (key === 'confirmed') return summary.value.confirmed
+  return summary.value.unmatched
+}
+
+function backendStatus(key: StatusFilter): string | undefined {
+  return STATUS_TABS.find(tab => tab.key === key)?.backend
+}
+
+function selectedValue(item: WorkbenchItem): string {
+  return selectedByRow.value[item.source_row_id] ?? ''
+}
+
+function setSelectedValue(item: WorkbenchItem, value: string): void {
+  selectedByRow.value = { ...selectedByRow.value, [item.source_row_id]: value }
+}
+
+function initialSelection(item: WorkbenchItem, candidates: Candidate[]): string {
+  if (item.current_status === 'UNMATCHED') return NONE_SELECTION
+  if (item.final_group_code) return String(item.final_group_code)
+  if (item.current_status === 'MATCHED' && item.top1_group_code) return String(item.top1_group_code)
+  const matchedCandidate = candidates.find(candidate => candidate.target_group_code === item.final_group_code)
+  return matchedCandidate?.target_group_code ?? ''
+}
+
+function rowActionText(item: WorkbenchItem): string {
+  const selected = selectedValue(item)
+  if (selected === NONE_SELECTION) return '确认均不匹配'
+  if (item.current_status === 'CONFIRMED' && selected === String(item.final_group_code ?? '')) return '已确认'
+  if (item.current_status === 'MATCHED' && selected === String(item.final_group_code ?? item.top1_group_code ?? '')) return '确认自动结果'
+  if (item.current_status === 'CONFIRMED') return '改为此候选'
+  return '确认匹配'
+}
+
+function rowActionDisabled(item: WorkbenchItem): boolean {
+  const selected = selectedValue(item)
+  if (!selected) return true
+  if (item.current_status === 'CONFIRMED' && selected === String(item.final_group_code ?? '')) return true
+  return mutationBusyRow.value === item.source_row_id
+}
+
+function mappingDescriptors(config: any): FieldDescriptor[] {
+  const rules = Array.isArray(config?.rules) ? config.rules : []
+  return rules.map((rule: any, index: number) => {
+    const sourceFields = Array.isArray(rule?.source?.fields) ? rule.source.fields.map(String) : []
+    const targetFields = Array.isArray(rule?.target?.fields) ? rule.target.fields.map(String) : []
+    const sourceLabel = sourceFields.join(' / ') || '源字段'
+    const targetLabel = targetFields.join(' / ') || '目标字段'
+    return {
+      id: `rule:${String(rule?.id ?? index)}`,
+      label: sourceLabel === targetLabel ? sourceLabel : `${sourceLabel} ↔ ${targetLabel}`,
+      sourceFields,
+      targetFields,
+      ruleId: String(rule?.id ?? index),
+    }
+  })
+}
+
+function descriptorsFor(items: WorkbenchItem[], candidates: Candidate[]): FieldDescriptor[] {
+  const descriptors = mappingRules.value.map(rule => ({ ...rule }))
+  const referencedSource = new Set(descriptors.flatMap(item => item.sourceFields))
+  const referencedTarget = new Set(descriptors.flatMap(item => item.targetFields))
+  const sourceKeys = new Set<string>()
+  const targetKeys = new Set<string>()
+  items.forEach(item => Object.keys(item.source_payload ?? {}).forEach(key => sourceKeys.add(key)))
+  candidates.forEach(candidate => Object.keys(candidate.target_payload ?? {}).forEach(key => targetKeys.add(key)))
+  for (const key of [...new Set([...sourceKeys, ...targetKeys])]) {
+    if (referencedSource.has(key) || referencedTarget.has(key)) continue
+    descriptors.push({ id: `raw:${key}`, label: key, sourceFields: sourceKeys.has(key) ? [key] : [], targetFields: targetKeys.has(key) ? [key] : [] })
+  }
+  return descriptors
+}
+
+function syncFieldSelection(): void {
+  const ids = pageFieldDescriptors.value.map(field => field.id)
+  if (!fieldSelectionTouched.value) {
+    selectedFieldIds.value = ids
+    return
+  }
+  selectedFieldIds.value = selectedFieldIds.value.filter(id => ids.includes(id))
+}
+
+function onFieldSelectionChange(): void {
+  fieldSelectionTouched.value = true
+}
+
 function stopPolling(): void {
   if (pollTimer) window.clearInterval(pollTimer)
   pollTimer = undefined
@@ -240,9 +412,7 @@ function stopPolling(): void {
 
 function startPollingIfNeeded(): void {
   stopPolling()
-  if (consoleMode.value === 'waiting' && calculatingTask.value) {
-    pollTimer = window.setInterval(() => void refreshCalculatingProgress(), 3000)
-  }
+  if (consoleMode.value === 'waiting' && calculatingTask.value) pollTimer = window.setInterval(() => void refreshCalculatingProgress(), 3000)
 }
 
 async function loadReviewSummary(task: ReviewTask): Promise<ReviewTask> {
@@ -273,7 +443,7 @@ async function refreshCalculatingProgress(): Promise<void> {
     task.progress = Number(progressResponse.progress ?? task.progress)
     if (!RUNNING_STATUSES.includes(String(progressResponse.status)) || String(progressResponse.stage) !== 'CALCULATE') await load()
   } catch {
-    // 瞬时读取失败时保留最后已知状态，下一轮自动重试。
+    // 保留最后一次成功状态，下一轮轮询继续尝试。
   } finally {
     progressRefreshing = false
   }
@@ -289,69 +459,75 @@ function taskThresholds(taskDetail: any): { success: number; review: number } {
   }
 }
 
-function riskParams(mode: RiskMode): Record<string, unknown> {
-  if (mode === 'conflict') return { critical_conflict: true }
-  if (mode === 'gap') return { critical_conflict: false, gap_max: 5 }
-  if (mode === 'high') return { critical_conflict: false, gap_min: 5.000001, first_score_min: 90 }
-  if (mode === 'medium') return { critical_conflict: false, gap_min: 5.000001, first_score_min: 75, first_score_max: 89.999999 }
-  if (mode === 'low') return { critical_conflict: false, gap_min: 5.000001, first_score_max: 74.999999 }
-  return {}
-}
-
-function riskOf(item: WorkbenchItem): RiskMode {
-  if (item.critical_conflict) return 'conflict'
-  if (Number(item.score_gap) <= 5) return 'gap'
-  if (Number(item.top1_score) >= 90) return 'high'
-  if (Number(item.top1_score) >= 75) return 'medium'
-  return 'low'
-}
-
-function riskLabel(mode: RiskMode): string {
-  return ({ all: '全部待判断', high: '高分且无冲突', gap: '候选分差很小', conflict: '关键字段冲突', medium: '中等置信度', low: '明显低分' } as Record<RiskMode, string>)[mode]
-}
-
-function riskHint(mode: RiskMode): string {
-  return ({
-    all: '只包含后端仍为 REVIEW 的记录',
-    high: '≥90 分、分差 > 5、无关键冲突',
-    gap: '第一/第二候选分差 ≤ 5',
-    conflict: '关键字段存在硬冲突，不自动放行',
-    medium: '75–90 分且无明显冲突',
-    low: '<75 分，优先判断是否未匹配',
-  } as Record<RiskMode, string>)[mode]
-}
-
-function riskTagType(mode: RiskMode): 'success' | 'warning' | 'danger' | 'info' | 'primary' {
-  if (mode === 'high') return 'success'
-  if (mode === 'conflict') return 'danger'
-  if (mode === 'gap') return 'warning'
-  if (mode === 'medium') return 'primary'
-  return 'info'
-}
-
-async function fetchWorkbenchCount(taskId: string, mode: RiskMode): Promise<number> {
-  if (mode === 'all') return Number(summary.value.pending_review ?? 0)
-  const response = (await api.get(`/tasks/${taskId}/workbench/items`, { params: { ...riskParams(mode), page: 1, page_size: 1 } })).data ?? {}
-  return Number(response.total ?? 0)
-}
-
-async function loadRiskCounts(taskId: string, version = contextVersion): Promise<void> {
-  riskCountsLoading.value = true
-  try {
-    const modes: RiskMode[] = ['high', 'gap', 'conflict', 'medium', 'low']
-    const values = await Promise.all(modes.map(mode => fetchWorkbenchCount(taskId, mode)))
-    if (version !== contextVersion || activeTaskId.value !== taskId) return
-    riskCounts.value = {
-      all: Number(summary.value.pending_review ?? 0),
-      high: values[0],
-      gap: values[1],
-      conflict: values[2],
-      medium: values[3],
-      low: values[4],
-    }
-  } finally {
-    if (version === contextVersion) riskCountsLoading.value = false
+function normalizeCandidate(candidate: any): Candidate {
+  return {
+    rank: Number(candidate?.rank ?? 0),
+    target_group_code: String(candidate?.target_group_code ?? candidate?.group_code ?? ''),
+    target_row_number: candidate?.target_row_number === null || candidate?.target_row_number === undefined ? null : Number(candidate.target_row_number),
+    score: Number(candidate?.score ?? 0),
+    target_payload: candidate?.target_payload && typeof candidate.target_payload === 'object' ? candidate.target_payload : {},
+    field_scores: Array.isArray(candidate?.field_scores) ? candidate.field_scores : [],
   }
+}
+
+function normalizeWorkbenchItem(item: any): WorkbenchItem {
+  return {
+    source_row_id: String(item?.source_row_id ?? ''),
+    source_row_number: item?.source_row_number === null || item?.source_row_number === undefined ? null : Number(item.source_row_number),
+    source_id: String(item?.source_id ?? ''),
+    source_payload: item?.source_payload && typeof item.source_payload === 'object' ? item.source_payload : {},
+    top1_group_code: item?.top1_group_code ? String(item.top1_group_code) : null,
+    top1_score: Number(item?.top1_score ?? item?.first_score ?? 0),
+    second_score: Number(item?.second_score ?? 0),
+    score_gap: Number(item?.score_gap ?? 0),
+    current_status: String(item?.current_status ?? item?.status ?? 'REVIEW'),
+    final_group_code: item?.final_group_code ? String(item.final_group_code) : null,
+    candidates: Array.isArray(item?.candidates) ? item.candidates.map(normalizeCandidate).slice(0, 5) : undefined,
+  }
+}
+
+async function hydrateCandidates(items: WorkbenchItem[], version: number): Promise<void> {
+  const nextMap: Record<string, Candidate[]> = {}
+  const missing: WorkbenchItem[] = []
+  for (const item of items) {
+    if (item.candidates?.length) nextMap[item.source_row_id] = item.candidates.slice(0, 5)
+    else missing.push(item)
+  }
+  candidateMap.value = nextMap
+  candidateError.value = {}
+  candidateLoading.value = Object.fromEntries(missing.map(item => [item.source_row_id, true]))
+
+  for (let index = 0; index < missing.length; index += 6) {
+    const batch = missing.slice(index, index + 6)
+    const responses = await Promise.all(batch.map(async item => {
+      try {
+        const response = (await api.get(`/tasks/${activeTaskId.value}/items/${item.source_row_id}/candidates`)).data ?? {}
+        return { item, candidates: (Array.isArray(response.candidates) ? response.candidates : []).map(normalizeCandidate).slice(0, 5), error: false }
+      } catch {
+        return { item, candidates: [] as Candidate[], error: true }
+      }
+    }))
+    if (version !== contextVersion) return
+    const mapCopy = { ...candidateMap.value }
+    const loadingCopy = { ...candidateLoading.value }
+    const errorCopy = { ...candidateError.value }
+    for (const result of responses) {
+      mapCopy[result.item.source_row_id] = result.candidates
+      loadingCopy[result.item.source_row_id] = false
+      errorCopy[result.item.source_row_id] = result.error
+    }
+    candidateMap.value = mapCopy
+    candidateLoading.value = loadingCopy
+    candidateError.value = errorCopy
+  }
+
+  if (version !== contextVersion) return
+  const nextSelections = { ...selectedByRow.value }
+  for (const item of items) {
+    if (!(item.source_row_id in nextSelections)) nextSelections[item.source_row_id] = initialSelection(item, candidatesFor(item))
+  }
+  selectedByRow.value = nextSelections
+  syncFieldSelection()
 }
 
 async function loadItems(resetPage = false, version = contextVersion): Promise<void> {
@@ -360,20 +536,25 @@ async function loadItems(resetPage = false, version = contextVersion): Promise<v
   if (resetPage) page.value = 1
   listLoading.value = true
   try {
-    const params: Record<string, unknown> = { ...riskParams(riskMode.value), page: page.value, page_size: pageSize.value }
+    const params: Record<string, unknown> = { page: page.value, page_size: pageSize.value, include_candidates: 5 }
+    const status = backendStatus(statusFilter.value)
+    if (status) params.status = status
+    else params.status = 'ALL'
     if (searchQ.value.trim()) params.q = searchQ.value.trim()
     const response = (await api.get(`/tasks/${taskId}/workbench/items`, { params })).data ?? {}
     if (version !== contextVersion || activeTaskId.value !== taskId) return
-    workbenchItems.value = Array.isArray(response.items) ? response.items : []
+    const items = (Array.isArray(response.items) ? response.items : []).map(normalizeWorkbenchItem)
+    workbenchItems.value = items
     workbenchTotal.value = Number(response.total ?? 0)
-    selectedRows.value = []
     const lastPage = Math.max(1, Math.ceil(workbenchTotal.value / pageSize.value))
     if (page.value > lastPage) {
       page.value = lastPage
       await loadItems(false, version)
+      return
     }
+    await hydrateCandidates(items, version)
   } catch (error) {
-    if (version === contextVersion) ElMessage.error(apiErrorMessage(error, '人工队列读取失败'))
+    if (version === contextVersion) ElMessage.error(apiErrorMessage(error, '人工匹配工作台读取失败'))
   } finally {
     if (version === contextVersion) listLoading.value = false
   }
@@ -386,9 +567,9 @@ async function loadWorkbenchContext(taskId: string): Promise<void> {
   thresholdPreview.value = null
   thresholdPreviewSignature.value = ''
   drawerVisible.value = false
-  searchQ.value = ''
-  riskMode.value = 'all'
   page.value = 1
+  selectedByRow.value = {}
+  fieldSelectionTouched.value = false
   try {
     const [taskResponse, summaryResponse] = await Promise.all([
       api.get(`/tasks/${taskId}`),
@@ -400,16 +581,16 @@ async function loadWorkbenchContext(taskId: string): Promise<void> {
     currentSuccessThreshold.value = thresholds.success
     currentReviewThreshold.value = thresholds.review
     draftSuccessThreshold.value = thresholds.success
-    draftReviewThreshold.value = thresholds.review
+    mappingRules.value = mappingDescriptors(detail?.config_snapshot ?? {})
     summary.value = {
       pending_review: Number(summaryResponse.data?.pending_review ?? 0),
       confirmed: Number(summaryResponse.data?.confirmed ?? 0),
       unmatched: Number(summaryResponse.data?.unmatched ?? 0),
       automatic_matched: Number(summaryResponse.data?.automatic_matched ?? 0),
     }
-    await Promise.all([loadRiskCounts(taskId, version), loadItems(false, version)])
+    await loadItems(false, version)
   } catch (error) {
-    if (version === contextVersion) ElMessage.error(apiErrorMessage(error, '人工工作台加载失败'))
+    if (version === contextVersion) ElMessage.error(apiErrorMessage(error, '人工匹配工作台加载失败'))
   }
 }
 
@@ -423,16 +604,16 @@ async function load(): Promise<void> {
       .map((task: any) => normalizeTask(task))
       .sort((a: ReviewTask, b: ReviewTask) => b.created_at.localeCompare(a.created_at))
 
-    const reviewCandidates = tasks.filter((task: ReviewTask) => task.status === 'COMPLETED' && task.stage === 'REVIEW')
-    reviewRows.value = await Promise.all(reviewCandidates.map((task: ReviewTask) => loadReviewSummary(task)))
+    const candidates = tasks.filter((task: ReviewTask) => task.status === 'COMPLETED' && ['REVIEW', 'RESULT'].includes(task.stage))
+    reviewRows.value = await Promise.all(candidates.map((task: ReviewTask) => loadReviewSummary(task)))
     calculatingTask.value = tasks.find((task: ReviewTask) => task.stage === 'CALCULATE' && RUNNING_STATUSES.includes(task.status)) ?? null
     latestFailed.value = tasks.find((task: ReviewTask) => task.status === 'FAILED') ?? null
     calculatingProgress.value = null
 
     const requestedTaskId = typeof route.query.task === 'string' ? route.query.task : ''
-    const requested = actionableTasks.value.find(task => task.id === requestedTaskId)
-    const preserved = actionableTasks.value.find(task => task.id === activeTaskId.value)
-    const nextTask = requested ?? preserved ?? actionableTasks.value[0] ?? null
+    const requested = workspaceTasks.value.find(task => task.id === requestedTaskId)
+    const preserved = workspaceTasks.value.find(task => task.id === activeTaskId.value)
+    const nextTask = requested ?? preserved ?? workspaceTasks.value[0] ?? null
     activeTaskId.value = nextTask?.id ?? ''
 
     if (nextTask) {
@@ -441,6 +622,7 @@ async function load(): Promise<void> {
       ++contextVersion
       workbenchItems.value = []
       workbenchTotal.value = 0
+      candidateMap.value = {}
       summary.value = { pending_review: 0, confirmed: 0, unmatched: 0, automatic_matched: 0 }
       if (calculatingTask.value && !hasUnknownReviewState.value) await refreshCalculatingProgress()
     }
@@ -450,7 +632,7 @@ async function load(): Promise<void> {
     calculatingTask.value = null
     calculatingProgress.value = null
     latestFailed.value = null
-    loadError.value = apiErrorMessage(error, 'STEP3 状态读取失败')
+    loadError.value = apiErrorMessage(error, '第三步状态读取失败')
   } finally {
     loading.value = false
     startPollingIfNeeded()
@@ -458,7 +640,7 @@ async function load(): Promise<void> {
 }
 
 async function selectTask(taskId: string): Promise<void> {
-  const task = actionableTasks.value.find(row => row.id === taskId)
+  const task = workspaceTasks.value.find(row => row.id === taskId)
   if (!task) return
   await router.replace({ path: '/review', query: { task: task.id } })
   await loadWorkbenchContext(task.id)
@@ -468,8 +650,8 @@ function openTask(task: ReviewTask): void {
   void router.push(`/tasks/${task.id}`)
 }
 
-function onRiskChange(mode: RiskMode): void {
-  riskMode.value = mode
+function onStatusChange(next: StatusFilter): void {
+  statusFilter.value = next
   void loadItems(true)
 }
 
@@ -488,77 +670,33 @@ function onPageSizeChange(nextSize: number): void {
   void loadItems(false)
 }
 
-function onSelection(rows: WorkbenchItem[]): void {
-  selectedRows.value = rows
-}
-
 function invalidateThresholdPreview(): void {
   if (thresholdPreviewSignature.value !== currentPreviewSignature.value) thresholdPreview.value = null
 }
 
-async function postFirstAvailable(paths: string[], payload: Record<string, unknown>): Promise<{ data: any; path: string } | null> {
-  for (const path of paths) {
-    try {
-      const response = await api.post(path, payload)
-      return { data: response.data, path }
-    } catch (error) {
-      if ([404, 405].includes(errorStatus(error))) continue
-      throw error
-    }
-  }
-  return null
-}
-
 function normalizeThresholdPreview(data: any): ThresholdPreview {
   const raw = data?.preview ?? data ?? {}
-  const rawSummary = raw.summary ?? raw.resulting_summary ?? {}
-  const reviewToMatched = Number(raw.review_to_matched ?? raw.promoted_to_matched ?? raw.matched_delta ?? raw.impact?.review_to_matched ?? 0)
-  const remainingReview = Number(raw.remaining_review ?? raw.pending_review ?? rawSummary.pending_review ?? raw.impact?.remaining_review ?? summary.value.pending_review)
-  const protectedConflicts = Number(raw.protected_conflicts ?? raw.critical_conflicts_blocked ?? raw.critical_conflict_count ?? raw.impact?.protected_conflicts ?? riskCounts.value.conflict)
-  const resultingUnmatched = Number(raw.resulting_unmatched ?? raw.unmatched ?? rawSummary.unmatched ?? summary.value.unmatched)
+  const before = raw.before ?? raw.current_summary ?? summary.value
+  const after = raw.after ?? raw.resulting_summary ?? raw.summary ?? {}
+  const beforeAutomatic = Number(before.automatic_matched ?? before.matched ?? summary.value.automatic_matched)
+  const afterAutomatic = Number(after.automatic_matched ?? after.matched ?? raw.automatic_matched ?? beforeAutomatic)
   return {
-    exact: true,
-    reviewToMatched: Number.isFinite(reviewToMatched) ? reviewToMatched : 0,
-    remainingReview: Number.isFinite(remainingReview) ? remainingReview : Number(summary.value.pending_review),
-    protectedConflicts: Number.isFinite(protectedConflicts) ? protectedConflicts : Number(riskCounts.value.conflict),
-    resultingUnmatched: Number.isFinite(resultingUnmatched) ? resultingUnmatched : Number(summary.value.unmatched),
-    note: String(raw.note ?? '后端已按完整任务数据完成预览；正式数据尚未修改。'),
+    addedAutomatic: Number(raw.review_to_matched ?? raw.promoted_to_matched ?? raw.matched_delta ?? Math.max(0, afterAutomatic - beforeAutomatic) ?? 0),
+    remainingManual: Number(raw.remaining_review ?? raw.pending_review ?? after.pending_review ?? after.review ?? summary.value.pending_review),
+    unmatched: Number(raw.resulting_unmatched ?? raw.unmatched ?? after.unmatched ?? summary.value.unmatched),
   }
 }
 
-async function fallbackThresholdPreview(taskId: string): Promise<ThresholdPreview> {
-  const [promoteResponse, conflictResponse] = await Promise.all([
-    api.get(`/tasks/${taskId}/workbench/items`, { params: { first_score_min: draftSuccessThreshold.value, critical_conflict: false, page: 1, page_size: 1 } }),
-    api.get(`/tasks/${taskId}/workbench/items`, { params: { critical_conflict: true, page: 1, page_size: 1 } }),
-  ])
-  const promoted = Number(promoteResponse.data?.total ?? 0)
-  const protectedConflicts = Number(conflictResponse.data?.total ?? 0)
-  return {
-    exact: false,
-    reviewToMatched: promoted,
-    remainingReview: Math.max(0, Number(summary.value.pending_review) - promoted),
-    protectedConflicts,
-    resultingUnmatched: Number(summary.value.unmatched),
-    note: '兼容预览：当前后端 preview 接口尚未部署，仅用服务端筛选对现有 REVIEW 做只读估算。应用时仍由后端对完整未人工处理数据重判。',
-  }
-}
-
-async function previewThresholds(): Promise<void> {
-  const taskId = activeTaskId.value
-  if (!taskId || !thresholdValid.value) {
-    ElMessage.warning('阈值需满足：0 ≤ 人工确认下限 < 自动匹配阈值 ≤ 100')
-    return
-  }
+async function previewThreshold(): Promise<void> {
+  if (!activeTaskId.value || !thresholdValid.value) return
   previewBusy.value = true
   try {
-    const payload = { success_threshold: draftSuccessThreshold.value, review_threshold: draftReviewThreshold.value }
-    const response = await postFirstAvailable([
-      `/tasks/${taskId}/workbench/thresholds/preview`,
-      `/tasks/${taskId}/thresholds/preview`,
-      `/tasks/${taskId}/threshold-preview`,
-      `/tasks/${taskId}/re-decide/preview`,
-    ], payload)
-    thresholdPreview.value = response ? normalizeThresholdPreview(response.data) : await fallbackThresholdPreview(taskId)
+    const response = await api.post(`/tasks/${activeTaskId.value}/re-decide`, {
+      success_threshold: draftSuccessThreshold.value,
+      review_threshold: currentReviewThreshold.value,
+      mode: 'preview',
+    })
+    thresholdPreview.value = normalizeThresholdPreview(response.data)
     thresholdPreviewSignature.value = currentPreviewSignature.value
   } catch (error) {
     thresholdPreview.value = null
@@ -569,33 +707,29 @@ async function previewThresholds(): Promise<void> {
   }
 }
 
-async function applyThresholds(): Promise<void> {
-  const taskId = activeTaskId.value
-  if (!taskId || !canApplyThresholds.value || !thresholdPreview.value) return
+async function applyThreshold(): Promise<void> {
+  if (!activeTaskId.value || !canApplyThreshold.value) return
   try {
-    await ElMessageBox.confirm(
-      `将自动匹配阈值调整为 ${draftSuccessThreshold.value}，人工确认下限调整为 ${draftReviewThreshold.value}。本操作只会在你确认后修改正式判定结果。`,
-      '应用新阈值',
-      { confirmButtonText: '确认应用', cancelButtonText: '取消', type: 'warning' },
-    )
+    await ElMessageBox.confirm(`将自动匹配阈值从 ${currentSuccessThreshold.value} 调整为 ${draftSuccessThreshold.value}。`, '应用新阈值', {
+      confirmButtonText: '确认应用',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
   } catch {
     return
   }
   applyBusy.value = true
   try {
-    const payload = { success_threshold: draftSuccessThreshold.value, review_threshold: draftReviewThreshold.value }
-    const response = await postFirstAvailable([
-      `/tasks/${taskId}/workbench/thresholds/apply`,
-      `/tasks/${taskId}/thresholds/apply`,
-      `/tasks/${taskId}/threshold-apply`,
-    ], payload)
-    if (!response) await api.post(`/tasks/${taskId}/re-decide`, payload)
+    await api.post(`/tasks/${activeTaskId.value}/re-decide`, {
+      success_threshold: draftSuccessThreshold.value,
+      review_threshold: currentReviewThreshold.value,
+      mode: 'apply',
+    })
     currentSuccessThreshold.value = draftSuccessThreshold.value
-    currentReviewThreshold.value = draftReviewThreshold.value
     thresholdPreview.value = null
     thresholdPreviewSignature.value = ''
-    ElMessage.success('新阈值已应用，人工队列已按最新结果刷新')
-    await load()
+    ElMessage.success('自动匹配阈值已应用')
+    await refreshAfterMutation()
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '应用新阈值失败'))
   } finally {
@@ -603,57 +737,7 @@ async function applyThresholds(): Promise<void> {
   }
 }
 
-async function batchConfirmHigh(): Promise<void> {
-  const base = selectedRows.value.length ? selectedRows.value : workbenchItems.value
-  const rows = base.filter(item => riskOf(item) === 'high')
-  if (!rows.length) {
-    ElMessage.info('当前选择/当前页没有“高分且无冲突”的记录')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(`将批量确认 ${rows.length} 条高置信记录的第一候选。`, '批量确认高置信第一候选', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' })
-  } catch {
-    return
-  }
-  mutationBusy.value = true
-  try {
-    const response = (await api.post(`/tasks/${activeTaskId.value}/workbench/batch-confirm-top1`, { source_row_ids: rows.map(row => row.source_row_id) })).data ?? {}
-    ElMessage.success(`已确认 ${Number(response.success?.length ?? rows.length)} 条`)
-    await refreshAfterMutation()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '批量确认失败'))
-  } finally {
-    mutationBusy.value = false
-  }
-}
-
-async function batchRejectLow(): Promise<void> {
-  const base = selectedRows.value.length ? selectedRows.value : workbenchItems.value
-  const rows = base.filter(item => riskOf(item) === 'low')
-  if (!rows.length) {
-    ElMessage.info('当前选择/当前页没有“明显低分”的记录')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(`将 ${rows.length} 条明显低分记录标记为未匹配。`, '批量标记明显未匹配', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' })
-  } catch {
-    return
-  }
-  mutationBusy.value = true
-  try {
-    const response = (await api.post(`/tasks/${activeTaskId.value}/workbench/batch-reject`, { source_row_ids: rows.map(row => row.source_row_id) })).data ?? {}
-    ElMessage.success(`已标记未匹配 ${Number(response.success?.length ?? rows.length)} 条`)
-    await refreshAfterMutation()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '批量标记未匹配失败'))
-  } finally {
-    mutationBusy.value = false
-  }
-}
-
-async function refreshAfterMutation(): Promise<void> {
-  const taskId = activeTaskId.value
-  if (!taskId) return
+async function refreshSummary(taskId: string): Promise<void> {
   const response = (await api.get(`/tasks/${taskId}/workbench/summary`)).data ?? {}
   summary.value = {
     pending_review: Number(response.pending_review ?? 0),
@@ -663,57 +747,87 @@ async function refreshAfterMutation(): Promise<void> {
   }
   const row = reviewRows.value.find(item => item.id === taskId)
   if (row) row.summary = { ...summary.value }
-  if (summary.value.pending_review <= 0) {
-    await load()
-    return
-  }
-  await Promise.all([loadRiskCounts(taskId), loadItems(false)])
 }
 
-async function openCandidates(item: WorkbenchItem): Promise<void> {
-  drawerItem.value = item
-  drawerVisible.value = true
-  drawerLoading.value = true
-  candidateIndex.value = 0
-  candidates.value = []
+async function refreshAfterMutation(): Promise<void> {
+  const taskId = activeTaskId.value
+  if (!taskId) return
+  await refreshSummary(taskId)
+  await loadItems(false)
+}
+
+async function applyRowSelection(item: WorkbenchItem): Promise<void> {
+  const selected = selectedValue(item)
+  if (!selected) return
+  mutationBusyRow.value = item.source_row_id
+  try {
+    if (selected === NONE_SELECTION) {
+      await api.post(`/tasks/${activeTaskId.value}/items/${item.source_row_id}/reject`, { comment: '' })
+      ElMessage.success('已确认均不匹配')
+    } else {
+      await api.post(`/tasks/${activeTaskId.value}/items/${item.source_row_id}/confirm`, { target_id: selected, comment: '' })
+      ElMessage.success(`已匹配到 ${selected}`)
+    }
+    await refreshAfterMutation()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '人工匹配操作失败'))
+  } finally {
+    mutationBusyRow.value = ''
+  }
+}
+
+async function cancelManualMatch(item: WorkbenchItem): Promise<void> {
+  mutationBusyRow.value = item.source_row_id
+  try {
+    const paths = [
+      `/tasks/${activeTaskId.value}/items/${item.source_row_id}/cancel-confirm`,
+      `/tasks/${activeTaskId.value}/items/${item.source_row_id}/unconfirm`,
+      `/tasks/${activeTaskId.value}/items/${item.source_row_id}/cancel`,
+    ]
+    let handled = false
+    for (const path of paths) {
+      try {
+        await api.post(path, {})
+        handled = true
+        break
+      } catch (error) {
+        if ([404, 405].includes(errorStatus(error))) continue
+        throw error
+      }
+    }
+    if (!handled) throw new Error('当前后端尚未提供取消人工匹配接口')
+    ElMessage.success('已取消人工匹配，可重新选择候选')
+    selectedByRow.value = { ...selectedByRow.value, [item.source_row_id]: '' }
+    await refreshAfterMutation()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '取消匹配失败'))
+  } finally {
+    mutationBusyRow.value = ''
+  }
+}
+
+async function retryCandidates(item: WorkbenchItem): Promise<void> {
+  candidateLoading.value = { ...candidateLoading.value, [item.source_row_id]: true }
+  candidateError.value = { ...candidateError.value, [item.source_row_id]: false }
   try {
     const response = (await api.get(`/tasks/${activeTaskId.value}/items/${item.source_row_id}/candidates`)).data ?? {}
-    candidates.value = Array.isArray(response.candidates) ? response.candidates : []
+    candidateMap.value = {
+      ...candidateMap.value,
+      [item.source_row_id]: (Array.isArray(response.candidates) ? response.candidates : []).map(normalizeCandidate).slice(0, 5),
+    }
+    syncFieldSelection()
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '候选详情读取失败'))
+    candidateError.value = { ...candidateError.value, [item.source_row_id]: true }
+    ElMessage.error(apiErrorMessage(error, '候选读取失败'))
   } finally {
-    drawerLoading.value = false
+    candidateLoading.value = { ...candidateLoading.value, [item.source_row_id]: false }
   }
 }
 
-async function confirmCandidate(candidate = currentCandidate.value): Promise<void> {
-  if (!drawerItem.value || !candidate) return
-  mutationBusy.value = true
-  try {
-    await api.post(`/tasks/${activeTaskId.value}/items/${drawerItem.value.source_row_id}/confirm`, { target_id: candidate.target_group_code, comment: '' })
-    ElMessage.success(`已确认候选 ${candidate.target_group_code}`)
-    drawerVisible.value = false
-    await refreshAfterMutation()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '确认候选失败'))
-  } finally {
-    mutationBusy.value = false
-  }
-}
-
-async function rejectDrawerItem(): Promise<void> {
-  if (!drawerItem.value) return
-  mutationBusy.value = true
-  try {
-    await api.post(`/tasks/${activeTaskId.value}/items/${drawerItem.value.source_row_id}/reject`, { comment: '' })
-    ElMessage.success('已标记为未匹配')
-    drawerVisible.value = false
-    await refreshAfterMutation()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '标记未匹配失败'))
-  } finally {
-    mutationBusy.value = false
-  }
+async function openMoreFields(item: WorkbenchItem): Promise<void> {
+  drawerItem.value = item
+  if (!candidatesFor(item).length && !candidateLoading.value[item.source_row_id]) await retryCandidates(item)
+  drawerVisible.value = true
 }
 
 onMounted(() => void load())
@@ -727,65 +841,62 @@ onBeforeUnmount(() => {
   <div class="review-page">
     <div class="toolbar review-toolbar">
       <div>
-        <h2>STEP 3 · 异常处理工作台</h2>
-        <p>自动消化大多数记录，批量处理明显记录，把人工精力留给真正有歧义的小部分。</p>
+        <h2>第三步 · 人工调整</h2>
+        <p>直接比较源物料与前 5 个候选，选择正确集团码；不需要逐条打开弹窗。</p>
       </div>
       <div class="review-toolbar-actions">
-        <el-select v-if="actionableTasks.length > 1" :model-value="activeTaskId" class="review-task-switcher" placeholder="切换待处理任务" @change="selectTask">
-          <el-option v-for="taskRow in actionableTasks" :key="taskRow.id" :label="`${taskRow.name} · ${formatNumber(taskRow.summary?.pending_review)} 条待确认`" :value="taskRow.id" />
+        <el-select v-if="workspaceTasks.length > 1" :model-value="activeTaskId" class="review-task-switcher" placeholder="切换任务" @change="selectTask">
+          <el-option v-for="taskRow in workspaceTasks" :key="taskRow.id" :label="`${taskRow.name} · ${formatNumber(taskRow.summary?.pending_review)} 条待人工`" :value="taskRow.id" />
         </el-select>
-        <el-button :loading="loading" @click="load">刷新状态</el-button>
+        <el-button :loading="loading" @click="load">刷新</el-button>
       </div>
     </div>
 
     <section v-if="consoleMode !== 'ready'" class="review-console" :class="`is-${consoleMode}`" aria-live="polite">
       <template v-if="consoleMode === 'waiting' && calculatingTask">
         <div class="review-console-main">
-          <div class="review-console-kicker"><span class="review-status-dot"></span>STEP2 计算进行中</div>
-          <h3>正在等待 STEP2 计算完成</h3>
-          <p>当前任务「{{ calculatingTask.name }}」仍在计算。中间结果不会提前进入人工队列，计算完成后这里会自动切换为异常处理工作台。</p>
+          <div class="review-console-kicker"><span class="review-status-dot"></span>第二步计算进行中</div>
+          <h3>等待匹配计算完成</h3>
+          <p>任务「{{ calculatingTask.name }}」仍在计算，完成后这里会自动出现在线人工匹配工作台。</p>
           <div class="review-console-meta">
             <span>{{ phaseLabel(calculatingProgress?.current_phase) }}</span>
-            <span>{{ statusLabel(calculatingProgress?.status ?? calculatingTask.status) }}</span>
+            <span>{{ runStatusLabel(calculatingProgress?.status ?? calculatingTask.status) }}</span>
             <span v-if="waitingTotal > 0">已处理 {{ formatNumber(waitingProcessed) }} / {{ formatNumber(waitingTotal) }} 行</span>
           </div>
         </div>
         <div class="review-wait-progress">
-          <div class="review-wait-percent"><b>{{ waitingPercent }}%</b><span>STEP2 计算进度</span></div>
+          <div class="review-wait-percent"><b>{{ waitingPercent }}%</b><span>计算进度</span></div>
           <el-progress :percentage="waitingPercent" :stroke-width="10" :show-text="false" />
         </div>
         <div class="review-console-action">
-          <el-button type="primary" plain size="large" @click="openTask(calculatingTask)">查看 STEP2 计算进度</el-button>
-          <small>当前不可进行人工复核</small>
+          <el-button type="primary" plain size="large" @click="openTask(calculatingTask)">查看计算进度</el-button>
         </div>
       </template>
 
       <template v-else-if="consoleMode === 'error'">
         <div class="review-console-main">
           <div class="review-console-kicker"><span class="review-status-dot"></span>状态读取异常</div>
-          <h3>暂时无法确认是否存在可人工处理的数据</h3>
-          <p>{{ loadError || '部分人工处理汇总读取失败，为避免误导，未把未知状态的任务标记为可处理。' }}</p>
+          <h3>暂时无法读取人工调整数据</h3>
+          <p>{{ loadError || '部分任务汇总读取失败，请重试。' }}</p>
         </div>
         <div class="review-console-action">
           <el-button type="primary" :loading="loading" @click="load">重新读取</el-button>
-          <el-button @click="router.push('/tasks')">前往 STEP2</el-button>
         </div>
       </template>
 
       <template v-else>
         <div class="review-console-main">
-          <div class="review-console-kicker"><span class="review-status-dot"></span>暂无待处理数据</div>
-          <h3>当前没有真正需要人工判断的记录</h3>
-          <p>如果 STEP2 尚未开始，请先启动计算；如果任务已完成且待确认数为 0，可以直接进入 STEP4。</p>
+          <div class="review-console-kicker"><span class="review-status-dot"></span>暂无可调整任务</div>
+          <h3>当前没有可进入人工调整的匹配结果</h3>
+          <p>请先完成第二步匹配计算；已有最终结果的任务可前往第四步查看。</p>
           <div v-if="latestFailed" class="review-failure-note">
             <b>最近失败任务：{{ latestFailed.name }}</b>
-            <span>{{ latestFailed.error_message || latestFailed.error_code || '计算失败，未产生可进入 STEP3 的完成数据' }}</span>
-            <el-button link type="danger" @click="openTask(latestFailed)">查看失败详情</el-button>
+            <span>{{ latestFailed.error_message || latestFailed.error_code || '计算失败' }}</span>
           </div>
         </div>
         <div class="review-console-action review-empty-actions">
-          <el-button type="primary" size="large" @click="router.push('/tasks')">前往 STEP2</el-button>
-          <el-button size="large" @click="router.push('/results')">查看 STEP4</el-button>
+          <el-button type="primary" size="large" @click="router.push('/tasks')">前往第二步</el-button>
+          <el-button size="large" @click="router.push('/results')">查看第四步</el-button>
         </div>
       </template>
     </section>
@@ -793,125 +904,138 @@ onBeforeUnmount(() => {
     <template v-if="consoleMode === 'ready' && activeTask">
       <section class="review-task-hero">
         <div>
-          <div class="review-console-kicker"><span class="review-status-dot"></span>正在处理 · {{ activeTask.name }}</div>
-          <h3>先处理异常类型，再深入到单条候选</h3>
-          <p>默认列表只请求后端仍处于 REVIEW 的记录；分页、筛选和搜索全部在服务端执行，不会把全量数据加载到浏览器。</p>
+          <div class="review-console-kicker"><span class="review-status-dot"></span>正在调整 · {{ activeTask.name }}</div>
+          <h3>所有状态都可以复查，待人工记录直接在本页完成选择</h3>
+          <p>列表使用服务端分页和筛选。每条记录仅加载当前页的 Top 5 候选，不会一次把上万条数据送到浏览器。</p>
         </div>
         <div class="review-task-hero-meta">
           <span>任务 {{ activeTask.id.slice(0, 12) }}</span>
-          <span>完成 {{ formatDate(activeTask.finished_at) }}</span>
+          <span>计算完成 {{ formatDate(activeTask.finished_at) }}</span>
         </div>
       </section>
 
-      <section class="review-metric-grid" aria-label="人工处理汇总">
-        <div class="review-metric-card"><span>总记录数</span><b>{{ formatNumber(totalRecords) }}</b><small>本任务全部记录</small></div>
-        <div class="review-metric-card is-success"><span>自动匹配</span><b>{{ formatNumber(summary.automatic_matched) }}</b><small>无需人工</small></div>
-        <div class="review-metric-card is-warning"><span>待确认</span><b>{{ formatNumber(summary.pending_review) }}</b><small>当前人工队列</small></div>
-        <div class="review-metric-card"><span>已人工确认</span><b>{{ formatNumber(summary.confirmed) }}</b><small>人工已处理</small></div>
-        <div class="review-metric-card"><span>未匹配</span><b>{{ formatNumber(summary.unmatched) }}</b><small>已判定无匹配</small></div>
-        <div class="review-metric-card is-danger"><span>关键字段冲突</span><b>{{ riskCountsLoading ? '…' : formatNumber(riskCounts.conflict) }}</b><small>不会自动放行</small></div>
-        <div class="review-metric-card is-warning"><span>候选分差过小</span><b>{{ riskCountsLoading ? '…' : formatNumber(riskCounts.gap) }}</b><small>Top1 / Top2 ≤ 5 分</small></div>
+      <section class="review-metric-grid" aria-label="匹配状态汇总">
+        <div class="review-metric-card"><span>全部</span><b>{{ formatNumber(totalRecords) }}</b><small>本任务全部记录</small></div>
+        <div class="review-metric-card is-success"><span>已自动匹配</span><b>{{ formatNumber(summary.automatic_matched) }}</b><small>系统自动完成</small></div>
+        <div class="review-metric-card is-warning"><span>待人工匹配</span><b>{{ formatNumber(summary.pending_review) }}</b><small>需要人工选择</small></div>
+        <div class="review-metric-card is-primary"><span>已人工匹配</span><b>{{ formatNumber(summary.confirmed) }}</b><small>可以继续复查</small></div>
+        <div class="review-metric-card"><span>未匹配</span><b>{{ formatNumber(summary.unmatched) }}</b><small>当前没有匹配结果</small></div>
       </section>
 
       <section class="review-strategy-card">
         <div class="review-strategy-head">
           <div>
-            <div class="review-section-kicker">判定策略</div>
-            <h3>先预览影响，再应用新阈值</h3>
-            <p>拖动滑块只修改本地草稿，不会立即改变正式匹配结果。必须先点击“预览影响”，确认后才能应用。</p>
+            <div class="review-section-kicker">自动匹配阈值</div>
+            <h3>预览影响后再应用</h3>
+            <p>这里只调整自动匹配阈值；预览不会修改正式结果。</p>
           </div>
-          <div class="review-current-thresholds">
-            <span>当前自动匹配阈值 <b>{{ currentSuccessThreshold }}</b></span>
-            <span>当前人工确认下限 <b>{{ currentReviewThreshold }}</b></span>
-          </div>
+          <div class="review-current-threshold">当前 <b>{{ currentSuccessThreshold }}</b></div>
         </div>
-
         <div class="review-threshold-editor">
           <div class="review-threshold-control">
-            <div class="review-threshold-label"><span>自动匹配阈值</span><b>{{ draftSuccessThreshold }}</b></div>
-            <el-slider v-model="draftSuccessThreshold" :min="1" :max="100" :step="1" @input="invalidateThresholdPreview" />
-          </div>
-          <div class="review-threshold-control">
-            <div class="review-threshold-label"><span>人工确认下限</span><b>{{ draftReviewThreshold }}</b></div>
-            <el-slider v-model="draftReviewThreshold" :min="0" :max="99" :step="1" @input="invalidateThresholdPreview" />
+            <div class="review-threshold-label"><span>新的自动匹配阈值</span><b>{{ draftSuccessThreshold }}</b></div>
+            <el-slider v-model="draftSuccessThreshold" :min="currentReviewThreshold + 1" :max="100" :step="1" @input="invalidateThresholdPreview" />
           </div>
           <div class="review-threshold-actions">
-            <el-button type="primary" plain :loading="previewBusy" :disabled="!thresholdValid" @click="previewThresholds">预览影响</el-button>
-            <el-button type="primary" :loading="applyBusy" :disabled="!canApplyThresholds" @click="applyThresholds">应用新阈值</el-button>
+            <el-button type="primary" plain :loading="previewBusy" :disabled="!thresholdDirty || !thresholdValid" @click="previewThreshold">预览影响</el-button>
+            <el-button type="primary" :loading="applyBusy" :disabled="!canApplyThreshold" @click="applyThreshold">应用新阈值</el-button>
           </div>
         </div>
-        <div v-if="!thresholdValid" class="review-threshold-error">阈值需满足：0 ≤ 人工确认下限 &lt; 自动匹配阈值 ≤ 100。</div>
-
-        <div v-if="thresholdPreview" class="review-impact-preview" :class="{ 'is-estimate': !thresholdPreview.exact }">
-          <div class="review-impact-title">
-            <div><b>预览结果</b><span>{{ thresholdPreview.exact ? '完整后端预览' : '兼容只读估算' }}</span></div>
-            <small>正式数据尚未修改</small>
-          </div>
-          <div class="review-impact-grid">
-            <div><span>REVIEW → MATCHED</span><b>+{{ formatNumber(thresholdPreview.reviewToMatched) }}</b></div>
-            <div><span>仍需人工</span><b>{{ formatNumber(thresholdPreview.remainingReview) }}</b></div>
-            <div><span>关键冲突保护</span><b>{{ formatNumber(thresholdPreview.protectedConflicts) }}</b></div>
-            <div><span>预计未匹配</span><b>{{ formatNumber(thresholdPreview.resultingUnmatched) }}</b></div>
-          </div>
-          <p>{{ thresholdPreview.note }}</p>
+        <div v-if="thresholdPreview" class="review-impact-grid">
+          <div><span>预计新增自动匹配</span><b>+{{ formatNumber(thresholdPreview.addedAutomatic) }}</b></div>
+          <div><span>预计还需人工</span><b>{{ formatNumber(thresholdPreview.remainingManual) }}</b></div>
+          <div><span>预计未匹配</span><b>{{ formatNumber(thresholdPreview.unmatched) }}</b></div>
         </div>
       </section>
 
       <section class="panel review-workbench-panel">
         <div class="review-workbench-head">
           <div>
-            <div class="review-section-kicker">异常队列</div>
-            <h3>真正需要人判断的记录</h3>
-            <p>按风险类别切换，优先批量消化明显记录；只有有歧义的行才进入候选对比。</p>
+            <div class="review-section-kicker">在线人工匹配</div>
+            <h3>源物料与 Top 5 候选直接对比</h3>
+            <p>绿色表示一致，黄色表示部分一致，红色表示不一致，灰色表示一侧或两侧没有数据；文字状态始终同时显示。</p>
           </div>
-          <div class="review-batch-actions">
-            <el-button type="success" plain :loading="mutationBusy" @click="batchConfirmHigh">批量确认高置信第一候选</el-button>
-            <el-button type="danger" plain :loading="mutationBusy" @click="batchRejectLow">批量标记明显未匹配</el-button>
+          <div class="review-field-actions">
+            <el-select v-model="selectedFieldIds" multiple collapse-tags collapse-tags-tooltip class="review-field-select" placeholder="选择显示字段" @change="onFieldSelectionChange">
+              <el-option v-for="field in pageFieldDescriptors" :key="field.id" :label="field.label" :value="field.id" />
+            </el-select>
+            <el-button @click="showAllFields = !showAllFields">{{ showAllFields ? '收起字段' : '展开全部字段' }}</el-button>
           </div>
         </div>
 
-        <div class="review-risk-grid">
-          <button v-for="mode in RISK_MODES" :key="mode" type="button" class="review-risk-card" :class="{ 'is-active': riskMode === mode, [`is-${mode}`]: true }" @click="onRiskChange(mode)">
-            <span>{{ riskLabel(mode) }}</span>
-            <b>{{ riskCountsLoading && mode !== 'all' ? '…' : formatNumber(riskCounts[mode]) }}</b>
-            <small>{{ riskHint(mode) }}</small>
+        <div class="review-status-tabs" role="tablist" aria-label="状态筛选">
+          <button v-for="tab in STATUS_TABS" :key="tab.key" type="button" class="review-status-tab" :class="{ 'is-active': statusFilter === tab.key }" @click="onStatusChange(tab.key)">
+            <span>{{ tab.label }}</span><b>{{ formatNumber(filterCount(tab.key)) }}</b>
           </button>
         </div>
 
         <div class="review-list-tools">
           <div class="review-search-box">
-            <el-input v-model="searchQ" clearable placeholder="搜索物料编码、源数据或第一候选集团码" @keyup.enter="onSearch" @clear="onSearch" />
+            <el-input v-model="searchQ" clearable placeholder="搜索源物料、源数据或集团码" @keyup.enter="onSearch" @clear="onSearch" />
             <el-button @click="onSearch">搜索</el-button>
           </div>
-          <span class="review-selection-hint">已选 {{ selectedRows.length }} 条；未选择时批量按钮仅处理当前页对应风险记录。</span>
+          <span>当前页 {{ workbenchItems.length }} 条 · 服务端分页</span>
         </div>
 
-        <el-table v-loading="listLoading" :data="workbenchItems" size="default" row-key="source_row_id" @selection-change="onSelection">
-          <el-table-column type="selection" width="46" />
-          <el-table-column prop="source_id" label="源物料" min-width="150" />
-          <el-table-column label="源数据摘要" min-width="260">
-            <template #default="scope"><span class="review-payload-brief">{{ sourceBrief(scope.row) }}</span></template>
-          </el-table-column>
-          <el-table-column label="风险" width="150">
-            <template #default="scope"><el-tag size="small" :type="riskTagType(riskOf(scope.row))">{{ riskLabel(riskOf(scope.row)) }}</el-tag></template>
-          </el-table-column>
-          <el-table-column label="第一候选" min-width="150">
-            <template #default="scope"><b>{{ scope.row.top1_group_code || '—' }}</b><div class="review-score-sub">{{ formatScore(scope.row.top1_score) }} 分</div></template>
-          </el-table-column>
-          <el-table-column label="第二候选" width="110">
-            <template #default="scope">{{ formatScore(scope.row.second_score) }} 分</template>
-          </el-table-column>
-          <el-table-column label="分差" width="90">
-            <template #default="scope"><b :class="{ 'review-gap-danger': Number(scope.row.score_gap) <= 5 }">{{ formatScore(scope.row.score_gap) }}</b></template>
-          </el-table-column>
-          <el-table-column label="操作" width="132" fixed="right">
-            <template #default="scope"><el-button link type="primary" @click="openCandidates(scope.row)">为什么犹豫？</el-button></template>
-          </el-table-column>
-          <template #empty><el-empty description="当前风险分类下暂无待处理记录" :image-size="64" /></template>
-        </el-table>
+        <div v-loading="listLoading" class="review-record-list">
+          <article v-for="item in workbenchItems" :key="item.source_row_id" class="review-record-card">
+            <header class="review-record-head">
+              <div class="review-record-identity">
+                <el-tag size="small" :type="statusTagType(item.current_status)">{{ statusLabel(item.current_status) }}</el-tag>
+                <div><strong>{{ item.source_id || '未命名源物料' }}</strong><span v-if="item.source_row_number">源 Excel 第 {{ item.source_row_number }} 行</span></div>
+              </div>
+              <div class="review-record-current">
+                <span>当前结果</span><b>{{ item.final_group_code || (item.current_status === 'MATCHED' ? item.top1_group_code : '') || '—' }}</b>
+                <el-button link type="primary" @click="openMoreFields(item)">查看更多字段</el-button>
+              </div>
+            </header>
+
+            <div v-if="candidateError[item.source_row_id]" class="review-candidate-error">
+              <span>候选加载失败。</span><el-button link type="primary" @click="retryCandidates(item)">重新加载</el-button>
+            </div>
+
+            <div class="review-candidate-strip">
+              <label v-for="candidate in candidatesFor(item)" :key="candidate.rank" class="review-candidate-card" :class="{ 'is-selected': selectedValue(item) === candidate.target_group_code }">
+                <input type="radio" :name="`candidate-${item.source_row_id}`" :checked="selectedValue(item) === candidate.target_group_code" @change="setSelectedValue(item, candidate.target_group_code)" />
+                <div class="review-candidate-head">
+                  <div><span>候选 {{ candidate.rank }}</span><strong>{{ candidate.target_group_code || '—' }}</strong></div>
+                  <div class="review-candidate-score"><b>{{ formatScore(candidate.score) }}</b><small>分</small></div>
+                </div>
+                <div v-if="candidate.target_row_number" class="review-candidate-rowno">目标 Excel 第 {{ candidate.target_row_number }} 行</div>
+                <div class="review-compare-head"><span>字段</span><span>源物料</span><span>候选</span><span>对比</span></div>
+                <div v-for="field in visibleFieldDescriptors" :key="field.id" class="review-compare-row" :class="`is-${comparisonKind(item, candidate, field)}`">
+                  <span class="review-compare-field" :title="field.label">{{ field.label }}</span>
+                  <span class="review-compare-value source-value" :title="fieldValue(item.source_payload, field.sourceFields) || '无数据'">{{ fieldValue(item.source_payload, field.sourceFields) || '—' }}</span>
+                  <span class="review-compare-value target-value" :title="fieldValue(candidate.target_payload, field.targetFields) || '无数据'">{{ fieldValue(candidate.target_payload, field.targetFields) || '—' }}</span>
+                  <span class="review-compare-state"><i>{{ comparisonIcon(comparisonKind(item, candidate, field)) }}</i>{{ comparisonLabel(comparisonKind(item, candidate, field)) }}</span>
+                </div>
+              </label>
+
+              <label class="review-candidate-card review-none-card" :class="{ 'is-selected': selectedValue(item) === NONE_SELECTION }">
+                <input type="radio" :name="`candidate-${item.source_row_id}`" :checked="selectedValue(item) === NONE_SELECTION" @change="setSelectedValue(item, NONE_SELECTION)" />
+                <div class="review-none-icon">∅</div>
+                <strong>均不匹配</strong>
+                <p>Top 5 都不正确时选择这里，再点击确认。</p>
+              </label>
+            </div>
+
+            <footer class="review-record-actions">
+              <div class="review-record-hint">
+                <template v-if="candidateLoading[item.source_row_id]">正在加载 Top 5 候选…</template>
+                <template v-else>已加载 {{ candidatesFor(item).length }} 个候选；可横向滚动查看。</template>
+              </div>
+              <div>
+                <el-button v-if="item.current_status === 'CONFIRMED'" plain :loading="mutationBusyRow === item.source_row_id" @click="cancelManualMatch(item)">取消匹配</el-button>
+                <el-button type="primary" :loading="mutationBusyRow === item.source_row_id" :disabled="rowActionDisabled(item)" @click="applyRowSelection(item)">{{ rowActionText(item) }}</el-button>
+              </div>
+            </footer>
+          </article>
+
+          <el-empty v-if="!listLoading && !workbenchItems.length" :description="`${STATUS_TABS.find(tab => tab.key === statusFilter)?.label ?? '当前'}筛选下暂无记录`" :image-size="72" />
+        </div>
 
         <div class="review-pagination-row">
-          <span>服务端分页 · 当前仅渲染 {{ workbenchItems.length }} 条</span>
+          <span>仅渲染当前页，候选也只按当前页加载</span>
           <el-pagination background layout="total, sizes, prev, pager, next" :total="workbenchTotal" :current-page="page" :page-size="pageSize" :page-sizes="PAGE_SIZE_OPTIONS" @current-change="onPageChange" @size-change="onPageSizeChange" />
         </div>
       </section>
@@ -920,90 +1044,54 @@ onBeforeUnmount(() => {
     <section class="panel review-list-panel">
       <div class="section-head">
         <div>
-          <h3>人工处理任务记录</h3>
-          <p class="review-section-desc">用于切换历史/并行 REVIEW 任务；真正的逐条处理在上方异常工作台完成。</p>
+          <h3>可人工调整的任务</h3>
+          <p class="review-section-desc">可以切换其它已完成匹配计算且尚未最终导出的任务。</p>
         </div>
       </div>
       <el-table v-if="reviewRows.length" :data="reviewRows" size="default">
         <el-table-column label="名称" min-width="220"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.name }}</a><div class="row-sub">{{ scope.row.id }}</div></template></el-table-column>
-        <el-table-column label="待确认" width="120"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.pending_review) }}</template></el-table-column>
-        <el-table-column label="已人工确认" width="120"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.confirmed) }}</template></el-table-column>
-        <el-table-column label="计算完成时间" width="170"><template #default="scope">{{ formatDate(scope.row.finished_at) }}</template></el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column label="自动匹配" width="110"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.automatic_matched) }}</template></el-table-column>
+        <el-table-column label="待人工" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.pending_review) }}</template></el-table-column>
+        <el-table-column label="已人工" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.confirmed) }}</template></el-table-column>
+        <el-table-column label="未匹配" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.unmatched) }}</template></el-table-column>
+        <el-table-column label="计算完成" width="170"><template #default="scope">{{ formatDate(scope.row.finished_at) }}</template></el-table-column>
+        <el-table-column label="操作" width="130">
           <template #default="scope">
-            <el-button v-if="!scope.row.summaryError && Number(scope.row.summary?.pending_review ?? 0) > 0 && !scope.row.result_file_id" link type="primary" @click="selectTask(scope.row.id)">在工作台处理</el-button>
+            <el-button v-if="workspaceTasks.some(task => task.id === scope.row.id)" link type="primary" @click="selectTask(scope.row.id)">进入工作台</el-button>
             <el-button v-else link type="info" @click="openTask(scope.row)">查看任务</el-button>
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-else description="暂无进入过人工处理阶段的任务" :image-size="72" />
+      <el-empty v-else description="暂无已完成匹配计算的任务" :image-size="72" />
     </section>
 
-    <el-drawer v-model="drawerVisible" size="720px" class="review-decision-drawer" :with-header="false" :append-to-body="false">
-      <div class="review-drawer" v-loading="drawerLoading">
+    <el-drawer v-model="drawerVisible" size="92%" class="review-detail-drawer" :with-header="false" :append-to-body="false">
+      <div v-if="drawerItem" class="review-drawer">
         <div class="review-drawer-head">
           <div>
-            <div class="review-section-kicker">候选解释</div>
-            <h3>系统为什么犹豫？</h3>
-            <p v-if="drawerItem">源物料 {{ drawerItem.source_id }} · 第一候选 {{ drawerItem.top1_group_code || '—' }}</p>
+            <div class="review-section-kicker">完整字段对比</div>
+            <h3>{{ drawerItem.source_id }}</h3>
+            <p>这里展开当前源物料和 Top 5 候选的全部可见业务字段。</p>
           </div>
           <el-button circle @click="drawerVisible = false">×</el-button>
         </div>
-
-        <template v-if="drawerItem && !drawerLoading">
-          <div class="review-ambiguity-banner" :class="{ 'is-conflict': drawerItem.critical_conflict }">
-            <div><span>Top1</span><b>{{ formatScore(drawerItem.top1_score) }}</b></div>
-            <div><span>Top2</span><b>{{ formatScore(drawerItem.second_score) }}</b></div>
-            <div><span>分差</span><b>{{ formatScore(drawerItem.score_gap) }}</b></div>
-            <p v-if="drawerItem.critical_conflict">存在关键字段冲突，即使总分较高也不会自动放行。</p>
-            <p v-else-if="Number(drawerItem.score_gap) <= 5">第一、第二候选过于接近，系统无法安全自动决定。</p>
-            <p v-else-if="Number(drawerItem.top1_score) < 75">总体证据偏弱，更接近“未匹配”而不是强行选一个候选。</p>
-            <p v-else>总体分数处于人工确认区间，需要人确认第一候选是否符合业务语义。</p>
-          </div>
-
-          <div v-if="topCandidates.length" class="review-candidate-grid">
-            <button v-for="(candidate, index) in topCandidates" :key="candidate.rank" type="button" class="review-candidate-card" :class="{ 'is-selected': candidateIndex === index }" @click="candidateIndex = index">
-              <div class="review-candidate-rank">候选 {{ candidate.rank }}</div>
-              <strong>{{ candidate.target_group_code }}</strong>
-              <div class="review-candidate-score">{{ formatScore(candidate.score) }} <small>分</small></div>
-              <el-tag v-if="candidate.critical_conflict" size="small" type="danger">关键冲突</el-tag>
-              <span v-else class="review-candidate-safe">无关键冲突</span>
-            </button>
-          </div>
-
-          <div v-if="candidatePayloadDiffs.length" class="review-evidence-section">
-            <div class="review-evidence-title"><h4>第一 / 第二候选差在哪里</h4><span>只展示不同字段</span></div>
-            <div class="review-diff-table">
-              <div class="review-diff-row review-diff-head"><span>字段</span><span>第一候选</span><span>第二候选</span></div>
-              <div v-for="diff in candidatePayloadDiffs" :key="diff.key" class="review-diff-row"><b>{{ diff.key }}</b><span>{{ diff.first }}</span><span>{{ diff.second }}</span></div>
-            </div>
-          </div>
-
-          <div v-if="currentCandidate" class="review-evidence-section">
-            <div class="review-evidence-title"><h4>字段证据</h4><span>当前查看：{{ currentCandidate.target_group_code }}</span></div>
-            <div class="review-evidence-summary">
-              <span class="is-match">一致 {{ matchingFields.length }}</span>
-              <span class="is-conflict">冲突 {{ conflictFields.length }}</span>
-              <span class="is-deduction">导致扣分 {{ deductionFields.length }}</span>
-            </div>
-            <div class="review-field-list">
-              <div v-for="field in currentCandidate.field_scores" :key="field.rule_id" class="review-field-row" :class="{ 'is-conflict': field.conflict, 'is-deduction': !field.conflict && Number(field.score) < 99.999 }">
-                <div class="review-field-main"><b>{{ field.rule_id }}</b><span>{{ field.source_value || '—' }} → {{ field.target_value || '—' }}</span></div>
-                <div class="review-field-flags"><el-tag v-if="field.critical" size="small" type="danger">关键字段</el-tag><el-tag v-if="field.conflict" size="small" type="danger">冲突</el-tag><el-tag v-else-if="Number(field.score) >= 80" size="small" type="success">一致</el-tag><el-tag v-else size="small" type="warning">扣分项</el-tag><span>{{ formatScore(field.score) }} 分 · 权重 {{ formatScore(field.weight) }}<template v-if="Number(field.score) < 99.999"> · 扣分约 {{ deductionPoints(field) }}</template></span></div>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="candidates.length > 2" class="review-more-candidates">
-            <span>其他候选</span>
-            <el-button v-for="(candidate, index) in candidates.slice(2)" :key="candidate.rank" size="small" :type="candidateIndex === index + 2 ? 'primary' : 'default'" @click="candidateIndex = index + 2">#{{ candidate.rank }} {{ candidate.target_group_code }} · {{ formatScore(candidate.score) }}</el-button>
-          </div>
-
-          <div class="review-drawer-actions">
-            <el-button type="danger" plain :loading="mutationBusy" @click="rejectDrawerItem">标记未匹配</el-button>
-            <el-button type="primary" :loading="mutationBusy" :disabled="!currentCandidate" @click="confirmCandidate()">确认当前候选</el-button>
-          </div>
-        </template>
+        <div class="review-drawer-table-wrap">
+          <table class="review-drawer-table">
+            <thead>
+              <tr><th>字段</th><th>源物料</th><th v-for="candidate in drawerCandidates" :key="candidate.rank">候选 {{ candidate.rank }} · {{ candidate.target_group_code }}</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="field in drawerFieldDescriptors" :key="field.id">
+                <th>{{ field.label }}</th>
+                <td>{{ fieldValue(drawerItem.source_payload, field.sourceFields) || '—' }}</td>
+                <td v-for="candidate in drawerCandidates" :key="candidate.rank" :class="`is-${comparisonKind(drawerItem, candidate, field)}`">
+                  <span>{{ fieldValue(candidate.target_payload, field.targetFields) || '—' }}</span>
+                  <small>{{ comparisonIcon(comparisonKind(drawerItem, candidate, field)) }} {{ comparisonLabel(comparisonKind(drawerItem, candidate, field)) }}</small>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </el-drawer>
   </div>
