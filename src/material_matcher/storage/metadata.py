@@ -37,6 +37,12 @@ CREATE TABLE IF NOT EXISTS tasks(
   created_at TEXT NOT NULL, started_at TEXT, finished_at TEXT,
   error_code TEXT, error_message TEXT, result_file_id TEXT
 );
+CREATE TABLE IF NOT EXISTS task_actors(
+  task_id TEXT PRIMARY KEY,
+  created_by TEXT,
+  started_by TEXT,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+);
 CREATE TABLE IF NOT EXISTS task_runtime(
   task_id TEXT PRIMARY KEY, execution_mode TEXT NOT NULL, current_phase TEXT NOT NULL,
   index_id TEXT, updated_at TEXT NOT NULL,
@@ -73,6 +79,26 @@ CREATE TABLE IF NOT EXISTS reviews(
   original_status TEXT NOT NULL, selected_group_code TEXT, action TEXT NOT NULL,
   operator TEXT NOT NULL, comment TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS match_operation_logs(
+  operation_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  source_row_id TEXT NOT NULL,
+  source_row_number INTEGER,
+  operator TEXT NOT NULL,
+  operated_at TEXT NOT NULL,
+  operation_type TEXT NOT NULL,
+  before_status TEXT NOT NULL,
+  after_status TEXT NOT NULL,
+  previous_group_code TEXT,
+  selected_group_code TEXT,
+  previous_target_row_number INTEGER,
+  target_row_number INTEGER,
+  source TEXT NOT NULL,
+  comment TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(task_id, source_row_id) REFERENCES match_items(task_id, source_row_id)
+);
+CREATE INDEX IF NOT EXISTS idx_match_operation_task_time ON match_operation_logs(task_id, operated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_match_operation_item_time ON match_operation_logs(task_id, source_row_id, operated_at DESC);
 CREATE TABLE IF NOT EXISTS audit_events(
   event_id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
   action TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL
@@ -162,8 +188,10 @@ class MetadataRepository:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
-            # Forward-compatible migration for deployments created before source /
-            # target original-row traceability was introduced.
+            # Forward-compatible migrations for deployments created before source /
+            # target original-row traceability was introduced. New audit/actor
+            # capabilities use additive tables so the historical 19-column tasks
+            # table remains compatible with existing tools and tests.
             self._ensure_column(connection, "match_items", "source_row_number", "INTEGER")
             self._ensure_column(connection, "match_candidates", "target_row_number", "INTEGER")
             connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")

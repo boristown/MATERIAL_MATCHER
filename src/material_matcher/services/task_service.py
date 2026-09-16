@@ -218,7 +218,7 @@ class TaskService:
             )
         return self.get_draft(draft_id)
 
-    def start(self, draft_id: str) -> dict[str, object]:
+    def start(self, draft_id: str, actor: str = "system") -> dict[str, object]:
         draft = self.get_draft(draft_id)
         if not draft.get("source_file_id") or not draft.get("catalog_version_id"):
             raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据和集团码目录", status_code=422)
@@ -231,6 +231,7 @@ class TaskService:
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         task_id = uuid.uuid4().hex
         created_at = _now()
+        actor_name = actor or "system"
         with self.repo.connect() as connection:
             connection.execute(
                 "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -257,19 +258,48 @@ class TaskService:
                 ),
             )
             connection.execute(
+                "INSERT INTO task_actors(task_id,created_by,started_by) VALUES(?,?,?)",
+                (task_id, actor_name, actor_name),
+            )
+            connection.execute(
                 "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
-                (uuid.uuid4().hex, "task", task_id, "CONFIG_SNAPSHOT_FROZEN", _canonical({"config_sha256": digest}), created_at),
+                (
+                    uuid.uuid4().hex,
+                    "task",
+                    task_id,
+                    "CONFIG_SNAPSHOT_FROZEN",
+                    _canonical({"config_sha256": digest, "created_by": actor_name, "started_by": actor_name}),
+                    created_at,
+                ),
             )
         return self.get_task(task_id)
+
+    @staticmethod
+    def _with_actor_fields(task: dict[str, object], actor_row: Any | None) -> dict[str, object]:
+        task["created_by"] = str(actor_row["created_by"]) if actor_row is not None and actor_row["created_by"] is not None else None
+        task["started_by"] = str(actor_row["started_by"]) if actor_row is not None and actor_row["started_by"] is not None else None
+        return task
 
     def get_task(self, task_id: str) -> dict[str, object]:
         with self.repo.connect() as connection:
             row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            actor_row = connection.execute("SELECT created_by,started_by FROM task_actors WHERE task_id=?", (task_id,)).fetchone()
         if row is None:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
-        return self.repo.decode(row, ("config_snapshot",)) or {}
+        task = self.repo.decode(row, ("config_snapshot",)) or {}
+        return self._with_actor_fields(task, actor_row)
 
     def list_tasks(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
-            rows = connection.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
-        return [self.repo.decode(row, ("config_snapshot",)) or {} for row in rows]
+            rows = connection.execute(
+                """SELECT t.*, a.created_by AS actor_created_by, a.started_by AS actor_started_by
+                   FROM tasks t LEFT JOIN task_actors a ON a.task_id=t.task_id
+                   ORDER BY t.created_at DESC"""
+            ).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            item = self.repo.decode(row, ("config_snapshot",)) or {}
+            item["created_by"] = item.pop("actor_created_by", None)
+            item["started_by"] = item.pop("actor_started_by", None)
+            result.append(item)
+        return result
