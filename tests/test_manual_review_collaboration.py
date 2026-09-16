@@ -13,12 +13,7 @@ def _seed_review_task(client: TestClient, task_id: str = "manual-task") -> str:
     now = "2026-09-16T15:20:08+08:00"
     with meta.connect() as connection:
         connection.execute(
-            """INSERT INTO tasks(
-                task_id,name,source_file_id,catalog_version_id,profile_id,profile_version,
-                config_snapshot,config_sha256,stage,status,progress,processed_rows,total_rows,
-                created_at,started_at,finished_at,error_code,error_message,result_file_id,
-                created_by,started_by
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 task_id,
                 "人工协作测试",
@@ -39,9 +34,11 @@ def _seed_review_task(client: TestClient, task_id: str = "manual-task") -> str:
                 None,
                 None,
                 None,
-                "admin",
-                "admin",
             ),
+        )
+        connection.execute(
+            "INSERT INTO task_actors(task_id,created_by,started_by) VALUES(?,?,?)",
+            (task_id, "admin", "admin"),
         )
         for index, original_status in ((1, "REVIEW"), (2, "REVIEW"), (3, "MATCHED")):
             source_row_id = str(index)
@@ -255,6 +252,7 @@ def test_task_start_records_logged_in_creator_and_starter(authed: TestClient) ->
     assert task["created_at"]
 
     task_id = task["task_id"]
+    current = task
     for _ in range(100):
         current = authed.get(f"/api/tasks/{task_id}").json()
         if current.get("started_at"):
