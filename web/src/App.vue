@@ -39,14 +39,45 @@ async function logout(): Promise<void> {
   <router-view v-if="route.path === '/login'" />
   <div v-else class="shell">
     <aside>
-      <div class="brand"><span class="brand-mark">MM</span><div class="brand-text"><b>集团码匹配</b><small>MATERIAL_MATCHER</small></div></div>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg class="brand-logo" viewBox="0 0 44 44" role="img" aria-label="集团码匹配">
+            <defs>
+              <linearGradient id="brand-bg" x1="7" y1="5" x2="38" y2="40" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#48A6FF" />
+                <stop offset="0.46" stop-color="#2876F5" />
+                <stop offset="1" stop-color="#1847C9" />
+              </linearGradient>
+              <radialGradient id="brand-glow" cx="0" cy="0" r="1" gradientTransform="translate(12 8) rotate(47) scale(34)" gradientUnits="userSpaceOnUse">
+                <stop stop-color="white" stop-opacity="0.26" />
+                <stop offset="1" stop-color="white" stop-opacity="0" />
+              </radialGradient>
+              <linearGradient id="brand-accent" x1="15" y1="14" x2="29" y2="30" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#E7FAFF" />
+                <stop offset="1" stop-color="#8EEBFF" />
+              </linearGradient>
+            </defs>
+            <rect x="2" y="2" width="40" height="40" rx="11" fill="url(#brand-bg)" />
+            <rect x="2.5" y="2.5" width="39" height="39" rx="10.5" fill="url(#brand-glow)" stroke="white" stroke-opacity="0.14" />
+            <path d="M11 13.5h6.1c2.15 0 3.9 1.75 3.9 3.9v1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M33 13.5h-6.1c-2.15 0-3.9 1.75-3.9 3.9v1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M11 30.5h6.1c2.15 0 3.9-1.75 3.9-3.9v-1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M33 30.5h-6.1c-2.15 0-3.9-1.75-3.9-3.9v-1.1" fill="none" stroke="white" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+            <rect x="18.2" y="18.2" width="7.6" height="7.6" rx="2.15" transform="rotate(45 22 22)" fill="url(#brand-accent)" />
+            <circle cx="11" cy="13.5" r="1.7" fill="white" />
+            <circle cx="33" cy="13.5" r="1.7" fill="white" />
+            <circle cx="11" cy="30.5" r="1.7" fill="white" />
+            <circle cx="33" cy="30.5" r="1.7" fill="white" />
+          </svg>
+        </span>
+        <div class="brand-text"><b>集团码匹配</b></div>
+      </div>
       <div class="step-nav">
         <button v-for="step in steps" :key="step.n" :class="{ active: stepActive(step.path) }" @click="router.push(step.path)">
           <span class="step-no" :class="{ done: false }">{{ step.n }}</span>
           <span class="step-body"><span class="step-title">STEP {{ step.n }} · {{ step.title }}</span><span class="nav-desc">{{ step.desc }}</span></span>
         </button>
       </div>
-      <div class="side-divider">支撑功能</div>
       <nav class="support-nav">
         <button v-for="item in support" :key="item[1]" :class="{ active: route.path.startsWith(item[1]) }" @click="router.push(item[1])">
           <span class="nav-title">{{ item[0] }}</span>
@@ -66,3 +97,40 @@ async function logout(): Promise<void> {
     </main>
   </div>
 </template>
+
+<style scoped>
+.brand {
+  gap: 12px;
+  padding: 2px 8px 24px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: block;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.brand-logo {
+  display: block;
+  width: 42px;
+  height: 42px;
+  filter: drop-shadow(0 7px 10px rgba(20, 87, 214, 0.34));
+}
+
+.brand-text b {
+  color: #f7faff;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.9px;
+  line-height: 1.2;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.14);
+}
+
+.support-nav {
+  margin-top: 18px;
+}
+</style>
