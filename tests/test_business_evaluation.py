@@ -11,6 +11,10 @@ from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
 
 
+_MATCH_ITEM_COLUMNS = "task_id,source_row_id,source_id,source_payload,original_status,current_status,top1_group_code,top1_score,second_score,score_gap,critical_conflict,final_group_code,created_at,updated_at"
+_CANDIDATE_COLUMNS = "task_id,source_row_id,rank,target_group_code,target_payload,score,field_scores,critical_conflict"
+
+
 def _seed_task(meta: MetadataRepository) -> None:
     now = "2026-09-15T19:00:00+08:00"
     config = '{"decision":{"top_n":10}}'
@@ -24,7 +28,7 @@ def _seed_task(meta: MetadataRepository) -> None:
             ("task-1", "row-2", "B", "{}", "REVIEW", "CONFIRMED", "G9", 82.0, 80.0, 2.0, 0, "G2", now, now),
             ("task-1", "row-3", "C", "{}", "UNMATCHED", "UNMATCHED", "G8", 40.0, 39.0, 1.0, 0, None, now, now),
         ]
-        connection.executemany("INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        connection.executemany(f"INSERT INTO match_items({_MATCH_ITEM_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
         candidates = [
             ("task-1", "row-1", 1, "G1", "{}", 98.0, "{}", 0),
             ("task-1", "row-2", 1, "G9", "{}", 82.0, "{}", 0),
@@ -32,7 +36,7 @@ def _seed_task(meta: MetadataRepository) -> None:
             ("task-1", "row-3", 1, "G8", "{}", 40.0, "{}", 0),
             ("task-1", "row-3", 4, "G3", "{}", 37.0, "{}", 0),
         ]
-        connection.executemany("INSERT INTO match_candidates VALUES(?,?,?,?,?,?,?,?)", candidates)
+        connection.executemany(f"INSERT INTO match_candidates({_CANDIDATE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?)", candidates)
 
 
 def _truth_file(files: FileRepository) -> str:
@@ -105,7 +109,7 @@ def test_business_evaluation_rejects_duplicate_task_source_ids(tmp_path: Path) -
     now = "2026-09-15T19:00:00+08:00"
     with meta.connect() as connection:
         connection.execute(
-            "INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            f"INSERT INTO match_items({_MATCH_ITEM_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             ("task-1", "row-4", "A", "{}", "MATCHED", "MATCHED", "G1", 95.0, 60.0, 35.0, 0, "G1", now, now),
         )
     service = BusinessEvaluationService(meta, files)
