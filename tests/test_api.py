@@ -110,4 +110,4 @@ def test_persistent_worker_review_and_finalize_flow(authed: TestClient)->None:
         assert authed.post(f"/api/tasks/{task['task_id']}/finalize",json={'allow_unresolved_review':True}).status_code==200
     else:
         assert premature.status_code==200
-    result=authed.get(f"/api/tasks/{task['task_id']}/result"); assert result.status_code==200; wb=load_workbook(BytesIO(result.content),read_only=True); assert {'匹配结果','TopN候选','人工确认记录'} <= set(wb.sheetnames); wb.close()
+    result=authed.get(f"/api/tasks/{task['task_id']}/result"); assert result.status_code==200; wb=load_workbook(BytesIO(result.content),read_only=True); assert {'匹配摘要','最终匹配结果','Top5候选','人工操作记录','未匹配清单'} <= set(wb.sheetnames); wb.close()
