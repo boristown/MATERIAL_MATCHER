@@ -27,6 +27,10 @@ const indexes = ref<any[]>([])
 const benchmarks = ref<any[]>([])
 const users = ref<UserRow[]>([])
 const loading = ref(false)
+const technicalLoading = ref(false)
+const technicalLoaded = ref(false)
+const activeTab = ref('accounts')
+const advancedSections = ref<string[]>([])
 const embeddingBusy = ref(false)
 const vectorBusy = ref(false)
 const userDialogVisible = ref(false)
@@ -38,14 +42,15 @@ const resetPassword = ref('')
 const resetMustChange = ref(true)
 
 const roleLabel: Record<string, string> = { admin: '管理员', operator: '操作员', reviewer: '复核员', viewer: '只读用户' }
-const readyText = computed(() => vector.value?.embedding.ready ? '已就绪' : '未就绪')
+const readyText = computed(() => vector.value?.embedding.ready ? '已就绪' : '需要运维处理')
 const isAdmin = computed(() => me.value?.role === 'admin')
 const canOperate = computed(() => me.value?.role === 'admin' || me.value?.role === 'operator')
 const availableRoles = computed(() => {
   const serverRoles = info.value?.authorization?.roles?.filter((role) => role in roleLabel) ?? []
   return serverRoles.length ? serverRoles : Object.keys(roleLabel)
 })
-const roleModelText = computed(() => availableRoles.value.join(' / '))
+const roleModelText = computed(() => availableRoles.value.map(role => roleLabel[role] ?? role).join(' / '))
+const readyIndexCount = computed(() => vector.value?.indexes.counts.READY ?? 0)
 
 function pad2(value: number): string {
   return String(value).padStart(2, '0')
@@ -66,24 +71,45 @@ function recallText(row: any): string {
   return `R@10 ${percent(recall['10'])} / R@50 ${percent(recall['50'])} / R@100 ${percent(recall['100'])}`
 }
 
+async function loadAdvanced(force = false): Promise<void> {
+  if (technicalLoaded.value && !force) return
+  technicalLoading.value = true
+  try {
+    const [indexResponse, benchmarkResponse] = await Promise.all([
+      api.get('/indexes'),
+      api.get('/system/benchmarks'),
+    ])
+    indexes.value = indexResponse.data.items ?? []
+    benchmarks.value = benchmarkResponse.data ?? []
+    technicalLoaded.value = true
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    technicalLoading.value = false
+  }
+}
+
 async function refresh(): Promise<void> {
   loading.value = true
   try {
     const meResponse = await api.get('/auth/me')
     me.value = meResponse.data
-    const requests: Promise<any>[] = [api.get('/system/info'), api.get('/system/vector-status'), api.get('/indexes'), api.get('/system/benchmarks')]
+    const requests: Promise<any>[] = [api.get('/system/info'), api.get('/system/vector-status')]
     if (me.value?.role === 'admin') requests.push(api.get('/users'))
     const responses = await Promise.all(requests)
     info.value = responses[0].data
     vector.value = responses[1].data
-    indexes.value = responses[2].data.items ?? []
-    benchmarks.value = responses[3].data ?? []
-    users.value = isAdmin.value ? (responses[4]?.data ?? []) : []
+    users.value = isAdmin.value ? (responses[2]?.data ?? []) : []
+    if (technicalLoaded.value) await loadAdvanced(true)
   } catch (error) {
     ElMessage.error((error as Error).message)
   } finally {
     loading.value = false
   }
+}
+
+async function handleTabChange(name: string | number): Promise<void> {
+  if (String(name) === 'advanced') await loadAdvanced()
 }
 
 async function runEmbeddingBenchmark(): Promise<void> {
@@ -93,7 +119,7 @@ async function runEmbeddingBenchmark(): Promise<void> {
     const response = await api.post('/system/benchmarks/embedding', { sample_count: 1000 })
     const profile = response.data.metrics.token_length_profile
     ElMessage.success(`Embedding：${response.data.metrics.throughput_rows_per_second} 条/秒，建议 max_length=${profile?.recommended_max_length ?? '-'}`)
-    await refresh()
+    await loadAdvanced(true)
   } catch (error) { ElMessage.error((error as Error).message) }
   finally { embeddingBusy.value = false }
 }
@@ -105,8 +131,8 @@ async function runVectorBenchmark(): Promise<void> {
     const response = await api.post('/system/benchmarks/vector', { target_rows: 10000, query_count: 100, dimensions: 128, top_k: 50 })
     const recall = response.data.metrics.recall_quality?.recall_at ?? {}
     const r100 = typeof recall['100'] === 'number' ? `${(recall['100'] * 100).toFixed(1)}%` : '-'
-    ElMessage.success(`BBQ 基准完成：${response.data.metrics.search_queries_per_second} 查询/秒，synthetic Recall@100=${r100}`)
-    await refresh()
+    ElMessage.success(`向量内核基准完成：${response.data.metrics.search_queries_per_second} 查询/秒，Recall@100=${r100}`)
+    await loadAdvanced(true)
   } catch (error) { ElMessage.error((error as Error).message) }
   finally { vectorBusy.value = false }
 }
@@ -180,7 +206,7 @@ onMounted(refresh)
     <div class="toolbar system-toolbar">
       <div class="system-title">
         <h2>系统设置</h2>
-        <p>查看运行环境、模型与索引状态，并管理本地账号权限。</p>
+        <p>账号、权限和服务状态优先展示；模型、索引和性能基准仅在高级技术信息中查看。</p>
       </div>
       <div class="system-toolbar-actions">
         <el-tag v-if="me" class="identity-tag">{{ me.username }} · {{ roleLabel[me.role] ?? me.role }}</el-tag>
@@ -190,104 +216,159 @@ onMounted(refresh)
     </div>
 
     <div class="panel system-panel" v-loading="loading">
-      <h3>运行环境</h3>
-      <el-descriptions v-if="info" class="system-descriptions" :column="2" border>
-        <el-descriptions-item label="版本">{{ info.version }}</el-descriptions-item>
-        <el-descriptions-item label="数据目录"><span class="path-value">{{ info.data_dir }}</span></el-descriptions-item>
-        <el-descriptions-item label="扫描安全上限">{{ info.baseline_max_target_rows }} Target</el-descriptions-item>
-        <el-descriptions-item label="向量索引目录"><span class="path-value">{{ info.index_dir }}</span></el-descriptions-item>
-        <el-descriptions-item label="角色模型">{{ roleModelText }}</el-descriptions-item>
-        <el-descriptions-item label="当前账号">{{ me?.username }}（{{ roleLabel[me?.role ?? ''] ?? me?.role }}）</el-descriptions-item>
-      </el-descriptions>
-    </div>
+      <el-tabs v-model="activeTab" class="system-tabs" @tab-change="handleTabChange">
+        <el-tab-pane label="账号与权限" name="accounts">
+          <section class="account-summary">
+            <div>
+              <span>当前账号</span>
+              <strong>{{ me?.username ?? '-' }}</strong>
+            </div>
+            <div>
+              <span>当前角色</span>
+              <strong>{{ roleLabel[me?.role ?? ''] ?? me?.role ?? '-' }}</strong>
+            </div>
+            <div>
+              <span>账号状态</span>
+              <strong>{{ me?.enabled === false ? '已停用' : '正常' }}</strong>
+            </div>
+          </section>
 
-    <div v-if="isAdmin" class="panel system-panel">
-      <div class="system-section-head">
-        <div class="system-section-copy">
-          <h3>账号与权限</h3>
-          <p class="muted">权限由服务端强制执行；停用、改角色或重置密码会立即撤销该用户现有会话。</p>
-        </div>
-        <el-button type="primary" @click="openCreateUser">创建账号</el-button>
-      </div>
-      <el-table class="system-table" :data="users" size="small" empty-text="尚无账号">
-        <el-table-column prop="username" label="用户名" min-width="150" />
-        <el-table-column label="角色" width="170">
-          <template #default="scope">
-            <el-select class="system-role-select" :model-value="scope.row.role" @change="(value:string)=>changeRole(scope.row,value)">
-              <el-option v-for="role in availableRoles" :key="role" :label="roleLabel[role] ?? role" :value="role" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="启用" width="90" align="center" header-align="center">
-          <template #default="scope"><el-switch :model-value="scope.row.enabled" @change="(value:boolean)=>toggleEnabled(scope.row,value)" /></template>
-        </el-table-column>
-        <el-table-column label="需改密" width="90" align="center" header-align="center">
-          <template #default="scope"><el-tag :type="scope.row.must_change_password?'warning':'success'">{{ scope.row.must_change_password?'是':'否' }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="更新时间" min-width="180">
-          <template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.updated_at) }}</span></template>
-        </el-table-column>
-        <el-table-column label="操作" width="120" align="center" header-align="center">
-          <template #default="scope"><el-button link type="primary" @click="openReset(scope.row)">重置密码</el-button></template>
-        </el-table-column>
-      </el-table>
-      <el-alert title="admin：全部权限；operator：任务、方案、基础数据及基准操作；reviewer：只读 + 人工复核/最终结果/准确率验收；viewer：只读。系统禁止停用或降级最后一个管理员。" type="info" :closable="false" />
-    </div>
+          <div v-if="isAdmin" class="system-section">
+            <div class="system-section-head">
+              <div class="system-section-copy">
+                <h3>用户管理</h3>
+                <p class="muted">维护登录账号与业务角色。停用、改角色或重置密码会立即撤销该用户现有会话。</p>
+              </div>
+              <el-button type="primary" @click="openCreateUser">创建账号</el-button>
+            </div>
+            <el-table class="system-table" :data="users" size="small" empty-text="尚无账号">
+              <el-table-column prop="username" label="用户名" min-width="150" />
+              <el-table-column label="角色" width="170">
+                <template #default="scope">
+                  <el-select class="system-role-select" :model-value="scope.row.role" @change="(value:string)=>changeRole(scope.row,value)">
+                    <el-option v-for="role in availableRoles" :key="role" :label="roleLabel[role] ?? role" :value="role" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column label="启用" width="90" align="center" header-align="center">
+                <template #default="scope"><el-switch :model-value="scope.row.enabled" @change="(value:boolean)=>toggleEnabled(scope.row,value)" /></template>
+              </el-table-column>
+              <el-table-column label="需改密" width="90" align="center" header-align="center">
+                <template #default="scope"><el-tag :type="scope.row.must_change_password?'warning':'success'">{{ scope.row.must_change_password?'是':'否' }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="更新时间" min-width="180">
+                <template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.updated_at) }}</span></template>
+              </el-table-column>
+              <el-table-column label="操作" width="120" align="center" header-align="center">
+                <template #default="scope"><el-button link type="primary" @click="openReset(scope.row)">重置密码</el-button></template>
+              </el-table-column>
+            </el-table>
+            <el-alert title="管理员可维护账号；操作员可执行匹配任务和业务字典维护；复核员负责人工确认与结果复核；只读用户仅查看。系统禁止停用或降级最后一个管理员。" type="info" :closable="false" />
+          </div>
 
-    <div class="panel system-panel">
-      <div class="system-section-head">
-        <h3>Embedding Provider</h3>
-        <el-tag class="status-tag" :type="vector?.embedding.ready ? 'success' : 'warning'">{{ readyText }}</el-tag>
-      </div>
-      <el-descriptions v-if="vector" class="system-descriptions" :column="2" border>
-        <el-descriptions-item label="Provider">{{ vector.embedding.provider }}</el-descriptions-item>
-        <el-descriptions-item label="模型">{{ vector.embedding.model_id }}</el-descriptions-item>
-        <el-descriptions-item label="维度">{{ vector.embedding.dimensions }}</el-descriptions-item>
-        <el-descriptions-item label="最大长度">{{ vector.embedding.max_length }}</el-descriptions-item>
-        <el-descriptions-item label="最大 Batch">{{ vector.embedding.batch_size ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="Token Budget">{{ vector.embedding.token_budget ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="精度">{{ vector.embedding.precision }}</el-descriptions-item>
-        <el-descriptions-item label="Runtime">{{ vector.embedding.runtime_installed ? '已安装' : '未安装' }}</el-descriptions-item>
-        <el-descriptions-item label="模型文件">{{ vector.embedding.model_installed ? '已安装' : '未安装' }}</el-descriptions-item>
-        <el-descriptions-item label="模型目录"><span class="path-value">{{ vector.embedding.model_dir }}</span></el-descriptions-item>
-      </el-descriptions>
-      <el-alert v-if="vector && !vector.embedding.ready" title="向量核心已安装，但正式语义匹配需要离线安装 ONNX Runtime、tokenizers 和 bge-base-zh-v1.5 模型文件。系统不会使用测试向量冒充生产模型。" type="warning" :closable="false"/>
-      <el-alert v-else-if="vector" title="正式 Embedding 基准会统计 token P50/P95/P99/P99.9、不同 max_length 截断率和 padding efficiency，用于现场选择 128/192/256/512。" type="info" :closable="false"/>
-      <div class="system-panel-actions">
-        <el-button :loading="embeddingBusy" :disabled="!vector?.embedding.ready||!canOperate" @click="runEmbeddingBenchmark">运行正式 Embedding 基准</el-button>
-        <el-button :loading="vectorBusy" :disabled="!canOperate" @click="runVectorBenchmark">运行 BBQ 内核基准</el-button>
-      </div>
-    </div>
+          <el-empty v-else description="当前账号没有用户管理权限。你仍可修改自己的密码，并在“运行状态”查看服务是否正常。" />
+        </el-tab-pane>
 
-    <div class="panel system-panel">
-      <h3>向量索引版本</h3>
-      <div v-if="vector" class="system-stats">
-        <span>READY {{ vector.indexes.counts.READY || 0 }}</span>
-        <span>BUILDING {{ vector.indexes.counts.BUILDING || 0 }}</span>
-        <span>FAILED {{ vector.indexes.counts.FAILED || 0 }}</span>
-      </div>
-      <el-table class="system-table" :data="indexes" size="small" empty-text="尚未构建向量索引">
-        <el-table-column prop="index_id" label="Index ID" min-width="220" show-overflow-tooltip/>
-        <el-table-column prop="catalog_version_id" label="Catalog Version" min-width="180" show-overflow-tooltip/>
-        <el-table-column prop="status" label="状态" width="110"/>
-        <el-table-column label="创建时间" min-width="180"><template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.created_at) }}</span></template></el-table-column>
-        <el-table-column label="行数" width="100"><template #default="scope">{{ scope.row.metadata?.stats?.row_count ?? scope.row.metadata?.index_metadata?.row_count ?? '-' }}</template></el-table-column>
-        <el-table-column label="模型" min-width="180"><template #default="scope">{{ scope.row.metadata?.provider?.model_id ?? '-' }}</template></el-table-column>
-      </el-table>
-    </div>
+        <el-tab-pane label="运行状态" name="status">
+          <section class="service-grid">
+            <article>
+              <span>平台服务</span>
+              <strong class="service-ok">运行正常</strong>
+              <small>系统接口已连接</small>
+            </article>
+            <article>
+              <span>语义匹配服务</span>
+              <strong :class="vector?.embedding.ready ? 'service-ok' : 'service-warn'">{{ readyText }}</strong>
+              <small>{{ vector?.embedding.ready ? '可执行正式语义匹配' : '请联系运维检查模型环境' }}</small>
+            </article>
+            <article>
+              <span>可用匹配索引</span>
+              <strong>{{ readyIndexCount }}</strong>
+              <small>由平台自动创建和复用</small>
+            </article>
+            <article>
+              <span>系统版本</span>
+              <strong>{{ info?.version ?? '-' }}</strong>
+              <small>当前部署版本</small>
+            </article>
+          </section>
+          <el-descriptions v-if="info" class="system-descriptions business-status" :column="2" border>
+            <el-descriptions-item label="当前账号">{{ me?.username }}（{{ roleLabel[me?.role ?? ''] ?? me?.role }}）</el-descriptions-item>
+            <el-descriptions-item label="业务角色">{{ roleModelText }}</el-descriptions-item>
+            <el-descriptions-item label="单批数据安全上限">{{ info.baseline_max_target_rows }} 行</el-descriptions-item>
+            <el-descriptions-item label="匹配服务状态">{{ vector?.embedding.ready ? '可用' : '需运维处理' }}</el-descriptions-item>
+          </el-descriptions>
+        </el-tab-pane>
 
-    <div class="panel system-panel">
-      <h3>性能与召回基准记录</h3>
-      <p class="muted system-note">Embedding 基准使用正式已安装模型；BBQ 内核基准使用确定性测试向量，并以 float32 exact cosine 为 reference。后者用于防止索引优化导致召回退化，不代表真实业务准确率。</p>
-      <el-table class="system-table" :data="benchmarks" size="small" empty-text="尚无基准记录">
-        <el-table-column prop="kind" label="类型" width="140"/>
-        <el-table-column prop="status" label="状态" width="100"/>
-        <el-table-column label="时间" min-width="180"><template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.started_at) }}</span></template></el-table-column>
-        <el-table-column label="吞吐" min-width="160"><template #default="scope"><span v-if="scope.row.kind==='embedding'">{{ scope.row.metrics?.throughput_rows_per_second ?? '-' }} 条/秒</span><span v-else>{{ scope.row.metrics?.search_queries_per_second ?? '-' }} 查询/秒</span></template></el-table-column>
-        <el-table-column label="Recall@K" min-width="330"><template #default="scope">{{ recallText(scope.row) }}</template></el-table-column>
-        <el-table-column label="Token P99 / 建议长度" min-width="180"><template #default="scope"><span v-if="scope.row.kind==='embedding'">P99 {{ scope.row.metrics?.token_length_profile?.p99 ?? '-' }} / {{ scope.row.metrics?.token_length_profile?.recommended_max_length ?? '-' }}</span><span v-else>-</span></template></el-table-column>
-        <el-table-column prop="error_message" label="错误" min-width="220" show-overflow-tooltip/>
-      </el-table>
+        <el-tab-pane label="高级技术信息" name="advanced">
+          <div class="advanced-note">
+            <b>仅用于管理员 / 运维排障</b>
+            <span>Embedding、Token Budget、向量索引、内部路径和性能基准不会出现在普通业务流程中。</span>
+          </div>
+          <el-collapse v-model="advancedSections" class="advanced-collapse" v-loading="technicalLoading">
+            <el-collapse-item title="Embedding Provider 与运行参数" name="embedding">
+              <div class="system-section-head">
+                <h3>Embedding Provider</h3>
+                <el-tag class="status-tag" :type="vector?.embedding.ready ? 'success' : 'warning'">{{ readyText }}</el-tag>
+              </div>
+              <el-descriptions v-if="vector" class="system-descriptions" :column="2" border>
+                <el-descriptions-item label="Provider">{{ vector.embedding.provider }}</el-descriptions-item>
+                <el-descriptions-item label="模型">{{ vector.embedding.model_id }}</el-descriptions-item>
+                <el-descriptions-item label="维度">{{ vector.embedding.dimensions }}</el-descriptions-item>
+                <el-descriptions-item label="最大长度">{{ vector.embedding.max_length }}</el-descriptions-item>
+                <el-descriptions-item label="最大 Batch">{{ vector.embedding.batch_size ?? '-' }}</el-descriptions-item>
+                <el-descriptions-item label="Token Budget">{{ vector.embedding.token_budget ?? '-' }}</el-descriptions-item>
+                <el-descriptions-item label="精度">{{ vector.embedding.precision }}</el-descriptions-item>
+                <el-descriptions-item label="Runtime">{{ vector.embedding.runtime_installed ? '已安装' : '未安装' }}</el-descriptions-item>
+                <el-descriptions-item label="模型文件">{{ vector.embedding.model_installed ? '已安装' : '未安装' }}</el-descriptions-item>
+                <el-descriptions-item label="模型目录"><span class="path-value">{{ vector.embedding.model_dir }}</span></el-descriptions-item>
+              </el-descriptions>
+              <div class="system-panel-actions">
+                <el-button :loading="embeddingBusy" :disabled="!vector?.embedding.ready||!canOperate" @click="runEmbeddingBenchmark">运行 Embedding 基准</el-button>
+                <el-button :loading="vectorBusy" :disabled="!canOperate" @click="runVectorBenchmark">运行向量内核基准</el-button>
+              </div>
+            </el-collapse-item>
+
+            <el-collapse-item title="向量索引" name="indexes">
+              <div v-if="vector" class="system-stats">
+                <span>READY {{ vector.indexes.counts.READY || 0 }}</span>
+                <span>BUILDING {{ vector.indexes.counts.BUILDING || 0 }}</span>
+                <span>FAILED {{ vector.indexes.counts.FAILED || 0 }}</span>
+              </div>
+              <el-table class="system-table" :data="indexes" size="small" empty-text="尚未构建向量索引">
+                <el-table-column prop="index_id" label="Index ID" min-width="220" show-overflow-tooltip/>
+                <el-table-column prop="catalog_version_id" label="Catalog Version" min-width="180" show-overflow-tooltip/>
+                <el-table-column prop="status" label="状态" width="110"/>
+                <el-table-column label="创建时间" min-width="180"><template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.created_at) }}</span></template></el-table-column>
+                <el-table-column label="行数" width="100"><template #default="scope">{{ scope.row.metadata?.stats?.row_count ?? scope.row.metadata?.index_metadata?.row_count ?? '-' }}</template></el-table-column>
+                <el-table-column label="模型" min-width="180"><template #default="scope">{{ scope.row.metadata?.provider?.model_id ?? '-' }}</template></el-table-column>
+              </el-table>
+            </el-collapse-item>
+
+            <el-collapse-item title="性能与召回基准" name="benchmarks">
+              <p class="muted system-note">这里是运维诊断记录，不代表最终业务匹配准确率。</p>
+              <el-table class="system-table" :data="benchmarks" size="small" empty-text="尚无基准记录">
+                <el-table-column prop="kind" label="类型" width="140"/>
+                <el-table-column prop="status" label="状态" width="100"/>
+                <el-table-column label="时间" min-width="180"><template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.started_at) }}</span></template></el-table-column>
+                <el-table-column label="吞吐" min-width="160"><template #default="scope"><span v-if="scope.row.kind==='embedding'">{{ scope.row.metrics?.throughput_rows_per_second ?? '-' }} 条/秒</span><span v-else>{{ scope.row.metrics?.search_queries_per_second ?? '-' }} 查询/秒</span></template></el-table-column>
+                <el-table-column label="Recall@K" min-width="330"><template #default="scope">{{ recallText(scope.row) }}</template></el-table-column>
+                <el-table-column label="Token P99 / 建议长度" min-width="180"><template #default="scope"><span v-if="scope.row.kind==='embedding'">P99 {{ scope.row.metrics?.token_length_profile?.p99 ?? '-' }} / {{ scope.row.metrics?.token_length_profile?.recommended_max_length ?? '-' }}</span><span v-else>-</span></template></el-table-column>
+                <el-table-column prop="error_message" label="错误" min-width="220" show-overflow-tooltip/>
+              </el-table>
+            </el-collapse-item>
+
+            <el-collapse-item title="内部目录与权限模型" name="paths">
+              <el-descriptions v-if="info" class="system-descriptions" :column="2" border>
+                <el-descriptions-item label="数据目录"><span class="path-value">{{ info.data_dir }}</span></el-descriptions-item>
+                <el-descriptions-item label="向量索引目录"><span class="path-value">{{ info.index_dir }}</span></el-descriptions-item>
+                <el-descriptions-item label="缓存目录"><span class="path-value">{{ vector?.cache_dir ?? '-' }}</span></el-descriptions-item>
+                <el-descriptions-item label="角色模型">{{ availableRoles.join(' / ') }}</el-descriptions-item>
+              </el-descriptions>
+            </el-collapse-item>
+          </el-collapse>
+        </el-tab-pane>
+      </el-tabs>
     </div>
 
     <el-dialog v-model="userDialogVisible" title="创建本地账号" width="560px">
