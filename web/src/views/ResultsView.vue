@@ -310,7 +310,7 @@ async function loadLatestDetails(task: TaskRow): Promise<void> {
     api.get(`/tasks/${task.id}/exports`),
   ])
   latestSummary.value = summaryResponse.data ?? latestSummary.value
-  latestRows.value = previewResponse.data?.rows ?? []
+  latestRows.value = summaryResponse.data?.preview_rows ?? previewResponse.data?.rows ?? []
   latestExports.value = exportResponse.data ?? {}
 }
 
