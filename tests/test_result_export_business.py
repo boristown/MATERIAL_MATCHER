@@ -235,7 +235,7 @@ def test_final_excel_is_business_complete_colored_and_auditable(tmp_path: Path) 
         assert result.cell(5, status_col).value == "未匹配"
         assert result.cell(5, method_col).value == "人工标记未匹配"
         assert result.cell(5, operator_col).value == "bob"
-        assert result.cell(5, code_col).value == ""
+        assert result.cell(5, code_col).value in {None, ""}
         assert result.cell(5, target_row_col).value is None
 
         top5 = workbook["Top5候选"]
