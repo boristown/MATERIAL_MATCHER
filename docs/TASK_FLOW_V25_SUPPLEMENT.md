@@ -1,20 +1,133 @@
-# 物料集团码匹配引擎 v2.5 五步任务主流程补充规范
+# 物料集团码智能匹配平台 v3.0 四步工作台任务生命周期补充规范
 
 > 状态：Normative  
-> 日期：2026-09-13  
-> 作用：为“选择数据 → 确认匹配规则 → 比对计算 → 人工处理 → 生成结果”的统一任务流程补充数据模型和接口契约。
+> 日期：2026-09-16  
+> 作用：定义“四步前端工作台”与后端任务草稿、计算、人工处理、结果生成之间的映射关系。  
+> 兼容说明：文件名沿用 `TASK_FLOW_V25_SUPPLEMENT.md`，避免历史链接失效；正文规范已升级到 v3.0。
 
-如本文与旧版 `IMPLEMENTATION_CONTRACT.md` 24.5、`API_UI_DEPLOYMENT_CONTRACT.md` 42.9～42.11 或第 44 章存在冲突，以本文和 `OPERATION_UI_DESIGN.md` v2.5 为准。
+如本文与旧版 `IMPLEMENTATION_CONTRACT.md`、`API_UI_DEPLOYMENT_CONTRACT.md` 或历史五步 UI 描述存在冲突，以 `DEVELOPMENT_DESIGN.md` v3.0、`OPERATION_UI_DESIGN.md` v3.0 和本文为准。
 
-## 1. 核心原则
+---
 
-1. 匹配方案是可复用模板，不是运行任务的强制前置条件。
-2. 正式任务必须保存一份不可变的**运行配置快照**，保证结果可复现。
-3. 如果任务来自已发布方案，同时记录方案 ID 和版本；如果用户临时配置，则方案引用可以为空。
-4. 任务草稿必须后端持久化，浏览器刷新不能丢失 Step 1/2 配置。
-5. 人工处理和结果生成属于同一任务生命周期，不建立独立结果管理对象作为必经流程。
+## 1. 四步前端与后台生命周期
 
-## 2. 任务草稿
+前端固定表达为：
+
+```text
+STEP 1 · 方案与配置
+STEP 2 · 匹配计算
+STEP 3 · 人工调整
+STEP 4 · 输出结果
+```
+
+后台仍允许把 STEP1 的任务草稿拆成两个内部子阶段：
+
+```text
+STEP1-A 数据选择
+STEP1-B 规则确认
+```
+
+这两个子阶段**不是侧栏步骤**，只用于草稿持久化和恢复。
+
+后台正式任务阶段：
+
+```text
+CALCULATE → REVIEW → RESULT
+```
+
+映射：
+
+```text
+CALCULATE = STEP2
+REVIEW    = STEP3
+RESULT    = STEP4
+```
+
+如果不存在待人工确认记录：
+
+```text
+CALCULATE → RESULT
+```
+
+允许直接跳过 STEP3 的具体处理，但 STEP3 页面仍应正确显示“当前无待人工处理数据”。
+
+---
+
+## 2. 核心原则
+
+1. 匹配方案是可复用模板，不是运行任务的强制技术前置；但当前产品主入口鼓励用户从已发布方案快速创建任务。
+2. “编辑方案”和“用方案建任务”是两个不同操作模式。
+3. 正式任务必须保存一份不可变的运行配置快照，保证结果可复现。
+4. 如果任务来自已发布方案，同时记录方案 ID 和版本；如果使用临时规则，则方案引用可以为空。
+5. 任务草稿必须后端持久化，浏览器刷新不能丢失 STEP1 内部数据选择/规则确认状态。
+6. 人工调整和结果生成属于同一正式任务生命周期。
+7. 页面上的任务状态、进度、结果数量必须来自后端，禁止前端伪造。
+8. 集团码目录、字典、方案激活版本后续发生变化，不得改变已经启动任务的运行语义。
+
+---
+
+## 3. STEP1 的两种模式
+
+### 3.1 方案编辑模式
+
+入口：
+
+```text
+匹配方案卡片 → 编辑
+```
+
+目的：维护可复用匹配规则。
+
+允许：
+
+- 字段映射；
+- 组合方式；
+- matcher；
+- 权重；
+- 关键字段；
+- scope；
+- 阈值；
+- TopN；
+- 处理流水线；
+- 保存草稿；
+- 发布；
+- 版本回滚。
+
+不应出现：
+
+- 本次正式任务名称；
+- 本次 Source 数据上传；
+- 启动正式匹配任务按钮。
+
+### 3.2 创建任务模式
+
+入口：
+
+```text
+匹配方案卡片 → 用此方案建任务
+```
+
+目的：快速创建一次正式匹配任务。
+
+默认载入：
+
+- 最新已发布方案 ID；
+- 发布版本；
+- 只读规则摘要；
+- 方案绑定/推荐的 Target 目录信息（如有）。
+
+用户主要完成：
+
+- 任务名称；
+- 本次 Source 数据；
+- Target 目录版本确认；
+- 启动。
+
+如果允许“仅本任务调整”，最终仍必须冻结新的 `config_snapshot`，且不得修改原发布方案。
+
+---
+
+## 4. 任务草稿
 
 ```python
 class TaskDraft:
@@ -25,16 +138,27 @@ class TaskDraft:
     template_profile_id: str | None
     template_profile_version: int | None
     config_document: dict
-    current_step: int           # 1 | 2
+    current_step: int           # 1 | 2，仅表示 STEP1 内部子阶段
     created_at: str
     updated_at: str
 ```
 
-`config_document` 保存当前规则编辑器的完整配置。
+其中：
 
-## 3. 正式任务对象修订
+```text
+current_step = 1 → STEP1-A 数据选择
+current_step = 2 → STEP1-B 规则确认
+```
 
-正式任务对象必须至少包含：
+不得把 `current_step` 直接渲染成侧栏的 STEP2，因为前端 STEP2 已固定代表“匹配计算”。
+
+`config_document` 保存当前任务草稿完整配置。
+
+---
+
+## 5. 正式任务对象
+
+正式任务至少包含：
 
 ```python
 class MatchTask:
@@ -44,11 +168,9 @@ class MatchTask:
     source_file_id: str
     catalog_version_id: str
 
-    # 可选模板来源
     profile_id: str | None
     profile_version: int | None
 
-    # 真正的运行依据，必须不可变
     config_snapshot: dict
     config_sha256: str
 
@@ -68,19 +190,24 @@ class MatchTask:
 
 规则：
 
-- `config_snapshot` 是任务启动时冻结的配置；
-- 后续修改模板方案不得改变已启动任务；
-- `profile_id/profile_version` 只用于追溯模板来源；
-- 临时规则任务允许二者为空；
-- `config_sha256` 必须参与任务审计和结果导出摘要。
+- `config_snapshot` 是真正运行依据；
+- 启动后不可修改；
+- `profile_id/profile_version` 只记录模板来源；
+- `config_sha256` 用于审计和导出摘要；
+- `catalog_version_id` 固定本次使用的集团码目录版本；
+- 后续 active 目录切换不得改变历史任务。
 
-## 4. 任务草稿 API
+---
 
-### 4.1 创建草稿
+## 6. STEP1 草稿 API
 
-`POST /api/task-drafts`
+### 6.1 创建草稿
 
-请求：
+```text
+POST /api/task-drafts
+```
+
+示例：
 
 ```json
 {
@@ -97,46 +224,65 @@ class MatchTask:
 }
 ```
 
-### 4.2 读取草稿
+### 6.2 读取草稿
 
-`GET /api/task-drafts/{draft_id}`
+```text
+GET /api/task-drafts/{draft_id}
+```
 
-用于刷新或重新登录后恢复。
+用于刷新或重新登录后恢复 STEP1。
 
-### 4.3 保存 Step 1 数据选择
+### 6.3 保存数据选择
 
-`PUT /api/task-drafts/{draft_id}/data`
+```text
+PUT /api/task-drafts/{draft_id}/data
+```
+
+示例：
 
 ```json
 {
   "source_file_id": "...",
   "catalog_version_id": "...",
-  "template_profile_id": null,
-  "template_profile_version": null
+  "template_profile_id": "...",
+  "template_profile_version": 3
 }
 ```
 
-如果选择已有方案模板，后端将其配置复制到 `config_document`，后续调整只影响该草稿，不直接修改原方案。
+如果用户通过“用此方案建任务”进入，后端可把发布方案配置复制进 `config_document`，之后本任务调整与原方案解耦。
 
-### 4.4 保存 Step 2 匹配规则
+### 6.4 保存本任务规则
 
-`PUT /api/task-drafts/{draft_id}/rules`
+```text
+PUT /api/task-drafts/{draft_id}/rules
+```
 
 请求体是当前完整配置文档。
 
-必须执行 schema 校验，但允许尚未满足“可正式运行”的中间草稿状态。
+中间草稿可以允许尚未达到“可正式运行”的完整度，但必须通过基础 schema 校验。
 
-### 4.5 试算
+### 6.5 试算
 
-`POST /api/task-drafts/{draft_id}/dry-run`
+```text
+POST /api/task-drafts/{draft_id}/dry-run
+```
 
-默认样本 100 条，复用正式匹配算法和候选详情组件。
+默认可取 100 条样本，复用正式匹配逻辑，不开发第二套“演示算法”。
 
-### 4.6 启动正式任务
+### 6.6 启动正式任务
 
-`POST /api/task-drafts/{draft_id}/start`
+```text
+POST /api/task-drafts/{draft_id}/start
+```
 
-启动前必须执行完整校验并冻结 `config_snapshot`。
+启动前：
+
+1. 完整校验；
+2. 固定 Source；
+3. 固定 Target 目录版本；
+4. 固定配置快照；
+5. 计算配置哈希；
+6. 创建正式任务。
 
 成功返回 HTTP 202：
 
@@ -148,9 +294,20 @@ class MatchTask:
 }
 ```
 
-## 5. 正式任务查询与阶段
+前端跳转 STEP2。
 
-`GET /api/tasks/{task_id}` 必须返回：
+---
+
+## 7. STEP2：匹配计算
+
+### 7.1 任务查询
+
+```text
+GET /api/tasks
+GET /api/tasks/{task_id}
+```
+
+任务详情至少返回：
 
 ```json
 {
@@ -159,47 +316,119 @@ class MatchTask:
   "status": "RUNNING",
   "progress": 37.5,
   "processed_rows": 37500,
-  "total_rows": 100000,
-  "elapsed_seconds": 1234,
-  "estimated_remaining_seconds": 2088
+  "total_rows": 100000
 }
 ```
 
-`stage` 只表示业务界面所在阶段，不替代底层任务状态机。
+### 7.2 实时进度
 
-## 6. 比对计算进度
-
-`GET /api/tasks/{task_id}/progress`
-
-必须返回五个业务阶段：
-
-```json
-{
-  "steps": [
-    {"key": "prepare", "label": "数据准备", "status": "DONE"},
-    {"key": "embedding", "label": "向量化处理", "status": "DONE"},
-    {"key": "retrieve", "label": "候选比对", "status": "RUNNING"},
-    {"key": "rerank", "label": "精细评分", "status": "WAITING"},
-    {"key": "prepare_result", "label": "结果整理", "status": "WAITING"}
-  ]
-}
+```text
+GET /api/tasks/{task_id}/progress
 ```
 
-普通 UI 只显示 `label`，技术日志可保留底层模块名。
+可以包含：
 
-## 7. 人工处理工作台 API
+- `current_phase`；
+- `progress`；
+- `processed_rows`；
+- `total_rows`；
+- `live_counts`；
+- `estimate`；
+- `steps`；
+- `interim`。
 
-### 7.1 汇总
+普通 UI 只显示业务可理解标签。
 
-`GET /api/tasks/{task_id}/workbench/summary`
+### 7.3 实时中间结果
 
-返回：待确认、已人工确认、未匹配、自动匹配等数量。
+```text
+GET /api/tasks/{task_id}/live-results
+```
 
-### 7.2 列表
+用于 STEP2 最近处理结果预览。
 
-`GET /api/tasks/{task_id}/workbench/items`
+中间结果必须显式标识为“运行中/预览”，不能当正式结果下载。
 
-支持参数：
+### 7.4 STEP2 页面状态
+
+有运行任务：显示顶部实时操作框。
+
+无运行任务：显示：
+
+```text
+无正在进行的任务
+[前往 STEP1 配置并启动]
+```
+
+历史任务和草稿放在下方列表。
+
+---
+
+## 8. STEP3：人工调整入口状态
+
+STEP3 页面不能单纯过滤 `stage == REVIEW` 后显示一张表，还必须判断当前整体任务状态。
+
+### 8.1 有可人工处理任务
+
+条件：存在真实可处理的 REVIEW 数据。
+
+顶部显示：
+
+- 任务名称；
+- 待确认数量；
+- 摘要；
+- `[进入人工调整]`。
+
+### 8.2 STEP2 正在计算
+
+条件：没有可处理 REVIEW，但存在运行/准备/排队/恢复任务。
+
+顶部显示：
+
+```text
+正在等待 STEP2 计算完成
+当前任务 + 当前进度
+```
+
+不可显示“进入人工调整”。
+
+### 8.3 没有完成数据
+
+条件：既无 REVIEW，又无运行任务。
+
+显示：
+
+```text
+当前没有计算完成的数据，请先启动 STEP2 的数据计算。
+```
+
+提供返回 STEP2/STEP1 的入口。
+
+---
+
+## 9. STEP3 人工工作台 API
+
+### 9.1 汇总
+
+```text
+GET /api/tasks/{task_id}/workbench/summary
+```
+
+返回：
+
+- 待确认；
+- 已人工确认；
+- 未匹配；
+- 自动匹配；
+- 必要进度上下文。
+
+### 9.2 列表
+
+```text
+GET /api/tasks/{task_id}/workbench/items
+```
+
+支持：
 
 ```text
 category
@@ -211,17 +440,21 @@ page
 page_size
 ```
 
-默认只返回 `REVIEW` 且未人工处理记录。
+默认只返回未处理 REVIEW。
 
-### 7.3 候选详情
+### 9.3 候选详情
 
-`GET /api/tasks/{task_id}/items/{source_row_id}/candidates`
+```text
+GET /api/tasks/{task_id}/items/{source_row_id}/candidates
+```
 
-返回 TopN 和每个候选的字段级解释。
+返回 TopN 和字段级解释。
 
-### 7.4 单条确认
+### 9.4 单条确认
 
-`POST /api/tasks/{task_id}/items/{source_row_id}/confirm`
+```text
+POST /api/tasks/{task_id}/items/{source_row_id}/confirm
+```
 
 ```json
 {
@@ -230,31 +463,37 @@ page_size
 }
 ```
 
-### 7.5 单条标记未匹配
+### 9.5 标记未匹配
 
-`POST /api/tasks/{task_id}/items/{source_row_id}/reject`
-
-### 7.6 批量确认第一候选
-
-`POST /api/tasks/{task_id}/workbench/batch-confirm-top1`
-
-```json
-{
-  "source_row_ids": ["...", "..."]
-}
+```text
+POST /api/tasks/{task_id}/items/{source_row_id}/reject
 ```
 
-响应必须返回成功和失败明细，不得只返回布尔值。
+### 9.6 批量确认第一候选
 
-### 7.7 批量标记未匹配
+```text
+POST /api/tasks/{task_id}/workbench/batch-confirm-top1
+```
 
-`POST /api/tasks/{task_id}/workbench/batch-reject`
+必须返回成功/失败明细。
 
-## 8. 生成最终结果
+### 9.7 批量未匹配
 
-`POST /api/tasks/{task_id}/finalize`
+```text
+POST /api/tasks/{task_id}/workbench/batch-reject
+```
 
-如果仍有 `REVIEW` 记录，请求必须显式带：
+---
+
+## 10. STEP4：结果生成
+
+### 10.1 Finalize
+
+```text
+POST /api/tasks/{task_id}/finalize
+```
+
+如果仍存在未处理 REVIEW，调用方必须显式确认：
 
 ```json
 {
@@ -264,36 +503,108 @@ page_size
 
 否则返回 409。
 
-生成结果时未处理 REVIEW 的最终集团码保持为空，不允许自动回填第一候选。
+未处理 REVIEW 的最终集团码保持为空。
 
-`GET /api/tasks/{task_id}/exports`
+### 10.2 导出列表
 
-返回：
+```text
+GET /api/tasks/{task_id}/exports
+```
+
+至少可返回：
 
 - 最终结果 Excel；
 - TopN 候选；
 - 人工确认记录；
 - 未匹配清单。
 
-## 9. 保存临时规则为方案
+### 10.3 STEP4 最新结果工作台
 
-任务 Step 2 或结果页都可以调用：
+页面应从任务/结果接口找到最近一次正式完成结果，展示：
 
-`POST /api/tasks/{task_id}/save-config-as-profile`
+- 任务名称；
+- 完成时间；
+- 总行数；
+- 自动匹配；
+- 人工确认；
+- 未匹配；
+- 结果预览；
+- 查看完整结果；
+- 真实下载。
 
-该操作基于任务 `config_snapshot` 创建新的方案草稿/版本，不得反向修改任务快照。
+如果没有结果，必须区分“前一步仍在进行”和“从未生成结果”。
 
-## 10. 开发验收
+---
+
+## 11. 保存本任务规则为方案
+
+如产品允许从正式任务保存规则：
+
+```text
+POST /api/tasks/{task_id}/save-config-as-profile
+```
+
+该操作以 `config_snapshot` 创建新的方案草稿/版本，不得反向修改任务快照。
+
+---
+
+## 12. 任务状态与页面行为
+
+正式底层状态可包括：
+
+```text
+PENDING
+PREPARING
+RUNNING
+EXPORTING
+COMPLETED
+FAILED
+CANCELLING
+CANCELLED
+RECOVERING
+```
+
+前端业务阶段和底层状态是两个维度：
+
+```text
+stage  = CALCULATE / REVIEW / RESULT
+status = RUNNING / COMPLETED / FAILED / ...
+```
+
+页面不得只看 stage 就假定任务可操作。例如：
+
+- `stage=CALCULATE + status=FAILED` 必须显示失败；
+- `stage=RESULT + status=EXPORTING` 不能显示“可下载完成”；
+- `stage=REVIEW` 但 summary 待确认为 0 时不能制造虚假待处理数量。
+
+---
+
+## 13. 重启恢复与幂等
+
+- STEP1 草稿由后端恢复；
+- STEP2 刷新后重新读取真实 progress；
+- 服务重启后任务可以标记 RECOVERING；
+- 若恢复策略是安全重跑，必须先清理本任务未完成残留；
+- 人工 confirm/reject 应具备防重复提交语义；
+- finalize 失败允许单独重试，不要求重跑匹配。
+
+---
+
+## 14. 开发验收
 
 必须覆盖：
 
-1. 未选择匹配方案也能完整创建并运行任务；
-2. 选择已有方案后可以在任务内临时调整，且不修改原方案；
-3. 浏览器刷新后 Step 1/2 草稿可恢复；
-4. 启动后配置快照不可变；
-5. 计算完成后自动进入人工处理或直接结果阶段；
-6. 工作台批量确认后记录立即退出默认列表；
-7. 候选抽屉确认后自动定位下一条；
-8. 有未处理 REVIEW 时生成结果必须二次确认；
-9. 未处理 REVIEW 的最终集团码保持为空；
-10. 结果生成失败可重试，不重复执行匹配计算。
+1. 方案编辑与创建任务界面语义分离；
+2. “用此方案建任务”正确引用发布版本；
+3. 任务启动后配置快照不可变；
+4. 浏览器刷新后 STEP1 草稿可恢复；
+5. STEP2 运行态来自真实 progress；
+6. STEP3 有可处理/等待计算/无数据三种状态正确；
+7. 工作台确认后记录立即退出默认待处理列表；
+8. 人工确认保留审计；
+9. 有未处理 REVIEW 时 finalize 需要显式确认；
+10. 未处理 REVIEW 的最终集团码为空；
+11. STEP4 能显示最近正式结果和真实下载；
+12. 结果生成失败可重试，不重新执行完整匹配；
+13. 修改方案、字典或 active 目录后，历史任务仍按原快照复现；
+14. 页面不使用 Mock 数据伪造成功状态。
