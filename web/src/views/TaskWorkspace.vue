@@ -276,6 +276,9 @@ function onWorkbookParsed(payload: ParsedWorkbookPayload): void {
   }
   if (source.value && target.value && !rules.value.length) autoMap()
 }
+function onSourceIdColumnChange(value: string): void {
+  sourceIdColumn.value = value
+}
 function onGroupCodeColumnChange(value: string): void {
   groupCodeColumn.value = value
   targetMode.value = 'upload'
@@ -595,7 +598,7 @@ function elapsedSeconds(startedAt: string | null | undefined): number | null {
   return Number.isNaN(started) ? null : Math.max(0, (Date.now() - started) / 1000)
 }
 const statusLabel = computed(() => ({ PENDING: '排队中', PREPARING: '准备中', RECOVERING: '重启恢复中', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败' }[String(task.value?.status ?? '')] ?? String(task.value?.status ?? '')))
-const phaseLabel = computed(() => ({ INDEX: '构建向量索引(首次建库较慢,索引就绪后长期复用)', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
+const phaseLabel = computed(() => ({ INDEX: '正在准备标准数据（首次处理可能稍慢，后续可直接复用）', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
 const isInterim = computed(() => Boolean(progress.value?.interim))
 const liveProgressPercent = computed(() => Math.round(Number(progress.value?.progress ?? task.value?.progress ?? 0)))
 
@@ -908,7 +911,7 @@ onBeforeUnmount(() => {
         <div class="section-head step1-heading">
           <div>
             <h3 style="margin:0">第一步 · 数据上传</h3>
-            <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。目录、版本、索引和审计信息由后台自动处理。</p>
+            <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
           </div>
         </div>
         <div class="task-name-row">
@@ -923,7 +926,7 @@ onBeforeUnmount(() => {
           :source-id-column="sourceIdColumn"
           :group-code-column="groupCodeColumn"
           @parsed="onWorkbookParsed"
-          @update:sourceIdColumn="value => sourceIdColumn = value"
+          @update:sourceIdColumn="onSourceIdColumnChange"
           @update:groupCodeColumn="onGroupCodeColumnChange"
         />
         <template v-if="isProfileTaskCreateMode">
@@ -1010,17 +1013,19 @@ onBeforeUnmount(() => {
           <span>人工确认下限 ≥</span><el-slider v-model="reviewThreshold" :min="0" :max="99" style="width:180px"/>
           <span>候选 TopN</span><el-input-number v-model="topN" :min="1" :max="50" size="small"/>
         </div>
-        <h4 class="click" @click="advanced=!advanced">高级(向量检索参数){{ advanced ? ' ▲' : ' ▼' }}</h4>
-        <div v-if="advanced" class="threshold">
-          <span>max_length</span>
-          <el-select v-model="retrievalMaxLength" style="width:110px"><el-option :value="128" label="128"/><el-option :value="192" label="192"/><el-option :value="256" label="256"/><el-option :value="512" label="512"/></el-select>
-          <span class="muted">匹配范围</span>
-          <el-select v-model="scopeMode" style="width:150px"><el-option label="全库匹配" value="GLOBAL"/><el-option label="同组匹配" value="STRICT"/><el-option label="分类映射" value="MAPPED"/></el-select>
-          <template v-if="scopeMode!=='GLOBAL'">
-            <el-select v-model="scopeSourceField" filterable :allow-create="isProfileEditorMode" default-first-option placeholder="源分类字段" style="width:160px"><el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/></el-select>
-            <el-select v-model="scopeTargetField" filterable :allow-create="isProfileEditorMode" default-first-option placeholder="目标分类字段" style="width:160px"><el-option v-for="column in (isProfileEditorMode ? profileTargetFields : tgtHeaders)" :key="column" :label="column" :value="column"/></el-select>
-          </template>
-        </div>
+        <template v-if="isProfileEditorMode">
+          <h4 class="click" @click="advanced=!advanced">高级配置{{ advanced ? ' ▲' : ' ▼' }}</h4>
+          <div v-if="advanced" class="threshold">
+            <span>max_length</span>
+            <el-select v-model="retrievalMaxLength" style="width:110px"><el-option :value="128" label="128"/><el-option :value="192" label="192"/><el-option :value="256" label="256"/><el-option :value="512" label="512"/></el-select>
+            <span class="muted">匹配范围</span>
+            <el-select v-model="scopeMode" style="width:150px"><el-option label="全库匹配" value="GLOBAL"/><el-option label="同组匹配" value="STRICT"/><el-option label="分类映射" value="MAPPED"/></el-select>
+            <template v-if="scopeMode!=='GLOBAL'">
+              <el-select v-model="scopeSourceField" filterable allow-create default-first-option placeholder="源分类字段" style="width:160px"><el-option v-for="column in profileSourceFields" :key="column" :label="column" :value="column"/></el-select>
+              <el-select v-model="scopeTargetField" filterable allow-create default-first-option placeholder="目标分类字段" style="width:160px"><el-option v-for="column in profileTargetFields" :key="column" :label="column" :value="column"/></el-select>
+            </template>
+          </div>
+        </template>
         <div class="actions">
           <template v-if="isProfileEditorMode">
             <el-button :loading="busy" @click="saveProfileDraft">保存草稿</el-button>
@@ -1093,7 +1098,7 @@ onBeforeUnmount(() => {
         <el-button :type="filterMode2==='all'?'primary':'default'" size="small" @click="filterMode2='all';loadWorkbench()">全部</el-button>
         <el-button :type="filterMode2==='high'?'primary':'default'" size="small" @click="filterMode2='high';loadWorkbench()">90分以上无冲突</el-button>
         <el-button :type="filterMode2==='gap'?'primary':'default'" size="small" @click="filterMode2='gap';loadWorkbench()">分差&lt;5</el-button>
-        <el-button :type="filterMode2==='conflict'?'primary':'default'" size="small" @click="filterMode2='conflict';loadWorkbench()">关键字段冲突</el-button>
+        <el-button :type="filterMode2==='conflict'?'primary':'default'" size="small" @click="filterMode2='conflict';loadWorkbench()">重要信息冲突</el-button>
         <el-button size="small" :disabled="!selectedRows.length" @click="batchConfirm">批量确认第一候选</el-button>
         <el-button size="small" :disabled="!selectedRows.length" @click="batchReject">批量标记未匹配</el-button>
       </div>
