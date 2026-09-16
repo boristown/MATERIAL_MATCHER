@@ -17,6 +17,12 @@ class TableLayout:
     row_count_estimate: int
 
 
+# Reserved internal metadata key persisted inside vector-index records. It is
+# deliberately outside the customer's field namespace and removed again before
+# a target payload is exposed to callers.
+ORIGINAL_ROW_NUMBER_KEY = "__material_matcher_original_row_number__"
+
+
 def detect_layout(path: Path) -> TableLayout:
     inspected = inspect_tabular_file(path)
     recommended = inspected.get("recommended_sheet")
@@ -43,17 +49,20 @@ def _string_value(value: object) -> str | None:
     return str(value)
 
 
-def iter_tabular_rows(
+def iter_tabular_rows_with_position(
     path: Path,
     *,
     sheet_name: str | None = None,
     header_row: int | None = None,
     max_rows: int | None = None,
-) -> Iterator[dict[str, str | None]]:
-    """Stream tabular rows without converting identifier-like values to numbers.
+) -> Iterator[tuple[int, dict[str, str | None]]]:
+    """Stream rows together with the row number visible in the original file.
 
-    If Excel already stored an identifier as a number, its lost leading zeroes cannot
-    be recovered here. The inspector flags that risk before a task is started.
+    The returned position is the real worksheet/CSV record row, not the compact
+    ordinal used internally as ``source_row_id``. Blank rows are skipped from the
+    payload stream but still advance the original row number. Therefore a sheet
+    whose header is on row 4 yields its first data row as row 5, exactly as users
+    see it in Excel.
     """
     layout = detect_layout(path)
     selected_sheet = sheet_name or layout.sheet_name
@@ -73,13 +82,15 @@ def iter_tabular_rows(
             for _ in range(selected_header - 1):
                 next(reader, None)
             headers = [str(value).strip() for value in (next(reader, []) or [])]
+            original_row_number = selected_header
             for row in reader:
+                original_row_number += 1
                 if max_rows is not None and emitted >= max_rows:
                     break
                 if not any(value != "" for value in row):
                     continue
                 emitted += 1
-                yield {
+                yield original_row_number, {
                     header: (row[index] if index < len(row) and row[index] != "" else None)
                     for index, header in enumerate(headers)
                     if header
@@ -94,16 +105,40 @@ def iter_tabular_rows(
             (),
         )
         headers = ["" if value is None else str(value).strip() for value in raw_headers]
-        for values in worksheet.iter_rows(min_row=selected_header + 1, values_only=True):
+        for original_row_number, values in enumerate(
+            worksheet.iter_rows(min_row=selected_header + 1, values_only=True),
+            start=selected_header + 1,
+        ):
             if max_rows is not None and emitted >= max_rows:
                 break
             if not any(value is not None for value in values):
                 continue
             emitted += 1
-            yield {
+            yield original_row_number, {
                 header: _string_value(values[index] if index < len(values) else None)
                 for index, header in enumerate(headers)
                 if header
             }
     finally:
         workbook.close()
+
+
+def iter_tabular_rows(
+    path: Path,
+    *,
+    sheet_name: str | None = None,
+    header_row: int | None = None,
+    max_rows: int | None = None,
+) -> Iterator[dict[str, str | None]]:
+    """Stream tabular rows without converting identifier-like values to numbers.
+
+    If Excel already stored an identifier as a number, its lost leading zeroes cannot
+    be recovered here. The inspector flags that risk before a task is started.
+    """
+    for _, row in iter_tabular_rows_with_position(
+        path,
+        sheet_name=sheet_name,
+        header_row=header_row,
+        max_rows=max_rows,
+    ):
+        yield row
