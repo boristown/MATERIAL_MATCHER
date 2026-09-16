@@ -43,8 +43,9 @@ CREATE TABLE IF NOT EXISTS task_runtime(
   FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );
 CREATE TABLE IF NOT EXISTS match_items(
-  task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, source_id TEXT NOT NULL,
-  source_payload TEXT NOT NULL, original_status TEXT NOT NULL, current_status TEXT NOT NULL,
+  task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, source_row_number INTEGER,
+  source_id TEXT NOT NULL, source_payload TEXT NOT NULL,
+  original_status TEXT NOT NULL, current_status TEXT NOT NULL,
   top1_group_code TEXT, top1_score REAL NOT NULL, second_score REAL NOT NULL,
   score_gap REAL NOT NULL, critical_conflict INTEGER NOT NULL, final_group_code TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -53,7 +54,7 @@ CREATE TABLE IF NOT EXISTS match_items(
 );
 CREATE TABLE IF NOT EXISTS match_candidates(
   task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, rank INTEGER NOT NULL,
-  target_group_code TEXT NOT NULL, target_payload TEXT NOT NULL,
+  target_row_number INTEGER, target_group_code TEXT NOT NULL, target_payload TEXT NOT NULL,
   score REAL NOT NULL, field_scores TEXT NOT NULL, critical_conflict INTEGER NOT NULL,
   PRIMARY KEY(task_id, source_row_id, rank),
   FOREIGN KEY(task_id, source_row_id) REFERENCES match_items(task_id, source_row_id)
@@ -151,10 +152,20 @@ class MetadataRepository:
         finally:
             connection.close()
 
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
+            # Forward-compatible migration for deployments created before source /
+            # target original-row traceability was introduced.
+            self._ensure_column(connection, "match_items", "source_row_number", "INTEGER")
+            self._ensure_column(connection, "match_candidates", "target_row_number", "INTEGER")
             connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")
             connection.execute("UPDATE task_runtime SET current_phase='RECOVERING', updated_at=datetime('now') WHERE task_id IN (SELECT task_id FROM tasks WHERE status='RECOVERING')")
 

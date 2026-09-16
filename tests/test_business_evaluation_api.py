@@ -3,6 +3,10 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 
+_MATCH_ITEM_COLUMNS = "task_id,source_row_id,source_id,source_payload,original_status,current_status,top1_group_code,top1_score,second_score,score_gap,critical_conflict,final_group_code,created_at,updated_at"
+_CANDIDATE_COLUMNS = "task_id,source_row_id,rank,target_group_code,target_payload,score,field_scores,critical_conflict"
+
+
 def _seed_completed_task(authed: TestClient) -> None:
     meta = authed.app.state.meta
     now = "2026-09-15T19:00:00+08:00"
@@ -13,14 +17,14 @@ def _seed_completed_task(authed: TestClient) -> None:
             ("eval-task", "准确率验收任务", "source-file", "catalog-v1", None, None, config, "sha", "RESULT", "COMPLETED", 100.0, 2, 2, now, now, now, None, None, None),
         )
         connection.executemany(
-            "INSERT INTO match_items VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            f"INSERT INTO match_items({_MATCH_ITEM_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
                 ("eval-task", "row-1", "M001", "{}", "MATCHED", "MATCHED", "G001", 99.0, 60.0, 39.0, 0, "G001", now, now),
                 ("eval-task", "row-2", "M002", "{}", "REVIEW", "CONFIRMED", "G999", 83.0, 81.0, 2.0, 0, "G002", now, now),
             ],
         )
         connection.executemany(
-            "INSERT INTO match_candidates VALUES(?,?,?,?,?,?,?,?)",
+            f"INSERT INTO match_candidates({_CANDIDATE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?)",
             [
                 ("eval-task", "row-1", 1, "G001", "{}", 99.0, "{}", 0),
                 ("eval-task", "row-2", 1, "G999", "{}", 83.0, "{}", 0),

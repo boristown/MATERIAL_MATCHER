@@ -9,6 +9,7 @@ from material_matcher.domain.models import MatchingConfig
 from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.embedding.providers import DeterministicEmbeddingProvider
 from material_matcher.embedding.text import retrieval_text_signature
+from material_matcher.ingestion.reader import ORIGINAL_ROW_NUMBER_KEY
 from material_matcher.matching.engine import match_rows_indexed
 from material_matcher.settings import Settings
 from material_matcher.storage.metadata import MetadataRepository
@@ -85,3 +86,6 @@ def test_bbq_index_reuse_scope_and_indexed_matching(tmp_path: Path) -> None:
     rows = match_rows_indexed(source, index=index, provider=provider, cache=cache, config=config, group_code_column="集团码", query_batch_size=2)
     assert rows[0].candidates[0].group_code == "G1"
     assert {item.group_code for item in rows[0].candidates} <= {"G1", "G3"}
+    assert rows[0].source_row_number == 2
+    assert rows[0].candidates[0].target_row_number == 2
+    assert ORIGINAL_ROW_NUMBER_KEY not in rows[0].candidates[0].target_payload
