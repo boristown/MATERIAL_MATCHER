@@ -320,8 +320,12 @@ class MatchService:
         counts = {str(row["current_status"]): int(row["count"]) for row in rows}
         return {"pending_review": counts.get("REVIEW",0), "confirmed": counts.get("CONFIRMED",0), "unmatched": counts.get("UNMATCHED",0), "automatic_matched": counts.get("MATCHED",0)}
 
-    def workbench_items(self, task_id: str, *, first_score_min: float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, page:int=1, page_size:int=50) -> dict[str, object]:
+    def workbench_items(self, task_id: str, *, first_score_min: float|None=None, first_score_max:float|None=None, second_score_min:float|None=None, second_score_max:float|None=None, gap_min:float|None=None, gap_max:float|None=None, critical_conflict:bool|None=None, q:str|None=None, page:int=1, page_size:int=50) -> dict[str, object]:
         conditions=["task_id=?","current_status='REVIEW'"]; params:list[object]=[task_id]
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            conditions.append("(source_id LIKE ? OR source_payload LIKE ? OR top1_group_code LIKE ?)")
+            params.extend([like, like, like])
         for column,low,high in (("top1_score",first_score_min,first_score_max),("second_score",second_score_min,second_score_max),("score_gap",gap_min,gap_max)):
             if low is not None: conditions.append(f"{column}>=?"); params.append(low)
             if high is not None: conditions.append(f"{column}<=?"); params.append(high)
@@ -380,6 +384,42 @@ class MatchService:
             except DomainError as exc: failed.append({"source_row_id":source_row_id,"code":exc.code,"message":exc.message})
         return {"success":success,"failed":failed}
 
+    def re_decide(self, task_id: str, success_threshold: int, review_threshold: int) -> dict[str, object]:
+        """按新阈值重判未被人工处理过的行(MATCHED/REVIEW);人工 CONFIRMED/UNMATCHED 保持不变。"""
+        if not 0 <= review_threshold < success_threshold <= 100:
+            raise DomainError("INVALID_THRESHOLDS", "阈值不合法:需满足 0 ≤ 人工下限 < 自动阈值 ≤ 100", status_code=422)
+        with self.meta.connect() as connection:
+            task = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if task is None:
+                raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
+            if task["status"] != "COMPLETED":
+                raise DomainError("TASK_STATE_CONFLICT", "任务尚未完成比对,不能调整阈值", status_code=409)
+            if task["result_file_id"]:
+                raise DomainError("TASK_STATE_CONFLICT", "最终结果已生成;调整阈值请先联系管理员重置结果或新建任务", status_code=409)
+            rows = connection.execute("SELECT source_row_id,current_status,top1_score,top1_group_code FROM match_items WHERE task_id=? AND current_status IN ('MATCHED','REVIEW')", (task_id,)).fetchall()
+            before = {"matched": 0, "review": 0}
+            after = {"matched": 0, "review": 0, "unchanged": 0}
+            now = _now()
+            for row in rows:
+                old = str(row["current_status"])
+                before["matched" if old == "MATCHED" else "review"] += 1
+                score = float(row["top1_score"] or 0.0)
+                if score > float(success_threshold):
+                    new, final = "MATCHED", row["top1_group_code"]
+                elif score > float(review_threshold):
+                    new, final = "REVIEW", None
+                else:
+                    new, final = "UNMATCHED", None
+                if new in after:
+                    after[new] += 1
+                else:
+                    after["unchanged"] += 1
+                if new != old or final != row["top1_group_code"] and new == "MATCHED":
+                    connection.execute("UPDATE match_items SET current_status=?, final_group_code=?, updated_at=? WHERE task_id=? AND source_row_id=?", (new, final, now, task_id, row["source_row_id"]))
+            unresolved = int(connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0])
+            connection.execute("UPDATE tasks SET stage=? WHERE task_id=?", ("REVIEW" if unresolved else "RESULT", task_id))
+        return {"task_id": task_id, "success_threshold": success_threshold, "review_threshold": review_threshold, "before": before, "after": after, "summary": self.summary(task_id)}
+
     def finalize(self,task_id:str,allow_unresolved_review:bool=False)->dict[str,object]:
         with self.meta.connect() as connection:
             task=connection.execute("SELECT * FROM tasks WHERE task_id=?",(task_id,)).fetchone()
@@ -391,20 +431,55 @@ class MatchService:
             unresolved=int(connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",(task_id,)).fetchone()[0])
         if unresolved and not allow_unresolved_review:
             raise DomainError("TASK_STATE_CONFLICT",f"仍有 {unresolved} 条待人工处理记录，请确认是否保留为空后继续生成",status_code=409,details={"unresolved_review":unresolved})
-        workbook=Workbook(); result_sheet=workbook.active; result_sheet.title="匹配结果"; result_sheet.append(["客户物料编码","状态","最终集团码","第一候选集团码","第一候选分","第二候选分","分差","关键字段冲突","配置SHA256"])
         with self.meta.connect() as connection:
             items=connection.execute("SELECT * FROM match_items WHERE task_id=? ORDER BY CAST(source_row_id AS INTEGER)",(task_id,)).fetchall(); candidates=connection.execute("SELECT * FROM match_candidates WHERE task_id=? ORDER BY CAST(source_row_id AS INTEGER), rank",(task_id,)).fetchall(); reviews=connection.execute("SELECT * FROM reviews WHERE task_id=? ORDER BY created_at",(task_id,)).fetchall()
+        workbook=Workbook()
+        summary_sheet=workbook.active; summary_sheet.title="匹配摘要"
+        counts=self.summary(task_id)
+        total_rows=max(1,sum(counts.values()))
+        snapshot=json.loads(str(task["config_snapshot"])) if task["config_snapshot"] else {}
+        decision=snapshot.get("decision", {}) if isinstance(snapshot, dict) else {}
+        summary_rows=[
+            ("任务名称", str(task["name"])),
+            ("任务编号", str(task_id)),
+            ("配置SHA256", str(task["config_sha256"])),
+            ("源数据行数", total_rows),
+            ("自动匹配", f"{counts.get('automatic_matched',0)}({counts.get('automatic_matched',0)/total_rows:.1%})"),
+            ("人工确认", f"{counts.get('confirmed',0)}({counts.get('confirmed',0)/total_rows:.1%})"),
+            ("待确认", counts.get("pending_review",0)),
+            ("未匹配", f"{counts.get('unmatched',0)}({counts.get('unmatched',0)/total_rows:.1%})"),
+            ("自动匹配阈值", decision.get("success_threshold")),
+            ("人工确认下限", decision.get("review_threshold")),
+            ("生成时间", _now()),
+        ]
+        summary_sheet.append(["匹配摘要",""])
+        for key,value in summary_rows: summary_sheet.append([key,value])
+        result_sheet=workbook.create_sheet("匹配结果"); result_sheet.append(["客户物料编码","状态","最终集团码","第一候选集团码","第一候选分","第二候选分","分差","关键字段冲突"])
+        status_labels={"MATCHED":"自动匹配","CONFIRMED":"人工确认","REVIEW":"待确认","UNMATCHED":"未匹配"}
         for item in items:
             final_code=item["final_group_code"] if item["current_status"] != "REVIEW" else None
-            result_sheet.append([str(item["source_id"]),str(item["current_status"]),final_code,item["top1_group_code"],item["top1_score"],item["second_score"],item["score_gap"],"是" if item["critical_conflict"] else "否",str(task["config_sha256"])])
+            result_sheet.append([str(item["source_id"]),status_labels.get(str(item["current_status"]),str(item["current_status"])),final_code,item["top1_group_code"],item["top1_score"],item["second_score"],item["score_gap"],"是" if item["critical_conflict"] else "否"])
         cand_sheet=workbook.create_sheet("TopN候选"); cand_sheet.append(["客户行","排名","集团码","得分"])
         for candidate in candidates: cand_sheet.append([str(candidate["source_row_id"]),candidate["rank"],str(candidate["target_group_code"]),candidate["score"]])
         review_sheet=workbook.create_sheet("人工确认记录"); review_sheet.append(["客户行","动作","集团码","操作人","备注","时间"])
         for review in reviews: review_sheet.append([str(review["source_row_id"]),review["action"],review["selected_group_code"],review["operator"],review["comment"],review["created_at"]])
+        from openpyxl.styles import Alignment, Font, PatternFill
+        header_fill=PatternFill("solid", fgColor="1F4E79"); header_font=Font(color="FFFFFF", bold=True, size=11)
+        status_fill={"自动匹配":PatternFill("solid", fgColor="E2EFDA"),"人工确认":PatternFill("solid", fgColor="DDEBF7"),"待确认":PatternFill("solid", fgColor="FFF2CC"),"未匹配":PatternFill("solid", fgColor="F2F2F2")}
         for sheet in workbook.worksheets:
+            for cell in sheet[1]:
+                cell.fill=header_fill; cell.font=header_font; cell.alignment=Alignment(horizontal="center", vertical="center")
+            sheet.freeze_panes="A2"
+            for column_cells in sheet.columns:
+                width=max((len(str(cell.value)) for cell in column_cells[:200] if cell.value is not None), default=8)
+                sheet.column_dimensions[column_cells[0].column_letter].width=min(46, max(10, width + 4))
             for row in sheet.iter_rows():
                 for cell in row:
-                    if isinstance(cell.value,str): cell.number_format="@"
+                    if isinstance(cell.value,str):
+                        cell.number_format="@"
+                        if sheet is result_sheet and cell.column==2 and cell.value in status_fill: cell.fill=status_fill[cell.value]
+        summary_sheet["A1"].font=Font(bold=True, size=14, color="1F4E79"); summary_sheet["A1"].fill=PatternFill()
+        summary_sheet.column_dimensions["A"].width=18; summary_sheet.column_dimensions["B"].width=64
         output=BytesIO(); workbook.save(output); output.seek(0); file_record=self.files.save_stream(f"material_matcher_{task_id}.xlsx","result",output,self.settings.max_total_upload_bytes)
         with self.meta.connect() as connection:
             connection.execute("UPDATE tasks SET result_file_id=?, stage='RESULT', status='COMPLETED' WHERE task_id=?",(file_record["file_id"],task_id))

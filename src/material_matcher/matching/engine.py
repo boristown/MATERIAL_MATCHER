@@ -85,6 +85,22 @@ def load_target_rows(path: Path, *, max_target_rows: int) -> list[dict[str, obje
     return rows
 
 
+def source_filter_allows(source_row: Mapping[str, object], config: MatchingConfig) -> bool:
+    flt = config.source_filter
+    if flt is None:
+        return True
+    raw = source_row.get(flt.field)
+    text = "" if raw is None else str(raw).strip()
+    values = [str(value).strip() for value in flt.values if str(value).strip()]
+    if not values:
+        return True
+    if flt.match == "contains":
+        hit = any(value and value in text for value in values) if text else False
+    else:
+        hit = text in values
+    return hit if flt.mode == "include" else not hit
+
+
 def _row_result(source_row: dict[str, object], row_index: int, scored: list[tuple[float, str, dict[str, object], dict[str, object]]], config: MatchingConfig) -> RowResult:
     scored.sort(key=lambda item: item[0], reverse=True)
     selected = scored[: config.decision.top_n]
@@ -118,6 +134,9 @@ def match_rows(
     for row_index, source_raw in enumerate(iter_tabular_rows(source_path, max_rows=max_source_rows), start=1):
         source_row = _to_plain(source_raw)
         if row_index == 1: _validate_source_columns(source_row, config)
+        if not source_filter_allows(source_row, config):
+            if on_progress: on_progress(row_index, max(total, row_index))
+            continue
         scored: list[tuple[float, str, dict[str, object], dict[str, object]]] = []
         for target_row in target_rows:
             if not allowed_by_scope(source_row,target_row,config): continue
@@ -160,6 +179,9 @@ def match_rows_indexed(
         if config.scope_mode == "GLOBAL":
             hits_list=index.search_many(np.asarray(vectors,dtype=np.float32),candidate_top_k,oversample=config.retrieval.oversample,scan_workers=scan_workers)
         for position,(row_index,source_row) in enumerate(items):
+            if not source_filter_allows(source_row, config):
+                if on_progress: on_progress(row_index,max(total,row_index))
+                continue
             query=np.asarray(vectors[position],dtype=np.float32)
             if hits_list is not None:
                 hits=hits_list[position]

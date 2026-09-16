@@ -49,6 +49,19 @@ class DecisionConfig(BaseModel):
         return self
 
 
+class SourceFilter(BaseModel):
+    field: str = Field(min_length=1, max_length=200)
+    values: list[str] = Field(default_factory=list, max_length=500)
+    mode: Literal["include", "exclude"] = "include"
+    match: Literal["exact", "contains"] = "exact"
+
+    @model_validator(mode="after")
+    def require_values(self) -> "SourceFilter":
+        if not any(str(value).strip() for value in self.values):
+            raise ValueError("过滤条件至少需要一个非空值")
+        return self
+
+
 class ScopeConfig(BaseModel):
     source_field: str | None = None
     target_field: str | None = None
@@ -72,6 +85,7 @@ class MatchingConfig(BaseModel):
     source_id_column: str | None = None
     scope_mode: Literal["GLOBAL", "STRICT", "MAPPED"] = "GLOBAL"
     scope: ScopeConfig = Field(default_factory=ScopeConfig)
+    source_filter: SourceFilter | None = None
     rules: list[FieldRule] = Field(default_factory=list)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
