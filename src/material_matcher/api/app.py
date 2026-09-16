@@ -204,7 +204,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     evaluations = BusinessEvaluationService(metadata, files)
     text_profiles = TextProfileService(metadata, files, cfg, matches.indexes)
     worker = TaskWorker(matches, cfg.worker_poll_seconds)
-    sessions = SessionStore(cfg.session_ttl_seconds)
+    sessions = SessionStore(metadata, cfg.session_ttl_seconds)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
