@@ -12,6 +12,7 @@ STORAGE_ENV="$ETC/storage.env"
 SERVICE_FILE="/etc/systemd/system/material_matcher.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_ROOT="${MATERIAL_MATCHER_BUNDLE_ROOT:-}"
+DEFAULT_SESSION_TTL_SECONDS=1209600
 
 fail() { echo "安装失败：$*" >&2; exit 1; }
 
@@ -106,15 +107,41 @@ if [[ ! -f "$STORAGE_ENV" ]]; then
     physical_data="$VAR"
   fi
   printf 'MATERIAL_MATCHER_DATA_MOUNT=%q\nMATERIAL_MATCHER_DATA_DIR=%q\n' "$data_mount" "$VAR" >"$STORAGE_ENV"
-else
-  mkdir -p "$VAR"
 fi
 
-mkdir -p "$VAR/meta" "$VAR/datasets" "$VAR/uploads" "$VAR/results" "$VAR/indexes" \
-  "$VAR/models/releases" "$VAR/jobs" "$VAR/tmp"
+# storage.env is the single source of truth for persistent application data.
+# Upgrades must never silently switch metadata databases just because /var/lib differs.
+set -a
+# shellcheck disable=SC1090
+source "$STORAGE_ENV"
+set +a
+DATA_DIR="${MATERIAL_MATCHER_DATA_DIR:-}"
+[[ -n "$DATA_DIR" ]] || fail "$STORAGE_ENV 缺少 MATERIAL_MATCHER_DATA_DIR"
+[[ "$DATA_DIR" == /* ]] || fail "MATERIAL_MATCHER_DATA_DIR 必须是绝对路径：$DATA_DIR"
+mkdir -p "$DATA_DIR" "$VAR"
+
+DATA_REAL="$(readlink -m "$DATA_DIR")"
+VAR_REAL="$(readlink -m "$VAR")"
+CONFIGURED_DB="$DATA_DIR/meta/material_matcher.db"
+LEGACY_DB="$VAR/meta/material_matcher.db"
+if [[ "$DATA_REAL" != "$VAR_REAL" ]]; then
+  if [[ -f "$LEGACY_DB" && ! -f "$CONFIGURED_DB" ]]; then
+    fail "检测到 storage.env 指向 $DATA_DIR，但旧 metadata DB 位于 $LEGACY_DB。为防止升级后创建空数据库并导致登录/业务数据消失，请先明确迁移或修正 MATERIAL_MATCHER_DATA_DIR。"
+  fi
+  if [[ -f "$LEGACY_DB" && -f "$CONFIGURED_DB" ]]; then
+    fail "同时检测到两份 metadata DB：$CONFIGURED_DB 与 $LEGACY_DB。拒绝自动选择，请人工确认唯一数据目录后再升级。"
+  fi
+fi
+
+mkdir -p "$DATA_DIR/meta" "$DATA_DIR/datasets" "$DATA_DIR/uploads" "$DATA_DIR/results" \
+  "$DATA_DIR/indexes" "$DATA_DIR/jobs" "$DATA_DIR/tmp" "$DATA_DIR/cache/embeddings" \
+  "$VAR/models/releases"
 
 if [[ ! -f "$SERVER_ENV" ]]; then
-  printf 'MATERIAL_MATCHER_HOST=0.0.0.0\nMATERIAL_MATCHER_PORT=%s\n' "$(choose_port)" >"$SERVER_ENV"
+  printf 'MATERIAL_MATCHER_HOST=0.0.0.0\nMATERIAL_MATCHER_PORT=%s\nMATERIAL_MATCHER_SESSION_TTL_SECONDS=%s\n' \
+    "$(choose_port)" "$DEFAULT_SESSION_TTL_SECONDS" >"$SERVER_ENV"
+elif ! grep -q '^MATERIAL_MATCHER_SESSION_TTL_SECONDS=' "$SERVER_ENV"; then
+  printf 'MATERIAL_MATCHER_SESSION_TTL_SECONDS=%s\n' "$DEFAULT_SESSION_TTL_SECONDS" >>"$SERVER_ENV"
 fi
 
 if [[ ! -f "$PASSWORD_FILE" ]]; then
@@ -130,7 +157,7 @@ chown root:root "$PASSWORD_FILE"
 chmod 0600 "$PASSWORD_FILE"
 
 if ! id "$APP_USER" >/dev/null 2>&1; then
-  useradd --system --home "$VAR" --shell /usr/sbin/nologin "$APP_USER"
+  useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin "$APP_USER"
 fi
 
 OLD_RELEASE=""
@@ -176,8 +203,11 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
 fi
 
 # 不递归扫描已有海量索引/结果；固定目录只调整目录本身，新模型只处理本次版本。
-chown "$APP_USER:$APP_USER" "$VAR" "$LOG"
-for path in "$VAR/meta" "$VAR/datasets" "$VAR/uploads" "$VAR/results" "$VAR/indexes" "$VAR/models" "$VAR/models/releases" "$VAR/jobs" "$VAR/tmp"; do
+chown "$APP_USER:$APP_USER" "$DATA_DIR" "$VAR" "$LOG"
+for path in "$DATA_DIR/meta" "$DATA_DIR/datasets" "$DATA_DIR/uploads" "$DATA_DIR/results" "$DATA_DIR/indexes" "$DATA_DIR/jobs" "$DATA_DIR/tmp" "$DATA_DIR/cache" "$DATA_DIR/cache/embeddings"; do
+  chown "$APP_USER:$APP_USER" "$path"
+done
+for path in "$VAR/models" "$VAR/models/releases"; do
   chown "$APP_USER:$APP_USER" "$path"
 done
 if [[ "$MODEL_COPIED" == "1" ]]; then chown -R "$APP_USER:$APP_USER" "$MODEL_RELEASE_ROOT"; fi
@@ -185,7 +215,7 @@ if [[ "$MODEL_COPIED" == "1" ]]; then chown -R "$APP_USER:$APP_USER" "$MODEL_REL
 if [[ -n "$BUNDLE_ROOT" ]]; then
   # 以正式运行用户、未来将激活的模型/前端路径执行切换前诊断；此时旧服务仍在线。
   DOCTOR_ENV=(
-    "MATERIAL_MATCHER_DATA_DIR=$VAR"
+    "MATERIAL_MATCHER_DATA_DIR=$DATA_DIR"
     "MATERIAL_MATCHER_CONFIG_DIR=$ETC"
     "MATERIAL_MATCHER_LOG_DIR=$LOG"
     "MATERIAL_MATCHER_MODEL_ROOT=$MODEL_RELEASE_ROOT"
