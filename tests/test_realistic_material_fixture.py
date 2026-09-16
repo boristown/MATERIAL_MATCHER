@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
+from pathlib import Path
 
 from material_matcher.ingestion.reader import iter_tabular_rows
-from scripts.generate_realistic_test_data import generate_dataset, generate_rows
+
+
+def _load_generator_module():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "generate_realistic_test_data.py"
+    spec = importlib.util.spec_from_file_location("generate_realistic_test_data", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_GENERATOR = _load_generator_module()
+generate_dataset = _GENERATOR.generate_dataset
+generate_rows = _GENERATOR.generate_rows
 
 
 def test_realistic_fixture_has_expected_business_distribution() -> None:
