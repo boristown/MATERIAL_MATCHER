@@ -13,6 +13,10 @@ FORBIDDEN_SUFFIXES = {
 FORBIDDEN_PARTS = {"node_modules", ".venv", "venv", "dist", "build", "runtime", "cache", "tmp"}
 MAX_TEXT_BYTES = 5 * 1024 * 1024
 
+# origin_data.zip is the project's canonical, intentionally versioned seed-data package.
+# Keep the exception path-specific so arbitrary ZIP/binary artifacts remain rejected.
+ALLOWED_BINARY_PATHS = {Path("origin_data.zip")}
+
 
 def tracked_files() -> list[Path]:
     result = subprocess.run(["git", "ls-files", "-z"], check=True, capture_output=True)
@@ -26,7 +30,8 @@ def main() -> int:
             errors.append(f"禁止提交目录: {path}")
             continue
         if path.suffix.lower() in FORBIDDEN_SUFFIXES:
-            errors.append(f"禁止提交二进制/运行产物: {path}")
+            if path not in ALLOWED_BINARY_PATHS:
+                errors.append(f"禁止提交二进制/运行产物: {path}")
             continue
         if path.exists() and path.stat().st_size > MAX_TEXT_BYTES:
             errors.append(f"文本文件超过 5MB: {path}")
