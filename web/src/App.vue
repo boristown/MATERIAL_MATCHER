@@ -7,6 +7,7 @@ import { activeWorkspaceStep } from './workspaceStage'
 const route = useRoute()
 const router = useRouter()
 const user = ref<{ username: string; role: string } | null>(null)
+const runtimeVersion = ref('')
 const steps = [
   { n: 1, title: '第一步 · 数据上传', desc: '上传源 Excel 与目标集团码 Excel', path: '/profiles' },
   { n: 2, title: '第二步 · 进度监控', desc: '查看任务进度与实时处理情况', path: '/tasks' },
@@ -26,6 +27,13 @@ const activeStep = computed<number | null>(() => {
 })
 
 onMounted(async () => {
+  try {
+    const response = await api.get('/health')
+    const version = response.data?.version
+    if (typeof version === 'string' && version.trim()) runtimeVersion.value = version.trim()
+  } catch {
+    runtimeVersion.value = ''
+  }
   if (route.path === '/login') return
   try { user.value = (await api.get('/auth/me')).data } catch { /* 401 由统一认证逻辑处理 */ }
 })
@@ -62,7 +70,7 @@ async function logout(): Promise<void> {
           <span class="nav-title">{{ item[0] }}</span>
         </button>
       </nav>
-      <div class="side-foot">小罡 AI · v1.0</div>
+      <div class="side-foot">{{ runtimeVersion ? `小罡 AI · v${runtimeVersion}` : '小罡 AI' }}</div>
     </aside>
     <main>
       <header>
