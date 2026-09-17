@@ -189,7 +189,10 @@ class BusinessEvaluationService:
         final_correct = 0
         automatic_rows = 0
         automatic_correct = 0
+        current_automatic_rows = 0
+        current_automatic_correct = 0
         review_rows = 0
+        current_review_rows = 0
         unmatched_rows = 0
         resolved_rows = 0
         human_changed_rows = 0
@@ -236,9 +239,8 @@ class BusinessEvaluationService:
                     no_match_false_positive += 1
 
             final_correct += int(final_ok)
-            # These three rates describe the model/global-decision workload before
-            # manual review. Preserve the original status even after reviewers
-            # confirm/reject rows so acceptance cannot improve merely by doing work.
+            # Legacy workload metrics describe the task's original decision before
+            # manual review and are kept stable for existing reports.
             if original_status == "MATCHED":
                 automatic_rows += 1
                 automatic_correct += int(is_positive and top1 == expected)
@@ -246,7 +248,19 @@ class BusinessEvaluationService:
                 review_rows += 1
             if original_status == "UNMATCHED":
                 unmatched_rows += 1
-            if current_status in {"MATCHED", "CONFIRMED", "UNMATCHED"}:
+
+            # Formal calibration metrics describe the current global decision. A
+            # manually CONFIRMED row is deliberately not counted as automatic.
+            if current_status == "MATCHED":
+                current_automatic_rows += 1
+                current_automatic_correct += int(is_positive and top1 == expected)
+            if current_status == "REVIEW":
+                current_review_rows += 1
+
+            # Preserve the legacy definition for positive truth (a selected group
+            # code means resolved) while allowing explicit NO_MATCH truth to be
+            # resolved by a correct UNMATCHED decision without inventing a code.
+            if final or (not is_positive and current_status == "UNMATCHED"):
                 resolved_rows += 1
             if final and final != top1:
                 human_changed_rows += 1
@@ -269,7 +283,8 @@ class BusinessEvaluationService:
             })
 
         positive_top1_accuracy = _ratio(positive_top1_correct, positive_evaluated)
-        automatic_precision = _ratio(automatic_correct, automatic_rows)
+        legacy_automatic_accuracy = _ratio(automatic_correct, automatic_rows)
+        automatic_match_precision = _ratio(current_automatic_correct, current_automatic_rows)
         metrics = {
             "truth_rows": len(truth),
             "evaluated_rows": evaluated,
@@ -284,10 +299,14 @@ class BusinessEvaluationService:
             "human_accuracy_gain": _ratio(final_correct - positive_top1_correct - no_match_true_negative, evaluated),
             "automatic_rows": automatic_rows,
             "automatic_correct": automatic_correct,
-            "automatic_accuracy": automatic_precision,
-            "automatic_match_precision": automatic_precision,
+            "automatic_accuracy": legacy_automatic_accuracy,
+            "automatic_match_rows": current_automatic_rows,
+            "automatic_match_correct": current_automatic_correct,
+            "automatic_match_precision": automatic_match_precision,
             "review_rows": review_rows,
             "review_rate": _ratio(review_rows, evaluated),
+            "current_review_rows": current_review_rows,
+            "current_review_rate": _ratio(current_review_rows, evaluated),
             "unmatched_rows": unmatched_rows,
             "unmatched_rate": _ratio(unmatched_rows, evaluated),
             "resolved_rows": resolved_rows,
