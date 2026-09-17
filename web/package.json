@@ -10,7 +10,8 @@
     "test:step-naming": "node scripts/test-step-naming.mjs",
     "test:review-history-contract": "node scripts/test-review-history-contract.mjs",
     "test:business-name-contract": "node scripts/test-business-name-contract.mjs",
-    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && npm run test:business-name-contract && vue-tsc -b && vite build"
+    "test:login-brand": "node scripts/test-login-brand.mjs",
+    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && npm run test:business-name-contract && npm run test:login-brand && vue-tsc -b && vite build"
   },
   "dependencies": {
     "axios": "^1.7.9",
