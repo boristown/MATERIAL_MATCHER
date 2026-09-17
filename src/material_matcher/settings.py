@@ -48,7 +48,7 @@ class Settings:
     index_scan_workers: int = 0
     query_batch_size: int = 64
     index_lock_stale_seconds: int = 21_600
-    web_dist_dir: Path = Path("/opt/material_matcher/current/web/dist")
+    web_dist_dir: Path = Path("/opt/material_matcher/current/web-dist")
     acceptance_min_truth_rows: int | None = None
     acceptance_min_truth_coverage: float | None = None
     acceptance_min_top1_accuracy: float | None = None
@@ -107,7 +107,7 @@ class Settings:
             index_scan_workers=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_WORKERS", "0")),
             query_batch_size=int(os.getenv("MATERIAL_MATCHER_QUERY_BATCH_SIZE", "64")),
             index_lock_stale_seconds=int(os.getenv("MATERIAL_MATCHER_INDEX_LOCK_STALE_SECONDS", "21600")),
-            web_dist_dir=Path(os.getenv("MATERIAL_MATCHER_WEB_DIST_DIR", "/opt/material_matcher/current/web/dist")),
+            web_dist_dir=Path(os.getenv("MATERIAL_MATCHER_WEB_DIST_DIR", "/opt/material_matcher/current/web-dist")),
             acceptance_min_truth_rows=_optional_int("MATERIAL_MATCHER_ACCEPTANCE_MIN_TRUTH_ROWS"),
             acceptance_min_truth_coverage=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_TRUTH_COVERAGE"),
             acceptance_min_top1_accuracy=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_TOP1_ACCURACY"),
