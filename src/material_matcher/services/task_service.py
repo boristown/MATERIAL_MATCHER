@@ -12,6 +12,10 @@ from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
 
+UNNAMED_SCHEME = "未命名方案"
+SCHEME_SNAPSHOT_KEY = "scheme_display_name"
+
+
 def _now() -> str:
     return datetime.now().astimezone().isoformat()
 
@@ -38,6 +42,53 @@ class TaskService:
                 status_code=422,
                 details={"profile_id": profile_id, "version_no": version_no},
             )
+
+    def _profile_name(self, profile_id: object | None) -> str | None:
+        if not profile_id:
+            return None
+        with self.repo.connect() as connection:
+            row = connection.execute(
+                "SELECT name FROM profiles WHERE profile_id=?",
+                (str(profile_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        name = str(row["name"] or "").strip()
+        return name or None
+
+    @staticmethod
+    def _snapshot_scheme_name(snapshot: object) -> str | None:
+        if not isinstance(snapshot, dict):
+            return None
+        advanced = snapshot.get("advanced")
+        if not isinstance(advanced, dict):
+            return None
+        for key in (SCHEME_SNAPSHOT_KEY, "scheme_name", "plan_name", "profile_name"):
+            value = str(advanced.get(key) or "").strip()
+            if value:
+                return value
+        return None
+
+    def _freeze_scheme_name(self, snapshot: dict[str, Any], draft: dict[str, object]) -> str:
+        existing = self._snapshot_scheme_name(snapshot)
+        if existing:
+            return existing
+        scheme_name = self._profile_name(draft.get("template_profile_id")) or UNNAMED_SCHEME
+        advanced = dict(snapshot.get("advanced") or {})
+        advanced[SCHEME_SNAPSHOT_KEY] = scheme_name
+        snapshot["advanced"] = advanced
+        return scheme_name
+
+    def _with_scheme_name(self, task: dict[str, object]) -> dict[str, object]:
+        # New tasks always read the immutable start-time snapshot. For legacy tasks
+        # created before this field existed, the linked profile is the best available
+        # business source. Never fall back to task.name because it may be SMOKE-/test-/run-*.
+        task["scheme_name"] = (
+            self._snapshot_scheme_name(task.get("config_snapshot"))
+            or self._profile_name(task.get("profile_id"))
+            or UNNAMED_SCHEME
+        )
+        return task
 
     def create_draft(
         self,
@@ -227,6 +278,7 @@ class TaskService:
         if not config.rules:
             raise DomainError("INVALID_PROFILE", "至少配置一条字段对应关系后才能开始比对", status_code=422)
         snapshot = config.model_dump(mode="json")
+        scheme_name = self._freeze_scheme_name(snapshot, draft)
         encoded = _canonical(snapshot)
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         task_id = uuid.uuid4().hex
@@ -268,7 +320,12 @@ class TaskService:
                     "task",
                     task_id,
                     "CONFIG_SNAPSHOT_FROZEN",
-                    _canonical({"config_sha256": digest, "created_by": actor_name, "started_by": actor_name}),
+                    _canonical({
+                        "config_sha256": digest,
+                        "scheme_display_name": scheme_name,
+                        "created_by": actor_name,
+                        "started_by": actor_name,
+                    }),
                     created_at,
                 ),
             )
@@ -287,7 +344,7 @@ class TaskService:
         if row is None:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
         task = self.repo.decode(row, ("config_snapshot",)) or {}
-        return self._with_actor_fields(task, actor_row)
+        return self._with_scheme_name(self._with_actor_fields(task, actor_row))
 
     def list_tasks(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
@@ -301,5 +358,5 @@ class TaskService:
             item = self.repo.decode(row, ("config_snapshot",)) or {}
             item["created_by"] = item.pop("actor_created_by", None)
             item["started_by"] = item.pop("actor_started_by", None)
-            result.append(item)
+            result.append(self._with_scheme_name(item))
         return result
