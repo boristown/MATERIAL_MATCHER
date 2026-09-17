@@ -1,0 +1,6 @@
+/* Business workflow uses the selected/configured scheme name as the only visible name.
+   TaskWorkspaceBase keeps task.name internally for backward compatibility, but the
+   ordinary start flow must not ask users to enter a second temporary task name. */
+.task-name-row {
+  display: none !important;
+}

@@ -29,6 +29,7 @@ type ReviewSummary = {
 type ReviewTask = {
   id: string
   name: string
+  scheme_name: string
   stage: string
   progress: number
   status: string
@@ -250,7 +251,8 @@ const coreVisibleFields = computed(() => visibleFieldDescriptors.value.slice(0, 
 function normalizeTask(task: any): ReviewTask {
   return {
     id: String(task.task_id ?? ''),
-    name: String(task.name ?? '未命名任务'),
+    name: String(task.name ?? ''),
+    scheme_name: String(task.scheme_name ?? '未命名方案'),
     stage: String(task.stage ?? ''),
     progress: Number(task.progress ?? 0),
     status: String(task.status ?? ''),
@@ -911,8 +913,8 @@ onBeforeUnmount(() => {
         <p>批量处理大多数记录，只对少量真正需要判断的数据展开 Top 1～Top 5。</p>
       </div>
       <div class="review-toolbar-actions">
-        <el-select v-if="workspaceTasks.length > 1" :model-value="activeTaskId" class="review-task-switcher" placeholder="切换任务" @change="selectTask">
-          <el-option v-for="taskRow in workspaceTasks" :key="taskRow.id" :label="`${taskRow.name} · ${formatNumber(taskRow.summary?.pending_review)} 条待人工`" :value="taskRow.id" />
+        <el-select v-if="workspaceTasks.length > 1" :model-value="activeTaskId" class="review-task-switcher" placeholder="切换方案" @change="selectTask">
+          <el-option v-for="taskRow in workspaceTasks" :key="taskRow.id" :label="`${taskRow.scheme_name} · ${formatNumber(taskRow.summary?.pending_review)} 条待人工`" :value="taskRow.id" />
         </el-select>
         <template v-if="activeTaskId">
           <el-button @click="downloadManualWorkbook(activeTaskId)">下载人工匹配 Excel</el-button>
@@ -928,8 +930,9 @@ onBeforeUnmount(() => {
         <div class="review-console-main">
           <div class="review-console-kicker"><span class="review-status-dot"></span>第二步计算进行中</div>
           <h3>等待匹配计算完成</h3>
-          <p>任务「{{ calculatingTask.name }}」仍在计算，完成后会自动进入人工调整。</p>
+          <p>方案「{{ calculatingTask.scheme_name }}」仍在计算，完成后会自动进入人工调整。</p>
           <div class="review-console-meta">
+            <span>开始时间 {{ formatDate(calculatingTask.started_at ?? calculatingTask.created_at) }}</span>
             <span>{{ phaseLabel(calculatingProgress?.current_phase) }}</span>
             <span>{{ runStatusLabel(calculatingProgress?.status ?? calculatingTask.status) }}</span>
             <span v-if="waitingTotal > 0">已处理 {{ formatNumber(waitingProcessed) }} / {{ formatNumber(waitingTotal) }} 行</span>
@@ -945,16 +948,16 @@ onBeforeUnmount(() => {
         <div class="review-console-main">
           <div class="review-console-kicker"><span class="review-status-dot"></span>状态读取异常</div>
           <h3>暂时无法读取人工调整数据</h3>
-          <p>{{ loadError || '部分任务汇总读取失败，请重试。' }}</p>
+          <p>{{ loadError || '部分方案汇总读取失败，请重试。' }}</p>
         </div>
         <div class="review-console-action"><el-button type="primary" :loading="loading" @click="load">重新读取</el-button></div>
       </template>
       <template v-else>
         <div class="review-console-main">
-          <div class="review-console-kicker"><span class="review-status-dot"></span>暂无可调整任务</div>
+          <div class="review-console-kicker"><span class="review-status-dot"></span>暂无可调整方案</div>
           <h3>当前没有可进入人工调整的匹配结果</h3>
-          <p>请先完成第二步匹配计算；已有最终结果的任务可前往第四步查看。</p>
-          <div v-if="latestFailed" class="review-failure-note"><b>最近失败任务：{{ latestFailed.name }}</b><span>{{ latestFailed.error_message || latestFailed.error_code || '计算失败' }}</span></div>
+          <p>请先完成第二步匹配计算；已有最终结果的方案可前往第四步查看。</p>
+          <div v-if="latestFailed" class="review-failure-note"><b>最近失败方案：{{ latestFailed.scheme_name }}</b><span>{{ latestFailed.error_message || latestFailed.error_code || '计算失败' }}</span></div>
         </div>
         <div class="review-console-action review-empty-actions">
           <el-button type="primary" size="large" @click="router.push('/tasks')">前往第二步</el-button>
@@ -966,12 +969,12 @@ onBeforeUnmount(() => {
     <template v-if="consoleMode === 'ready' && activeTask">
       <section class="review-task-hero">
         <div>
-          <div class="review-section-kicker">正在调整 · {{ activeTask.name }}</div>
+          <div class="review-section-kicker">方案名称 · {{ activeTask.scheme_name }}</div>
           <h3>先筛选和批量处理，再展开少量需要判断的记录</h3>
           <p>列表只请求当前页，状态、搜索、分数范围和分页都交给服务端处理；不会生成十万行 Vue DOM，也不会一次加载全量候选。</p>
         </div>
         <div class="review-task-hero-meta">
-          <span>任务 {{ activeTask.id.slice(0, 12) }}</span>
+          <span>开始时间 {{ formatDate(activeTask.started_at ?? activeTask.created_at) }}</span>
           <span>计算完成 {{ formatDate(activeTask.finished_at) }}</span>
         </div>
       </section>
@@ -1180,17 +1183,17 @@ onBeforeUnmount(() => {
     </template>
 
     <section class="panel review-list-panel">
-      <div class="section-head"><div><h3>可人工调整的任务</h3><p class="review-section-desc">可切换其它已完成匹配计算的任务。</p></div></div>
+      <div class="section-head"><div><h3>可人工调整的方案</h3><p class="review-section-desc">可切换其它已完成匹配计算的方案。</p></div></div>
       <el-table v-if="reviewRows.length" :data="reviewRows" size="default">
-        <el-table-column label="名称" min-width="220"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.name }}</a><div class="row-sub">{{ scope.row.id }}</div></template></el-table-column>
+        <el-table-column label="方案名称" min-width="220"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a><div class="row-sub">开始 {{ formatDate(scope.row.started_at ?? scope.row.created_at) }}</div></template></el-table-column>
         <el-table-column label="自动匹配" width="110"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.automatic_matched) }}</template></el-table-column>
         <el-table-column label="待人工" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.pending_review) }}</template></el-table-column>
         <el-table-column label="已人工" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.confirmed) }}</template></el-table-column>
         <el-table-column label="未匹配" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.unmatched) }}</template></el-table-column>
         <el-table-column label="计算完成" width="170"><template #default="scope">{{ formatDate(scope.row.finished_at) }}</template></el-table-column>
-        <el-table-column label="操作" width="130"><template #default="scope"><el-button v-if="workspaceTasks.some(task => task.id === scope.row.id)" link type="primary" @click="selectTask(scope.row.id)">进入工作台</el-button><el-button v-else link type="info" @click="openTask(scope.row)">查看任务</el-button></template></el-table-column>
+        <el-table-column label="操作" width="130"><template #default="scope"><el-button v-if="workspaceTasks.some(task => task.id === scope.row.id)" link type="primary" @click="selectTask(scope.row.id)">进入工作台</el-button><el-button v-else link type="info" @click="openTask(scope.row)">查看详情</el-button></template></el-table-column>
       </el-table>
-      <el-empty v-else description="暂无已完成匹配计算的任务" :image-size="72" />
+      <el-empty v-else description="暂无已完成匹配计算的方案" :image-size="72" />
     </section>
   </div>
 </template>
