@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
+import json as _json
 import re
 import unicodedata
 from typing import Any, Mapping, Sequence
@@ -82,19 +84,141 @@ def _dictionary_map(before: object, options: dict[str, object]) -> object:
     )
 
 
+def _normalize_base_text(before: object, *, case: str = "upper") -> str | None:
+    if before is None:
+        return None
+    text = unicodedata.normalize("NFKC", str(before)).strip()
+    if case == "upper":
+        text = text.upper()
+    elif case == "lower":
+        text = text.lower()
+    elif case not in {"keep", "none"}:
+        raise DomainError(
+            "PROCESSING_PIPELINE_INVALID",
+            "文本归一化 case 必须为 upper、lower 或 keep",
+            status_code=422,
+        )
+    return text
+
+
+def _text_normalize(before: object, options: dict[str, object]) -> object:
+    text = _normalize_base_text(before, case=str(options.get("case", "upper")))
+    if text is None:
+        return None
+    translations = str.maketrans(
+        {
+            "，": ",",
+            "。": ".",
+            "；": ";",
+            "：": ":",
+            "（": "(",
+            "）": ")",
+            "【": "[",
+            "】": "]",
+            "—": "-",
+            "–": "-",
+            "−": "-",
+            "／": "/",
+        }
+    )
+    text = text.translate(translations)
+    text = re.sub(r"\s+", " ", text).strip()
+    if bool(options.get("compact", False)):
+        chars = str(options.get("punctuation", " _-/\\()[]{}.,;:，。；："))
+        text = text.translate(str.maketrans({char: "" for char in chars}))
+        text = re.sub(r"\s+", "", text)
+    return text
+
+
+def _standard_number_normalize(before: object, options: dict[str, object]) -> object:
+    text = _normalize_base_text(before, case="upper")
+    if text is None:
+        return None
+    text = text.translate(str.maketrans({"—": "-", "–": "-", "−": "-", "／": "/"}))
+    # Common Chinese standard families are frequently written as GB/T, GBT or GB-T.
+    # Keep the operator generic and field-scoped; no customer/material identifiers are embedded.
+    prefixes = options.get(
+        "t_prefixes",
+        ["GB", "JB", "HG", "SJ", "HB", "QJ", "CB", "SY", "NY", "DL", "JT", "TB", "YD", "YY"],
+    )
+    for prefix in sorted((str(item).upper() for item in prefixes), key=len, reverse=True):
+        text = re.sub(rf"(?<![A-Z]){re.escape(prefix)}\s*[-/]?\s*T(?=\s*\d)", f"{prefix}/T", text)
+    text = re.sub(r"\s*([/\-.])\s*", r"\1", text)
+    if bool(options.get("remove_spaces", True)):
+        text = re.sub(r"\s+", "", text)
+    else:
+        text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _specification_normalize(before: object, options: dict[str, object]) -> object:
+    text = _normalize_base_text(before, case="upper")
+    if text is None:
+        return None
+    text = text.translate(
+        str.maketrans(
+            {
+                "φ": "Φ",
+                "ϕ": "Φ",
+                "Ø": "Φ",
+                "ø": "Φ",
+                "∅": "Φ",
+                "⌀": "Φ",
+                "✕": "×",
+                "✖": "×",
+                "—": "-",
+                "–": "-",
+                "−": "-",
+            }
+        )
+    )
+    # Convert x/X/* to a multiplication sign only when it acts as a dimension separator.
+    text = re.sub(r"(?<=\d)\s*[X*×]\s*(?=\d)", "×", text)
+    text = re.sub(r"Φ\s+(?=\d)", "Φ", text)
+    if bool(options.get("strip_mm_unit", True)):
+        text = re.sub(r"(?<=\d)\s*(?:MM|毫米)(?=$|[^A-Z])", "", text)
+    text = re.sub(r"\s+", "", text)
+    return text
+
+
+def _model_normalize(before: object, options: dict[str, object]) -> object:
+    text = _normalize_base_text(before, case=str(options.get("case", "upper")))
+    if text is None:
+        return None
+    text = text.translate(str.maketrans({"—": "-", "–": "-", "−": "-", "／": "/"}))
+    text = re.sub(r"\s+", "", text)
+    if bool(options.get("strip_wrapping_punctuation", False)):
+        text = text.strip("()[]{}")
+    return text
+
+
+def _manufacturer_normalize(before: object, options: dict[str, object]) -> object:
+    text = _normalize_base_text(before, case=str(options.get("case", "upper")))
+    if text is None:
+        return None
+    text = re.sub(r"[\s_\-—–/\\()（）\[\]【】,，.;；:：]+", "", text)
+    if bool(options.get("strip_legal_suffix", True)):
+        suffixes = options.get(
+            "suffixes",
+            ["股份有限公司", "有限责任公司", "集团有限公司", "集团公司", "有限公司", "公司"],
+        )
+        changed = True
+        while changed and text:
+            changed = False
+            for suffix in sorted((str(item) for item in suffixes), key=len, reverse=True):
+                if suffix and text.endswith(suffix) and len(text) > len(suffix):
+                    text = text[: -len(suffix)]
+                    changed = True
+                    break
+    return text
+
+
 def _trace_options(operator: str, options: dict[str, object]) -> dict[str, object]:
     if operator != "dictionary_map":
         return options
     # Do not duplicate a potentially large dictionary in every candidate trace.
-    return {
-        key: value
-        for key, value in options.items()
-        if key not in {"mapping"}
-    }
+    return {key: value for key, value in options.items() if key not in {"mapping"}}
 
-
-from collections import OrderedDict
-import json as _json
 
 _PIPELINE_MEMO: "OrderedDict[tuple, ProcessedValue]" = OrderedDict()
 _PIPELINE_MEMO_LIMIT = 200_000
@@ -133,9 +257,7 @@ def apply_processing_pipeline(
     input_value: object,
     steps: Sequence[Mapping[str, Any]] | None,
 ) -> ProcessedValue:
-    """Memoized wrapper: pipelines are pure over (value, steps) because dictionary
-    steps carry their immutable version inside `steps`; the hot matching loop
-    re-processes the same target values for every query."""
+    """Memoized wrapper for pure, explicitly configured normalization pipelines."""
     if not steps:
         return _apply_pipeline_uncached(input_value, steps)
     key = (type(input_value).__name__, repr(input_value), _steps_canonical(steps))
@@ -160,13 +282,12 @@ def _apply_pipeline_uncached(
     input_value: object,
     steps: Sequence[Mapping[str, Any]] | None,
 ) -> ProcessedValue:
-    """Apply only the explicitly configured operators, in configured order.
+    """Apply only explicitly configured operators, in configured order.
 
     An absent/empty pipeline is exactly identity. Text such as ``88`` or
     ``N/A`` is never treated as missing unless a ``nullify`` step asks for it.
-    Dictionary behavior is also explicit: a ``dictionary_map`` step must be
-    present and its referenced immutable version must be materialized by the
-    service layer before matching.
+    Dictionary behavior is explicit as well: aliases are supplied by immutable
+    dictionary versions rather than embedded customer-specific code.
     """
 
     current = ProcessedValue(
@@ -213,6 +334,16 @@ def _apply_pipeline_uncached(
             after = None if before is None else str(before).translate(
                 str.maketrans({char: replacement for char in chars})
             )
+        elif operator == "text_normalize":
+            after = _text_normalize(before, options)
+        elif operator == "standard_number_normalize":
+            after = _standard_number_normalize(before, options)
+        elif operator == "specification_normalize":
+            after = _specification_normalize(before, options)
+        elif operator == "model_normalize":
+            after = _model_normalize(before, options)
+        elif operator == "manufacturer_normalize":
+            after = _manufacturer_normalize(before, options)
         elif operator == "nullify":
             values = [str(value) for value in options.get("values", [])]
             case_sensitive = bool(options.get("case_sensitive", True))
