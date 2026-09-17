@@ -155,7 +155,7 @@ def test_existing_formal_result_is_preserved_and_new_decision_gets_result_v2(tmp
         )
         connection.execute(
             f"INSERT INTO match_candidates({_CANDIDATE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?)",
-            ("task-1", "r1", 1, "G1", "{}", 90.0, "[]", 0),
+            ("task-1", "r1", 1, "G1", '{"名称":"测试物料"}', 90.0, "[]", 0),
         )
 
     service.apply("task-1", 80, 50, operator="alice")
