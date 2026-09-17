@@ -1058,7 +1058,7 @@ onBeforeUnmount(() => {
             <tbody>
               <template v-for="item in workbenchItems" :key="item.source_row_id">
                 <tr>
-                  <td class="review-check-col"><el-checkbox :model-value="selectAllFiltered || selectedRowIds.includes(item.source_row_id)" @change="value => onRowCheckboxChange(item.source_row_id, value)" /></td>
+                  <td class="review-check-col"><el-checkbox :model-value="selectAllFiltered || selectedRowIds.includes(item.source_row_id)" @change="onRowCheckboxChange(item.source_row_id, $event)" /></td>
                   <td class="review-source-col">
                     <el-tag size="small" :type="statusTagType(item.current_status)">{{ statusLabel(item.current_status) }}</el-tag>
                     <strong :title="item.source_id">{{ item.source_id || '未命名源物料' }}</strong>
