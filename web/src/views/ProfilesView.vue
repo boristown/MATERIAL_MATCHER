@@ -32,7 +32,7 @@ async function renameProfile(row: ProfileRow): Promise<void> {
 }
 async function deleteProfile(row: ProfileRow): Promise<void> {
   try {
-    await ElMessageBox.confirm(`删除方案「${row.name}」及其全部版本?被任务或草稿引用的方案无法删除。`, '删除方案', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(`删除方案「${row.name}」及其全部版本?被历史记录或草稿引用的方案无法删除。`, '删除方案', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
     await api.delete(`/profiles/${row.profile_id}`)
     ElMessage.success('已删除')
     await load()
@@ -63,11 +63,15 @@ onMounted(async () => {
 
 <template>
   <div v-loading="loading" class="profiles-page">
+    <div class="step-banner">
+      <h2>第一步 · 数据上传</h2>
+      <p>完成数据上传、字段映射和匹配方案配置后即可开始匹配。</p>
+    </div>
     <div class="toolbar">
-      <div><h2>匹配方案</h2><p>方案 = 可复用的字段映射 + 过滤 + 阈值模板;发布后不可变,任务引用时冻结版本。</p></div>
+      <div><h3 class="sub-feature-title">匹配方案配置</h3><p>在开始匹配前选择或维护字段映射、匹配规则和默认参数；方案发布后保持不变，启动匹配时直接沿用。</p></div>
       <el-button type="primary" @click="createProfile">＋ 新建方案</el-button>
     </div>
-    <el-empty v-if="!profiles.length" description="尚无方案。点击「新建方案」进入专用方案配置页。"/>
+    <el-empty v-if="!profiles.length" description="尚无方案。点击「新建方案」进入匹配方案配置。"/>
     <div class="profile-grid">
       <div v-for="row in profiles" :key="row.profile_id" class="profile-card">
         <div class="profile-head">
@@ -79,7 +83,7 @@ onMounted(async () => {
         </div>
         <p class="muted">更新:{{ String(row.updated_at ?? row.created_at ?? '').slice(0, 19).replace('T', ' ') }}</p>
         <div class="profile-actions">
-          <el-button type="primary" size="small" :disabled="!row.latest_published_version" @click="useProfile(row)">用此方案建任务</el-button>
+          <el-button type="primary" size="small" :disabled="!row.latest_published_version" @click="useProfile(row)">选择此方案并上传数据</el-button>
           <el-button size="small" @click="editProfile(row)">编辑</el-button>
           <el-button size="small" @click="openVersions(row)">版本</el-button>
           <el-button size="small" @click="renameProfile(row)">重命名</el-button>
@@ -101,6 +105,17 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.profiles-page .step-banner {
+  margin-bottom: 10px;
+}
+.profiles-page .step-banner p {
+  margin: 2px 0 0;
+  color: var(--mm-muted);
+  font-size: 12.5px;
+}
+.profiles-page .sub-feature-title {
+  margin: 0 0 2px;
+}
 .profiles-page .profile-grid {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
 }

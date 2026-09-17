@@ -7,7 +7,8 @@
     "test:browser-guard": "node scripts/test-browser-check.mjs",
     "test:review-contract": "node scripts/test-review-contract.mjs",
     "test:synonym-contract": "node scripts/test-synonym-contract.mjs",
-    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && vue-tsc -b && vite build"
+    "test:step-naming": "node scripts/test-step-naming.mjs",
+    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && vue-tsc -b && vite build"
   },
   "dependencies": {
     "axios": "^1.7.9",

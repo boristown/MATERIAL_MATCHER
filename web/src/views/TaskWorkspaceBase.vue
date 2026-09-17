@@ -114,8 +114,8 @@ const profileTargetFields = computed(() => uniqueFields([
 const profileTaskIssues = computed(() => {
   if (!isProfileTaskCreateMode.value) return [] as string[]
   const issues: string[] = []
-  if (!source.value) issues.push('请先上传本次任务的待匹配数据')
-  if (!target.value) issues.push('请上传本次任务的集团码标准数据')
+  if (!source.value) issues.push('请先上传本次待匹配数据')
+  if (!target.value) issues.push('请上传本次集团码标准数据')
   if (target.value && !groupCodeColumn.value) issues.push('请确认集团码所在列')
   if (source.value) {
     const sourceSet = new Set(srcHeaders.value)
@@ -313,7 +313,7 @@ async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
   const detail = await getProfileDetail(profileId)
   const published = detail.latest_published
-  if (!published) { ElMessage.warning('该方案尚未发布，不能用于任务'); return }
+  if (!published) { ElMessage.warning('该方案尚未发布，不能用于开始匹配'); return }
   loadDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   ElMessage.success(`已应用方案「${detail.name}」v${published.version_no}，字段映射与阈值已载入`)
@@ -331,7 +331,7 @@ async function loadProfileForEdit(profileId: string): Promise<void> {
 async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
   const published = detail.latest_published
-  if (!published) throw new Error('该方案尚未发布，不能创建任务')
+  if (!published) throw new Error('该方案尚未发布，请先在匹配方案配置中发布后再开始匹配')
   profilePicker.value = profileId
   loadDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
@@ -550,12 +550,12 @@ async function saveConfig(): Promise<void> {
 async function saveAsProfile(): Promise<void> {
   if (!rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
   try {
-    const { value } = await ElMessageBox.prompt('方案名称(发布后不可变,可被任务复用)', '存为匹配方案', { inputValue: name.value || '', confirmButtonText: '校验并发布', cancelButtonText: '取消' })
+    const { value } = await ElMessageBox.prompt('方案名称(发布后不可变,后续匹配可直接复用)', '存为匹配方案', { inputValue: name.value || '', confirmButtonText: '校验并发布', cancelButtonText: '取消' })
     const created = (await api.post('/profiles', { name: value.trim() || `方案-${Date.now()}`, document: documentBody(false) })).data
     await api.post(`/profiles/${created.profile_id}/validate`)
     await api.post(`/profiles/${created.profile_id}/publish`)
     await loadProfiles()
-    ElMessage.success('方案已发布，可在新建任务时直接选用')
+    ElMessage.success('方案已发布，可在第一步“数据上传”中选择此方案并上传数据')
   } catch (error) { if (error !== 'cancel') ElMessage.error((error as Error).message ?? '保存失败') }
 }
 async function dryRun(): Promise<void> {
@@ -856,12 +856,11 @@ onBeforeUnmount(() => {
   <div class="wizard" :class="{ 'profile-editor-mode': isProfileEditorMode, 'profile-task-mode': isProfileTaskCreateMode }">
     <div class="toolbar workspace-toolbar">
       <div>
-        <h2 v-if="isProfileEditorMode">{{ editingProfileId ? `编辑方案 · ${name || '未命名方案'}` : '新建匹配方案' }}</h2>
-        <h2 v-else-if="isProfileTaskCreateMode">用方案创建匹配任务</h2>
-        <h2 v-else>{{ name || '新建匹配任务' }}</h2>
-        <p v-if="isProfileEditorMode">方案配置/编辑模式：这里只维护字段映射、过滤、权重、阈值与发布，不创建或启动业务任务。</p>
-        <p v-else-if="isProfileTaskCreateMode">上传本次左右两份 Excel；已发布方案作为初始配置，当前任务内仍可调整映射、权重和阈值。</p>
-        <p v-else>上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始任务</p>
+        <h2>{{ stage === 0 ? '第一步 · 数据上传' : stage === 1 ? '第二步 · 进度监控' : stage === 2 ? '第三步 · 人工调整' : '第四步 · 输出结果' }}</h2>
+        <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；这里只维护字段映射、匹配规则和默认参数，不会启动匹配。</p>
+        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? name ?? '—' }}」；上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。</p>
+        <p v-else-if="stage === 0"><b>数据上传与匹配设置</b>：上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始匹配</p>
+        <p v-else><b>{{ task?.scheme_name || name || '未命名方案' }}</b> · {{ stage === 1 ? '匹配计算进行中，进度与中间结果实时更新。' : stage === 2 ? '集中处理需要人工确认的记录。' : '确认无误后生成并下载最终结果 Excel。' }}</p>
       </div>
       <div class="toolbar-actions">
         <el-tag v-if="!isProfileEditorMode && draftId" size="small" :type="draftSaveState === 'error' ? 'danger' : draftSaveState === 'saved' ? 'success' : 'info'">{{ draftStateLabel }}</el-tag>
@@ -904,13 +903,13 @@ onBeforeUnmount(() => {
           <div><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
           <div class="wide"><span>源数据过滤</span><b>{{ profileFilterSummary }}</b></div>
         </div>
-        <el-alert type="info" :closable="false" title="这是本次任务的初始配置；后续调整只作用于当前任务，不会修改已发布方案。"/>
+        <el-alert type="info" :closable="false" title="这是本次匹配的初始配置；后续调整只作用于本次匹配，不会修改已发布方案。"/>
       </div>
 
       <div v-if="!isProfileEditorMode" class="panel step1-data-panel">
         <div class="section-head step1-heading">
           <div>
-            <h3 style="margin:0">第一步 · 数据上传</h3>
+            <h3 style="margin:0">数据上传</h3>
             <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
           </div>
         </div>
@@ -1033,7 +1032,7 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <el-button :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
-            <el-button type="primary" :loading="busy" :disabled="!configValid" @click="start">保存并开始任务 →</el-button>
+            <el-button type="primary" :loading="busy" :disabled="!configValid" @click="start">开始匹配 →</el-button>
           </template>
         </div>
       </div>
