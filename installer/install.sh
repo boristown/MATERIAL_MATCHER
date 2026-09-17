@@ -91,8 +91,10 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
   PY="$(resolve_python || true)"
   [[ -n "$PY" ]] || die "$EXIT_MEDIA" "安装介质缺少可用的 bootstrap 运行环境，且本机也没有可用 Python。请重新复制完整安装介质。"
   step 3 "正在校验安装介质完整性（文件数量较多，请稍候）……"
-  "$PY" "$BUNDLE_ROOT/verify_offline_bundle.py" "$BUNDLE_ROOT" \
-    || die "$EXIT_MEDIA" "安装介质校验失败：文件可能被修改、缺失或架构不匹配。请重新从源头完整复制安装介质后再试；不要继续使用当前介质。"
+  if ! "$PY" "$BUNDLE_ROOT/verify_offline_bundle.py" "$BUNDLE_ROOT" >>"${MM_INSTALL_LOG:-/var/tmp/material_matcher_install-detail.log}" 2>&1; then
+    echo "介质校验明细：${MM_INSTALL_LOG:-/var/tmp/material_matcher_install-detail.log}" >&2
+    die "$EXIT_MEDIA" "安装介质校验失败：文件可能被修改、缺失或架构不匹配。请重新从源头完整复制安装介质后再试；不要继续使用当前介质。"
+  fi
   read -r RELEASE_VERSION MODEL_ID < <("$PY" - "$BUNDLE_ROOT/offline-manifest.json" <<'PY'
 import json, sys
 m=json.load(open(sys.argv[1],encoding='utf-8'))
@@ -530,7 +532,7 @@ if [[ -x "$OPT/current/$RUNTIME_DIR_NAME/bin/material-matcher" ]]; then
   if ! "$PY" - "${MATERIAL_MATCHER_PORT}" <<'PY'
 import json, sys, time, urllib.request
 port=int(sys.argv[1]); last=None
-for _ in range(120):
+for i in range(120):
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health/ready",timeout=2) as response:
             payload=json.load(response)
@@ -538,6 +540,8 @@ for _ in range(120):
         last=payload
     except Exception as exc:
         last=str(exc)
+    if i and i % 15 == 0:
+        print(f"[78%] 服务正在完成初始化，已等待 {i} 秒……", flush=True)
     time.sleep(1)
 print(f"readiness 未通过: {last}",file=sys.stderr)
 raise SystemExit(1)

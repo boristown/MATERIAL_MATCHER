@@ -447,7 +447,7 @@ PY
     pw_line="\n· 管理员密码：保持原有密码不变"
   fi
   local success_text="【安装成功】物料集团码智能匹配平台 ${BUNDLE_VERSION}\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
-  [[ -n "$addrs" ]] && success_text="$success_text\n· 局域网访问地址：\n$addrs"
+  if [[ -n "$addrs" ]]; then success_text="$success_text\n· 局域网访问地址：\n$addrs"; else success_text="$success_text\n· 未检测到局域网 IPv4 地址：当前仅本机可访问，请确认服务器网络已连接后由维护工具复查"; fi
   success_text="$success_text\n· 管理员账号：admin$pw_line\n· 安装报告：${report:-$WIZARD_LOG}\n\n请在浏览器打开上述地址，用 admin 登录；出于安全，系统会要求首次登录时设置新的登录密码。\n登录后可在“系统设置 · 关于”核对版本号 ${BUNDLE_VERSION}。\n\n后续维护（状态/日志/备份/恢复/前端重建）：\n· 图形：双击介质中的 维护物料集团码智能匹配平台.desktop\n· 命令行：以 root 运行 维护工具.sh 或 mmctl"
   [[ -n "$fw" ]] && success_text="$success_text\n\n注意：$fw"
 
