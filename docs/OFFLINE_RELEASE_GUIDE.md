@@ -1,74 +1,76 @@
-# MATERIAL_MATCHER 1.0 正式离线交付指南
+# MATERIAL_MATCHER 源码可见离线发布指南
 
-> 目标环境：银河麒麟 Linux V10，无 Docker、无公网依赖。  
-> 当前代码版本：`1.0.0`。  
-> 本文说明“如何生成和安装可信离线介质”；完整生产上线、金标、百万级性能和最终验收请严格执行仓库根目录 [`agent.md`](../agent.md)。
+> 目标环境：银河麒麟 Linux V10，可采用原生源码部署或 Docker 源码部署。版本号不得写死在本文或构建命令中；唯一人工版本源是根目录 `pyproject.toml`。
 
-## 1. 交付链路
+## 1. 本阶段交付边界
+
+本仓库提供：版本统一逻辑、source-visible release 组装源码、离线 bundle 组装源码、Native/Docker 部署源码、安装向导源码、维护工具源码和麒麟安装文档。
+
+本阶段**不声称已经制作**：Python Runtime 二进制包、Node Runtime 二进制包、Docker image tar、离线 RPM、完整离线 npm 依赖或最终大型安装介质。这些由后续 OpenCode Agent 在目标 CPU/银河麒麟环境实际制作、拷贝和验收。
+
+## 2. 版本链
 
 ```text
-目标架构基础 Python Runtime + 完整 wheelhouse
-  ↓
-scripts/prepare_runtime.py
-  ↓
+pyproject.toml [project].version
+        ↓
+material_matcher.__version__
+        ↓
+/api/health + /api/about
+        ↓
+release-manifest.json
+        ↓
+offline-manifest.json
+        ↓
+安装向导 + 前端运行时版本显示
+```
+
+`material_matcher.__version__` 在源码部署时从同一份 `pyproject.toml` 读取；只有在安装成 Python distribution 且源码 pyproject 不存在时才回退到 package metadata。构建脚本的 `--release-version` 只是可选一致性检查，不是第二个版本源。
+
+## 3. 原生源码 Release 结构
+
+```text
+release/
+├── source/
+│   ├── src/material_matcher/
+│   ├── web/
+│   ├── scripts/
+│   ├── installer/
+│   ├── docker/
+│   ├── pyproject.toml
+│   └── README.md
+├── runtime/
+├── web-dist/
+├── tools/
+└── release-manifest.json
+```
+
+正式后端通过 `PYTHONPATH=release/source/src` 运行；客户可直接查看/修改 Python 和 Vue 源码。`web-dist` 是当前生产静态文件，不代替 `source/web`。
+
+## 4. 发布链路
+
+```text
+目标架构基础 Python Runtime + 完整离线 wheelhouse
+  ↓ scripts/prepare_runtime.py
 runtime/ + runtime-manifest.json
 
-Vue source
+Vue source + 已准备的离线 Node/依赖
   ↓ npm run build
 web/dist
 
-runtime + web/dist + 后端源码
-  ↓
-scripts/build_release.py
-  ↓
-release/ + release-manifest.json
+runtime + web/dist + 完整仓库源码
+  ↓ scripts/build_native_source_bundle.py
+source-visible release + release-manifest.json
 
 release + 正式模型 + wheelhouse
-  ↓
-scripts/build_offline_bundle.py
-  ↓
-offline bundle + offline-manifest.json
-  ↓
-installer/verify_offline_bundle.py
-  ↓
-sudo ./install.sh
-  ↓
-material-matcher doctor + systemd + /api/health/ready
+  ↓ scripts/build_offline_bundle.py
+offline media directory + offline-manifest.json
+  ↓ installer/verify_offline_bundle.py
+安装向导 / install.sh
 ```
 
-任一步失败都不得跳过继续发布。
+任一步失败都不得跳过。
 
-## 2. 外部输入
-
-这些内容**不得提交 Git**：
-
-### 基础 Python Runtime
-
-- 与目标 CPU 一致：`x86_64` 或 `aarch64`；
-- 带可执行 `bin/python3` 与 pip；
-- 可整体复制；
-- Runtime 内符号链接只能使用包内安全相对路径，不能依赖目标机 `/usr/bin/python3`。
-
-### wheelhouse
-
-必须包含 `pyproject.toml` 正式依赖和全部传递依赖，以及：
-
-- `onnxruntime`
-- `tokenizers`
-
-`prepare_runtime.py` 强制 `--no-index --find-links`；缺 wheel 时必须失败，不能访问公网补包。
-
-### 正式模型
-
-默认：
-
-```text
-BAAI/bge-base-zh-v1.5/
-  tokenizer.json
-  model_int8.onnx   # 或 model.onnx
-```
-
-## 3. 准备 Runtime
+## 5. 构建 Runtime（由 OpenCode/构建机实际执行）
 
 ```bash
 TARGET_ARCH=x86_64  # 或 aarch64
@@ -79,92 +81,62 @@ python3 scripts/prepare_runtime.py \
   --target-arch "$TARGET_ARCH"
 ```
 
-该步骤会执行：
+脚本强制离线 pip 安装、`pip check`、关键 import、目标架构检查，并生成 `runtime-manifest.json` 和启动器。启动器指向 release 的 `source/src`。
 
-- Runtime 复制；
-- 完全离线依赖安装；
-- `pip check`；
-- FastAPI/NumPy/ONNX Runtime/tokenizers 等关键 import；
-- CPU 架构校验；
-- `bin/material-matcher` 启动器生成；
-- `runtime-manifest.json`；
-- Runtime 文件树 SHA-256。
+## 6. 构建 Vue production dist
 
-后续阶段不得修改已经纳入 Runtime 摘要的文件。
-
-## 4. 构建 Vue production dist
+构建机必须提前准备 Node Runtime 和依赖；客户现场不应临时访问公网。
 
 ```bash
 cd web
-npm install --no-audit --no-fund
+npm ci --no-audit --no-fund
 npm run build
 cd ..
 ```
 
-客户服务器不执行 npm，只接收 `web/dist`。
+安装后如果客户要在原生源码部署现场修改 Vue，使用 `tools/rebuild_frontend.sh`；该工具仅接受本地 Node runtime 与离线依赖，不联网下载。
 
-## 5. 构建 1.0.0 Release
+## 7. 组装 Native Source Release
 
 ```bash
-python3 scripts/build_release.py \
+python3 scripts/build_native_source_bundle.py \
   --runtime-dir /release-work/runtime \
   --web-dist-dir web/dist \
   --output-dir /release-work/release \
-  --release-version 1.0.0 \
   --target-arch "$TARGET_ARCH"
 ```
 
-构建器强制校验：
+可选传入 `--git-commit`、`--build-time`。若未传 commit 且当前目录是 Git checkout，构建器会读取 HEAD。manifest 同时记录源码树、前端树和 Runtime manifest 的摘要。
 
-- `pyproject.toml` 和 `material_matcher.__version__` 都是 `1.0.0`；
-- 参数版本与源码版本一致；
-- Runtime manifest 和文件树一致；
-- Runtime/Python/目标 CPU 架构一致；
-- 正式依赖可 import；
-- `material-matcher --help` 可执行；
-- `web/dist/index.html` 存在。
-
-产物：
-
-```text
-release/
-  app/material_matcher/
-  runtime/
-    bin/python3
-    bin/material-matcher
-    runtime-manifest.json
-  web/dist/
-  release-manifest.json
-```
-
-## 6. 组装离线 Bundle
+## 8. 组装最终离线目录（源码已准备；大体积输入由 OpenCode 提供）
 
 ```bash
 python3 scripts/build_offline_bundle.py \
   --release-dir /release-work/release \
   --model-dir /release-input/models/BAAI/bge-base-zh-v1.5 \
   --wheelhouse-dir /release-input/wheelhouse \
-  --output-dir "/release-output/material-matcher-1.0.0-${TARGET_ARCH}" \
-  --release-version 1.0.0 \
+  --output-dir /release-output/material-matcher-${TARGET_ARCH} \
   --target-arch "$TARGET_ARCH" \
   --model-id BAAI/bge-base-zh-v1.5
 ```
 
-结构：
+最终目录会包含安装向导源码入口：
 
 ```text
-material-matcher-1.0.0-<arch>/
-  install.sh
-  verify_offline_bundle.py
-  offline-manifest.json
-  release/
-  models/BAAI/bge-base-zh-v1.5/
-  wheelhouse/
+安装物料集团码智能匹配平台.desktop
+启动安装.sh
+install_wizard.sh
+install.sh
+verify_offline_bundle.py
+offline-manifest.json
+release/
+models/
+wheelhouse/
 ```
 
-组装过程不联网，并会自动执行 bundle 校验。
+组装器完成后自动运行 verifier。正式客户机再次运行 verifier 时不要使用 `--skip-arch`。
 
-## 7. 三层完整性链
+## 9. 三层完整性链
 
 ```text
 runtime-manifest.json
@@ -174,150 +146,39 @@ release-manifest.json
 offline-manifest.json
 ```
 
-校验器会重新检查：
+校验范围包括 Runtime 文件树、完整 source 树、web-dist、目标架构、版本一致性、模型/tokenizer、native wheels、启动器、安装向导和未登记/篡改文件。
 
-- Runtime 文件树；
-- release 后端源码树；
-- Vue dist 文件树；
-- bundle 登记文件大小与 SHA-256；
-- CPU 架构；
-- release/runtime/offline 版本一致性；
-- ONNX/tokenizers wheel 架构；
-- 模型、tokenizer、前端、启动器和 Runtime 完整性；
-- 禁止绝对/逃逸 symlink；
-- 禁止未登记文件或篡改文件。
+## 10. 客户现场原生安装
 
-发布机可以：
+普通用户参见 [KYLIN_V10_INSTALLATION_GUIDE.md](KYLIN_V10_INSTALLATION_GUIDE.md)。安装向导只询问安装路径、可选数据路径、端口、admin 密码/自动生成；底层仍由 `install.sh` 完成。
 
-```bash
-python3 /release-output/material-matcher-1.0.0-${TARGET_ARCH}/verify_offline_bundle.py \
-  /release-output/material-matcher-1.0.0-${TARGET_ARCH} \
-  --skip-arch
-```
+关键保护不得绕过：
 
-`--skip-arch` 只允许发布机预检。正式客户机校验禁止使用。
+- `/etc/material_matcher/storage.env` 是唯一数据目录；
+- 配置数据目录和遗留目录同时存在 metadata DB 时拒绝继续；
+- 升级前旧服务保持运行，先对新版本执行 doctor；
+- doctor 通过后才进入短暂停机和 `current` 原子切换；
+- 启动/readiness 失败恢复旧 release/model；
+- 不清数据库、不清索引、不清结果、不重置已有账号。
 
-## 8. 客户现场安装
+## 11. Docker Source
 
-```bash
-cd material-matcher-1.0.0-<arch>
-python3 verify_offline_bundle.py .
-sudo ./install.sh
-```
+Docker 源码见 `docker/`，详细步骤见 [KYLIN_V10_DOCKER_SOURCE_INSTALL.md](KYLIN_V10_DOCKER_SOURCE_INSTALL.md)。Compose 使用宿主机 bind mount 保存 `/data`、`/config`、`/logs`，不把 metadata DB 留在匿名 volume；`docker compose down` 不删除这些宿主机目录。
 
-安装器会：
+## 12. 关于系统与部署元数据
 
-1. 校验 bundle 完整性和当前 CPU；
-2. 验证银河麒麟环境；
-3. 选择可写本地持久化磁盘并保持逻辑路径 `/var/lib/material_matcher`；
-4. 首次安装选择 12000–29999 可用端口并生成 bootstrap admin 密码；
-5. 版本化复制 release/model；
-6. 在旧服务仍运行时，以正式 `material_matcher` 用户执行新版本 doctor；
-7. doctor 成功后才停止旧服务；
-8. 原子切换 release/model `current`；
-9. systemd 启动并轮询 `/api/health/ready`；
-10. 新版本启动/readiness 失败时恢复安装前 release/model；
-11. 升级不会递归 `chown -R` 海量历史索引、缓存和结果。
+`/api/health` 只保留廉价的 `status/version`。登录后 `/api/about` 提供：
 
-正式逻辑目录：
+- 产品名称；
+- version；
+- build time；
+- Git commit；
+- deployment mode。
 
-```text
-/opt/material_matcher
-/etc/material_matcher
-/var/lib/material_matcher
-/var/log/material_matcher
-```
+原生部署显示“原生源码部署”，Docker 部署显示“Docker 源码部署”。前端左栏的版本只读取当前后端实例，不维护静态版本号。
 
-## 9. 严格 doctor
+## 13. 维护与现场源码修改
 
-```bash
-sudo -u material_matcher env \
-  MATERIAL_MATCHER_DATA_DIR=/var/lib/material_matcher \
-  MATERIAL_MATCHER_CONFIG_DIR=/etc/material_matcher \
-  MATERIAL_MATCHER_LOG_DIR=/var/log/material_matcher \
-  MATERIAL_MATCHER_MODEL_ROOT=/var/lib/material_matcher/models/current \
-  MATERIAL_MATCHER_WEB_DIST_DIR=/opt/material_matcher/current/web/dist \
-  /opt/material_matcher/current/runtime/bin/material-matcher doctor \
-  --require-frontend --require-embedding --require-release-manifest
-```
+参见 [KYLIN_V10_MAINTENANCE_GUIDE.md](KYLIN_V10_MAINTENANCE_GUIDE.md)。维护工具提供状态、启停、重启、日志、doctor、诊断包、备份、恢复、前端离线重建和版本查询。
 
-检查范围包括：目录权限、前端、ONNX Runtime/tokenizer/model readiness、Release 版本与 CPU 架构。
-
-## 10. 升级与回滚边界
-
-升级顺序固定：
-
-```text
-校验 bundle
-→ 复制新 release/model（旧服务在线）
-→ 新版本 doctor（旧服务在线）
-→ 停止旧服务
-→ 原子切换 current
-→ 启动新服务
-→ readiness
-```
-
-启动/readiness 失败：
-
-```text
-停止失败新服务
-→ current 恢复旧 release
-→ model current 恢复旧 model
-→ daemon-reload
-→ 若安装前旧服务运行，则重启旧服务
-```
-
-安装器负责激活阶段自动回滚。上线后若因业务问题回滚，必须先评估数据库兼容性并使用安装前数据库/配置备份；不要只切旧代码而忽略数据结构。
-
-## 11. 1.0 安全变化
-
-- bootstrap `admin` 的随机初始密码只用于首次登录；
-- 首次登录必须修改密码；
-- 新密码不能与当前密码相同；
-- 用户密码使用 scrypt + random salt 持久化；
-- RBAC 为 admin/operator/reviewer/viewer；
-- 角色变更、停用、密码重置会使旧 session 失效；
-- 最后一个启用 admin 受保护。
-
-初始密码文件仍为：
-
-```text
-/etc/material_matcher/secret/admin_password.env
-```
-
-必须保持 `root:root 0600`，不要复制到上线证据包或工单正文。
-
-## 12. 生产验收不属于“安装成功”
-
-安装器/doctor/readiness 全绿只表示软件成功安装，不表示真实业务已通过。
-
-1.0 新增：
-
-```bash
-material-matcher acceptance
-material-matcher acceptance --require-production-ready
-```
-
-生产门槛必须由项目方显式批准并通过环境变量提供：
-
-```text
-MATERIAL_MATCHER_ACCEPTANCE_MIN_TRUTH_ROWS
-MATERIAL_MATCHER_ACCEPTANCE_MIN_TRUTH_COVERAGE
-MATERIAL_MATCHER_ACCEPTANCE_MIN_TOP1_ACCURACY
-MATERIAL_MATCHER_ACCEPTANCE_MIN_FINAL_ACCURACY
-MATERIAL_MATCHER_ACCEPTANCE_MAX_REVIEW_RATE
-MATERIAL_MATCHER_ACCEPTANCE_MAX_SCALE_HOURS
-```
-
-最终生产验收要求：
-
-- 正式 Embedding 模型 ready + 正式吞吐 benchmark；
-- vector Recall guard；
-- 客户真实金标指标达到上述批准阈值；
-- >=100K Source × >=1M Target 真实完成任务，并在批准的最大耗时内完成；
-- 当前主机为银河麒麟 V10；
-- 正式 release/前端/manifest；
-- RBAC 和管理员密码轮换完成；
-- `acceptance --require-production-ready` 退出 0，`production_ready=true`。
-
-完整命令、证据要求、烟测和回滚流程以 [`agent.md`](../agent.md) 为准。
+安装成功只表示部署链路正常，不代表真实业务准确率/百万级规模验收通过；生产业务验收仍按项目 `agent.md` 和准确率基线执行。
