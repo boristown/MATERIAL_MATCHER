@@ -300,7 +300,7 @@ if [[ -f "$PASSWORD_FILE" ]]; then
   PASSWORD_SOURCE="existing"
 elif [[ -n "${MM_ADMIN_PASSWORD:-}" ]]; then
   printf 'MATERIAL_MATCHER_ADMIN_PASSWORD=%s\n' "$MM_ADMIN_PASSWORD" >"$PASSWORD_FILE"
-  PASSWORD_SOURCE="user"
+  PASSWORD_SOURCE="${MM_ADMIN_PASSWORD_SOURCE:-user}"
 elif [[ -n "${MM_ADMIN_PASSWORD_FILE:-}" && -s "${MM_ADMIN_PASSWORD_FILE:-}" ]]; then
   cp -f "$MM_ADMIN_PASSWORD_FILE" /tmp/mm_admin_pw.$$
   printf 'MATERIAL_MATCHER_ADMIN_PASSWORD=%s\n' "$(cat /tmp/mm_admin_pw.$$)" >"$PASSWORD_FILE"

@@ -90,9 +90,9 @@ ui_error() {
   printf '[ERROR] %s | %b\n' "$1" "$2" >>"$WIZARD_LOG" 2>/dev/null || true
 }
 
-ui_confirm() {  # -> 0 是 / 非0 否
+ui_confirm() {  # -> 0 是 / 非0 否；$3/$4 可选自定义按钮文字
   case "$GUI" in
-    zenity)  zenity --question --title="$1" --text="$2" --width=600 --yes-label="继续" --no-label="取消" ;;
+    zenity)  zenity --question --title="$1" --text="$2" --width=600 --yes-label="${3:-继续}" --no-label="${4:-取消}" ;;
     kdialog) kdialog --title "$1" --yesno "$2" ;;
     *)       local a; printf '%b\n输入 y 继续，其它键取消：' "$2"; read -r a; [[ "$a" == "y" || "$a" == "Y" ]] ;;
   esac
@@ -248,7 +248,7 @@ exec_install_with_progress() {
     ZPID=$!
     exec 5>"$FIFO"
     MM_PROGRESS_ON=1 MM_PORT_USER_CHOICE=1 MM_INSTALL_PORT="$CHOSEN_PORT" \
-      MM_INSTALL_PREFIX="$INSTALL_PREFIX" \
+      MM_INSTALL_PREFIX="$INSTALL_PREFIX" MM_ADMIN_PASSWORD_SOURCE="$PW_MODE" \
       env "${args[@]}" bash "$INSTALL_SH" > >(tee "$TMP_OUT" | _forward_steps) 2>&1
     INSTALL_RC=$?
     sleep 1
@@ -259,7 +259,7 @@ exec_install_with_progress() {
   else
     echo
     MM_PROGRESS_ON=1 MM_PORT_USER_CHOICE=1 MM_INSTALL_PORT="$CHOSEN_PORT" \
-      MM_INSTALL_PREFIX="$INSTALL_PREFIX" \
+      MM_INSTALL_PREFIX="$INSTALL_PREFIX" MM_ADMIN_PASSWORD_SOURCE="$PW_MODE" \
       env "${args[@]}" bash "$INSTALL_SH" 2>&1 | _relay_terminal
     INSTALL_RC=${PIPESTATUS[0]}
   fi
@@ -315,7 +315,7 @@ main() {
   MM_DATA_DIR_SET=""
   if [[ "$IS_UPGRADE_DETECTED" == "1" ]]; then
     ui_note "数据位置" "检测到已有安装：升级将自动沿用现有数据目录（/etc/material_matcher/storage.env 指向的位置），不会移动、清空或重建任何业务数据。"
-  elif ui_confirm "数据位置" "数据目录默认由安装程序自动选择空间最大的安全磁盘，\n并通过 /var/lib/material_matcher 统一访问（推荐）。\n\n【继续】自动选择\n【取消】返回，并在下一屏手工指定数据目录"; then
+  elif ui_confirm "数据位置" "数据目录默认由安装程序自动选择空间最大的安全磁盘，\n并通过 /var/lib/material_matcher 统一访问（推荐给绝大多数场景）。\n\n主按钮 / 输入 y …… 自动选择\n副按钮 / 输入其它 …… 手工指定数据目录（高级）" "自动选择" "手工指定"; then
     MM_DATA_DIR_SET=""
   else
     MM_DATA_DIR_SET="$(ui_entry "数据目录" "数据目录绝对路径（首次安装确定后将固定，后续升级始终沿用）" "/var/lib/material_matcher_data")" || { echo "已取消安装。"; exit 0; }
@@ -326,7 +326,7 @@ main() {
   [[ -n "$PORT_SUGGESTED" ]] && port_default_eff="$PORT_SUGGESTED"
   CHOSEN_PORT=""
   while :; do
-    CHOSEN_PORT="$(ui_entry "服务端口" "服务监听端口（升级安装建议保持默认=当前端口）" "$port_default_eff")" || { echo "已取消安装。"; exit 0; }
+    CHOSEN_PORT="$(ui_entry "服务端口" "服务监听端口$([[ "$IS_UPGRADE_DETECTED" == "1" ]] && echo "（升级安装建议保持默认=当前端口）" || echo "（首次安装默认 18080，直接回车即可）")" "$port_default_eff")" || { echo "已取消安装。"; exit 0; }
     [[ "$CHOSEN_PORT" =~ ^[0-9]+$ ]] && (( CHOSEN_PORT >= 1024 && CHOSEN_PORT <= 65535 )) || \
       { ui_error "端口无效" "请输入 1024～65535 之间的数字端口。"; continue; }
     if port_busy "$CHOSEN_PORT"; then
@@ -345,7 +345,7 @@ main() {
     PW_MODE="keep"
     ui_note "管理员账号" "升级安装保留现有 admin 账号与密码，安装程序不会重置任何登录信息。"
   else
-    if ui_confirm "管理员密码" "是否为 admin 设置初始密码？\n\n【继续】由您输入密码\n【取消】自动生成强密码（完成后显示一次，请务必保存）"; then
+    if ui_confirm "管理员密码" "请选择 admin 初始密码设置方式：\n\n主按钮 / 输入 y …… 由您手工输入密码\n副按钮 / 直接回车 …… 自动生成强密码（推荐给多数用户）" "手工输入" "自动生成"; then
       local pw
       while :; do
         pw="$(ui_password "设置管理员密码")" || { echo "已取消安装。"; exit 0; }
