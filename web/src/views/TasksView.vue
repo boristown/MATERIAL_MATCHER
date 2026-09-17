@@ -72,8 +72,8 @@ onBeforeUnmount(() => { if (liveTimer) window.clearInterval(liveTimer) })
 <template>
   <div class="tasks-page">
     <div class="toolbar">
-      <div><h2>STEP 2 · 匹配计算</h2><p>正在进行的方案实时呈现；历史运行与草稿在下方列表。</p></div>
-      <el-button type="primary" @click="router.push('/profiles')">配置匹配方案</el-button>
+      <div><h2>第二步 · 进度监控</h2><p>查看正在运行的匹配任务、计算进度和历史运行结果。</p></div>
+      <el-button type="primary" @click="router.push('/profiles')">返回第一步 · 数据上传</el-button>
     </div>
 
     <div v-if="running" class="hero" @click="open(running)">
@@ -97,10 +97,10 @@ onBeforeUnmount(() => { if (liveTimer) window.clearInterval(liveTimer) })
     <div v-else class="hero idle">
       <div class="idle-icon">◎</div>
       <div class="idle-text">
-        <b>无正在进行的方案</b>
-        <p>请通过 STEP 1 选择方案、拖入数据并配置字段映射后开始匹配；运行中的进度、中间结果与预计完成时间会实时显示在这里。</p>
+        <b>无正在进行的匹配</b>
+        <p>请回到第一步 · 数据上传选择方案、上传两份 Excel 并确认字段映射后开始匹配；运行中的进度、中间结果与预计完成时间会实时显示在这里。</p>
       </div>
-      <el-button type="primary" size="large" @click="router.push('/profiles')">前往 STEP 1 配置并启动 →</el-button>
+      <el-button type="primary" size="large" @click="router.push('/profiles')">返回第一步 · 数据上传 →</el-button>
     </div>
 
     <div class="panel">

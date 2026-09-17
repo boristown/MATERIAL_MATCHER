@@ -483,6 +483,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/tasks")
     def list_tasks() -> list[dict[str, object]]: return tasks.list_tasks()
+    @app.get("/api/tasks/review-history")
+    def review_history() -> list[dict[str, object]]: return tasks.review_history()
     @app.get("/api/tasks/{task_id}")
     def get_task(task_id: str) -> dict[str, object]: return tasks.get_task(task_id)
 
