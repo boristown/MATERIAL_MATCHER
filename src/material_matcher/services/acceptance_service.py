@@ -128,13 +128,25 @@ class AcceptanceService:
             "min_top1_accuracy": thresholds["min_top1_accuracy"],
             "min_final_accuracy": thresholds["min_final_accuracy"],
             "max_review_rate": thresholds["max_review_rate"],
+            "min_candidate_recall_at_5": thresholds["min_candidate_recall_at_5"],
+            "min_automatic_precision": thresholds["min_automatic_precision"],
+            "max_no_match_false_positive_rate": thresholds["max_no_match_false_positive_rate"],
             "max_scale_hours": thresholds["max_scale_hours"],
         }
         missing = [name for name, value in required.items() if value is None]
         invalid: list[str] = []
         if thresholds["min_truth_rows"] is not None and int(thresholds["min_truth_rows"]) <= 0:
             invalid.append("min_truth_rows")
-        for name in ("min_truth_coverage", "min_top1_accuracy", "min_final_accuracy", "max_review_rate"):
+        ratio_names = (
+            "min_truth_coverage",
+            "min_top1_accuracy",
+            "min_final_accuracy",
+            "max_review_rate",
+            "min_candidate_recall_at_5",
+            "min_automatic_precision",
+            "max_no_match_false_positive_rate",
+        )
+        for name in ratio_names:
             value = thresholds[name]
             if value is not None and not 0.0 <= float(value) <= 1.0:
                 invalid.append(name)
@@ -161,6 +173,17 @@ class AcceptanceService:
             {"thresholds": thresholds},
         ), True
 
+    @staticmethod
+    def _metric(metrics: dict[str, Any], name: str, *fallbacks: str) -> float | None:
+        for key in (name, *fallbacks):
+            value = metrics.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
     def _business_evaluation_gate(self, policy_ready: bool) -> dict[str, Any]:
         evaluation = self._latest_evaluation()
         thresholds = self.settings.acceptance_thresholds
@@ -179,12 +202,35 @@ class AcceptanceService:
                 {"latest_evaluation": evaluation, "thresholds": thresholds},
             )
         metrics = evaluation.get("metrics") or {}
+        recall_at = metrics.get("candidate_recall_at") if isinstance(metrics.get("candidate_recall_at"), dict) else {}
+        recall5 = self._metric(metrics, "candidate_recall_at_5")
+        if recall5 is None and recall_at.get("5") is not None:
+            recall5 = float(recall_at["5"])
+        automatic_precision = self._metric(metrics, "automatic_match_precision", "automatic_accuracy")
+        no_match_fpr = self._metric(metrics, "no_match_false_positive_rate")
+        missing_evidence: list[str] = []
+        if recall5 is None:
+            missing_evidence.append("candidate_recall_at_5")
+        if automatic_precision is None:
+            missing_evidence.append("automatic_match_precision")
+        if no_match_fpr is None:
+            missing_evidence.append("no_match_false_positive_rate")
+        if missing_evidence:
+            return self._gate(
+                "business_gold_evaluation",
+                "BLOCKED",
+                "最新真实金标缺少本版正式验收所需指标，请使用含显式 NO_MATCH 金标重新验收",
+                {"latest_evaluation": evaluation, "thresholds": thresholds, "missing_metrics": missing_evidence},
+            )
         checks = {
             "truth_rows": int(metrics.get("truth_rows") or 0) >= int(thresholds["min_truth_rows"]),
             "truth_coverage": float(metrics.get("truth_coverage") or 0.0) >= float(thresholds["min_truth_coverage"]),
             "top1_accuracy": float(metrics.get("top1_accuracy") or 0.0) >= float(thresholds["min_top1_accuracy"]),
+            "candidate_recall_at_5": recall5 >= float(thresholds["min_candidate_recall_at_5"]),
+            "automatic_match_precision": automatic_precision >= float(thresholds["min_automatic_precision"]),
             "final_accuracy": float(metrics.get("final_accuracy") or 0.0) >= float(thresholds["min_final_accuracy"]),
             "review_rate": float(metrics.get("review_rate") or 0.0) <= float(thresholds["max_review_rate"]),
+            "no_match_false_positive_rate": no_match_fpr <= float(thresholds["max_no_match_false_positive_rate"]),
         }
         passed = all(checks.values())
         return self._gate(
@@ -312,7 +358,7 @@ class AcceptanceService:
         blocked_count = sum(gate["status"] == "BLOCKED" for gate in gates)
         pass_count = sum(gate["status"] == "PASS" for gate in gates)
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "code_ready": fail_count == 0,
             "production_ready": fail_count == 0 and blocked_count == 0,
             "summary": {"pass": pass_count, "blocked": blocked_count, "fail": fail_count, "total": len(gates)},
