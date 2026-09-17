@@ -1,1 +1,5 @@
-__version__ = "1.1.3"
+from material_matcher.version import get_version
+
+__version__ = get_version()
+
+__all__ = ["__version__"]
