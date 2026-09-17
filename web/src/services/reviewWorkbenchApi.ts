@@ -15,6 +15,7 @@ export type ReviewSelectionItem = {
 }
 
 export type ReviewSelection =
+  | { mode: 'explicit'; source_row_ids: string[] }
   | { mode: 'explicit'; items: ReviewSelectionItem[] }
   | { mode: 'filter'; filter: ReviewFilter }
 
@@ -40,6 +41,12 @@ const AGENT3_ACTION: Record<ReviewBatchAction, string> = {
   restore_original: 'RESTORE_ALGORITHM',
 }
 
+const versionCache = new Map<string, string>()
+
+function versionKey(taskId: string, sourceRowId: string): string {
+  return `${taskId}\u0000${sourceRowId}`
+}
+
 function errorStatus(error: any): number {
   return Number(error?.status ?? error?.response?.status ?? 0)
 }
@@ -55,6 +62,19 @@ function errorMessage(error: any): string {
 function toNumber(value: unknown): number {
   const number = Number(value ?? 0)
   return Number.isFinite(number) ? number : 0
+}
+
+function explicitItems(taskId: string, selection: Extract<ReviewSelection, { mode: 'explicit' }>): ReviewSelectionItem[] {
+  if ('items' in selection) return selection.items
+  return selection.source_row_ids.map(sourceRowId => ({
+    source_row_id: sourceRowId,
+    expected_version: versionCache.get(versionKey(taskId, sourceRowId)),
+  }))
+}
+
+function agent3Selection(taskId: string, selection: ReviewSelection): { mode: 'explicit'; items: ReviewSelectionItem[] } | { mode: 'filter'; filter: ReviewFilter } {
+  if (selection.mode === 'filter') return selection
+  return { mode: 'explicit', items: explicitItems(taskId, selection) }
 }
 
 export function buildWorkbenchParams(
@@ -77,9 +97,17 @@ export function buildWorkbenchParams(
 }
 
 export async function fetchWorkbenchPage(taskId: string, filter: ReviewFilter, page: number, pageSize: number): Promise<any> {
-  return (await api.get(`/tasks/${taskId}/workbench/items`, {
+  const data = (await api.get(`/tasks/${taskId}/workbench/items`, {
     params: buildWorkbenchParams(filter, page, pageSize, 5),
   })).data ?? {}
+  if (Array.isArray(data.items)) {
+    for (const item of data.items) {
+      const sourceRowId = String(item?.source_row_id ?? '')
+      const version = String(item?.version ?? item?.updated_at ?? '')
+      if (sourceRowId && version) versionCache.set(versionKey(taskId, sourceRowId), version)
+    }
+  }
+  return data
 }
 
 export async function fetchCandidates(taskId: string, sourceRowId: string): Promise<any[]> {
@@ -157,7 +185,7 @@ async function postAgent3Bulk(taskId: string, action: ReviewBatchAction, selecti
   try {
     const response = await api.post(`/tasks/${taskId}/workbench/bulk`, {
       action: AGENT3_ACTION[action],
-      selection,
+      selection: agent3Selection(taskId, selection),
       comment: '',
     })
     return normalizeBatchResult(response.data ?? {})
@@ -172,7 +200,8 @@ export async function runReviewBatch(taskId: string, action: ReviewBatchAction, 
   if (agent3) return agent3
 
   if (selection.mode === 'explicit') {
-    const sourceRowIds = selection.items.map(item => item.source_row_id)
+    const items = explicitItems(taskId, selection)
+    const sourceRowIds = items.map(item => item.source_row_id)
     if (action === 'confirm_top1') {
       const response = await api.post(`/tasks/${taskId}/workbench/batch-confirm-top1`, { source_row_ids: sourceRowIds })
       return normalizeBatchResult(response.data ?? {})
@@ -181,7 +210,7 @@ export async function runReviewBatch(taskId: string, action: ReviewBatchAction, 
       const response = await api.post(`/tasks/${taskId}/workbench/batch-reject`, { source_row_ids: sourceRowIds })
       return normalizeBatchResult(response.data ?? {})
     }
-    return runExplicitRowFallback(taskId, action, selection.items)
+    return runExplicitRowFallback(taskId, action, items)
   }
 
   const error = new Error('当前 main 尚未合并 Agent 3 的“按当前筛选批量处理” selection contract；本页显式选择仍可正常批量操作。') as Error & { code?: string }
