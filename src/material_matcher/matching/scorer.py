@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from collections import OrderedDict
+from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 import math
 from typing import Mapping
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import FieldRule, FieldSide, MatchingConfig
-from collections import OrderedDict
-
 from material_matcher.normalize.pipeline import ProcessedValue, apply_processing_pipeline
 
 _PIPELINE_DUMP_CACHE: "OrderedDict[int, tuple[object, list]]" = OrderedDict()
@@ -33,37 +32,61 @@ class CandidateScore:
     display_score: float
     field_scores: list[FieldScore]
     critical_conflict: bool
+    compared_field_count: int
+    compared_weight: int
+    configured_weight: int
+    compared_weight_coverage: float
+    auto_match_safe: bool
 
     def to_dict(self) -> dict[str, object]:
-        return {"raw_score": self.raw_score, "display_score": self.display_score, "critical_conflict": self.critical_conflict, "field_scores": [asdict(item) for item in self.field_scores]}
+        return {
+            "raw_score": self.raw_score,
+            "display_score": self.display_score,
+            "critical_conflict": self.critical_conflict,
+            "compared_field_count": self.compared_field_count,
+            "compared_weight": self.compared_weight,
+            "configured_weight": self.configured_weight,
+            "compared_weight_coverage": self.compared_weight_coverage,
+            "auto_match_safe": self.auto_match_safe,
+            "field_scores": [asdict(item) for item in self.field_scores],
+        }
 
 
 def _pipeline_dicts(side: FieldSide) -> list[dict[str, object]]:
     # FieldSide instances are immutable pydantic objects owned by one frozen task
-    # snapshot, so dumping them once per side keeps the normalize-memo keys stable
-    # and removes per-pair model_dump churn from the scoring hot path.
-    from collections import OrderedDict
-    cache = _PIPELINE_DUMP_CACHE
+    # snapshot, so dumping them once per side keeps normalize-memo keys stable.
     sid = id(side)
-    hit = cache.get(sid)
+    hit = _PIPELINE_DUMP_CACHE.get(sid)
     if hit is not None and hit[0] is side:
         return hit[1]
     dumped = [step.model_dump(mode="json") for step in side.pipeline]
-    if len(cache) > 4096:
-        cache.popitem(last=False)
-    cache[sid] = (side, dumped)
+    if len(_PIPELINE_DUMP_CACHE) > 4096:
+        _PIPELINE_DUMP_CACHE.popitem(last=False)
+    _PIPELINE_DUMP_CACHE[sid] = (side, dumped)
     return dumped
 
 
 def _trace_dicts(value: ProcessedValue) -> list[dict[str, object]]:
-    return [{"operator": item.operator, "options": item.options, "input_preview": item.input_preview, "output_preview": item.output_preview} for item in value.trace]
+    return [
+        {
+            "operator": item.operator,
+            "options": item.options,
+            "input_preview": item.input_preview,
+            "output_preview": item.output_preview,
+        }
+        for item in value.trace
+    ]
 
 
 def prepare_side_values(row: Mapping[str, object], side: FieldSide) -> list[ProcessedValue]:
     raw_values = [row.get(field) for field in side.fields]
     pipeline = _pipeline_dicts(side)
     if side.combine == "best_of":
-        return [apply_processing_pipeline(value, pipeline) for value in raw_values if value is not None and str(value) != ""]
+        return [
+            apply_processing_pipeline(value, pipeline)
+            for value in raw_values
+            if value is not None and str(value) != ""
+        ]
     if side.combine == "coalesce":
         chosen = next((value for value in raw_values if value is not None and str(value) != ""), None)
         return [apply_processing_pipeline(chosen, pipeline)]
@@ -73,78 +96,211 @@ def prepare_side_values(row: Mapping[str, object], side: FieldSide) -> list[Proc
 
 def _numeric_score(source: str, target: str, tolerance: object) -> float:
     try:
-        left = float(source); right = float(target)
+        left = float(source)
+        right = float(target)
     except ValueError:
         return 0.0
     if not isinstance(tolerance, dict):
-        raise DomainError("NUMERIC_TOLERANCE_REQUIRED", "数值匹配必须显式配置 tolerance", status_code=422)
-    mode = str(tolerance.get("mode", "")); delta = left - right
-    if mode == "exact": return 1.0 if left == right else 0.0
-    if mode == "absolute": return 1.0 if abs(delta) <= float(tolerance.get("value", 0.0)) else 0.0
-    if mode == "relative": return 1.0 if abs(delta) / max(abs(right), 1e-12) <= float(tolerance.get("value", 0.0)) else 0.0
-    if mode == "range": return 1.0 if float(tolerance.get("min_delta", 0.0)) <= delta <= float(tolerance.get("max_delta", 0.0)) else 0.0
-    raise DomainError("NUMERIC_TOLERANCE_REQUIRED", "数值 tolerance 模式无效", status_code=422)
+        raise DomainError(
+            "NUMERIC_TOLERANCE_REQUIRED",
+            "数值匹配必须显式配置 tolerance",
+            status_code=422,
+        )
+    mode = str(tolerance.get("mode", ""))
+    delta = left - right
+    if mode == "exact":
+        return 1.0 if left == right else 0.0
+    if mode == "absolute":
+        return 1.0 if abs(delta) <= float(tolerance.get("value", 0.0)) else 0.0
+    if mode == "relative":
+        return 1.0 if abs(delta) / max(abs(right), 1e-12) <= float(tolerance.get("value", 0.0)) else 0.0
+    if mode == "range":
+        return 1.0 if float(tolerance.get("min_delta", 0.0)) <= delta <= float(tolerance.get("max_delta", 0.0)) else 0.0
+    raise DomainError(
+        "NUMERIC_TOLERANCE_REQUIRED",
+        "数值 tolerance 模式无效",
+        status_code=422,
+    )
 
 
 def _token_jaccard(source: str, target: str) -> float:
-    left = set(source.split()); right = set(target.split())
+    left = set(source.split())
+    right = set(target.split())
     return len(left & right) / len(left | right) if left and right else 0.0
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _containment_score(source: str, target: str, rule: FieldRule) -> float:
+    if source == target:
+        return 1.0
+    if source not in target and target not in source:
+        return 0.0
+    score = _clamp01(float(rule.matcher_options.get("contains_score", 1.0)))
+    if bool(rule.matcher_options.get("contains_length_sensitive", False)):
+        shorter = min(len(source), len(target))
+        longer = max(len(source), len(target), 1)
+        score *= shorter / longer
+    return _clamp01(score)
+
+
 def _score_pair(source: str, target: str, rule: FieldRule, semantic_score: float | None) -> float:
-    if rule.matcher == "exact": return 1.0 if source == target else 0.0
-    if rule.matcher == "contains": return 1.0 if source in target or target in source else 0.0
-    if rule.matcher == "fuzzy": return SequenceMatcher(None, source, target, autojunk=False).ratio()
+    if rule.matcher == "exact":
+        return 1.0 if source == target else 0.0
+    if rule.matcher == "contains":
+        return _containment_score(source, target, rule)
+    if rule.matcher == "fuzzy":
+        return SequenceMatcher(None, source, target, autojunk=False).ratio()
     if rule.matcher == "hybrid":
-        fuzzy = SequenceMatcher(None, source, target, autojunk=False).ratio(); token = _token_jaccard(source, target); contains = 1.0 if source in target or target in source else 0.0
+        fuzzy = SequenceMatcher(None, source, target, autojunk=False).ratio()
+        token = _token_jaccard(source, target)
+        contains = _containment_score(source, target, rule)
         if bool(rule.matcher_options.get("include_semantic")):
             if semantic_score is None:
-                raise DomainError("SEMANTIC_PROVIDER_NOT_READY", "该综合匹配规则已启用语义分，需要可用的 Embedding Provider 与向量索引", status_code=409)
+                raise DomainError(
+                    "SEMANTIC_PROVIDER_NOT_READY",
+                    "该综合匹配规则已启用语义分，需要可用的 Embedding Provider 与向量索引",
+                    status_code=409,
+                )
             return max(fuzzy, token, contains, semantic_score)
         return max(fuzzy, token, contains)
-    if rule.matcher == "numeric": return _numeric_score(source, target, rule.matcher_options.get("tolerance"))
+    if rule.matcher == "numeric":
+        return _numeric_score(source, target, rule.matcher_options.get("tolerance"))
     if rule.matcher == "semantic":
         if semantic_score is None:
-            raise DomainError("SEMANTIC_PROVIDER_NOT_READY", "语义匹配需要可用的 Embedding Provider 与向量索引", status_code=409)
+            raise DomainError(
+                "SEMANTIC_PROVIDER_NOT_READY",
+                "语义匹配需要可用的 Embedding Provider 与向量索引",
+                status_code=409,
+            )
         return semantic_score
-    raise DomainError("MATCHER_NOT_FOUND", f"不支持的匹配方式：{rule.matcher}", status_code=422)
+    raise DomainError(
+        "MATCHER_NOT_FOUND",
+        f"不支持的匹配方式：{rule.matcher}",
+        status_code=422,
+    )
 
 
-def score_field_rule(source_row: Mapping[str, object], target_row: Mapping[str, object], rule: FieldRule, *, semantic_score: float | None = None) -> FieldScore | None:
-    source_values = [v for v in prepare_side_values(source_row, rule.source) if not v.is_missing and v.text not in {None, ""}]
-    target_values = [v for v in prepare_side_values(target_row, rule.target) if not v.is_missing and v.text not in {None, ""}]
-    if not source_values or not target_values: return None
-    best_score = -math.inf; best_source: ProcessedValue | None = None; best_target: ProcessedValue | None = None
+def score_field_rule(
+    source_row: Mapping[str, object],
+    target_row: Mapping[str, object],
+    rule: FieldRule,
+    *,
+    semantic_score: float | None = None,
+) -> FieldScore | None:
+    source_values = [
+        value
+        for value in prepare_side_values(source_row, rule.source)
+        if not value.is_missing and value.text not in {None, ""}
+    ]
+    target_values = [
+        value
+        for value in prepare_side_values(target_row, rule.target)
+        if not value.is_missing and value.text not in {None, ""}
+    ]
+    if not source_values or not target_values:
+        return None
+    best_score = -math.inf
+    best_source: ProcessedValue | None = None
+    best_target: ProcessedValue | None = None
     for source in source_values:
         for target in target_values:
             score = _score_pair(source.text or "", target.text or "", rule, semantic_score)
-            if score > best_score: best_score=score; best_source=source; best_target=target
+            if score > best_score:
+                best_score = score
+                best_source = source
+                best_target = target
     assert best_source is not None and best_target is not None
     conflict = bool(rule.critical and best_score <= 0.0)
-    return FieldScore(rule.id, max(0.0,min(1.0,float(best_score))), rule.weight, best_source.text or "", best_target.text or "", rule.critical, conflict, _trace_dicts(best_source), _trace_dicts(best_target))
+    return FieldScore(
+        rule.id,
+        _clamp01(float(best_score)),
+        rule.weight,
+        best_source.text or "",
+        best_target.text or "",
+        rule.critical,
+        conflict,
+        _trace_dicts(best_source),
+        _trace_dicts(best_target),
+    )
 
 
-def score_candidate(source_row: Mapping[str, object], target_row: Mapping[str, object], config: MatchingConfig, *, semantic_score: float | None = None) -> CandidateScore:
-    scores: list[FieldScore] = []; weighted=0.0; matched_weight=0
+def _matching_safety(config: MatchingConfig) -> tuple[int, float]:
+    raw = config.advanced.get("matching_safety", {})
+    if not isinstance(raw, Mapping):
+        return 0, 0.0
+    minimum_fields = max(0, int(raw.get("minimum_compared_field_count", 0) or 0))
+    minimum_coverage = _clamp01(float(raw.get("minimum_compared_weight_coverage", 0.0) or 0.0))
+    return minimum_fields, minimum_coverage
+
+
+def minimum_score_gap(config: MatchingConfig) -> float:
+    raw = config.advanced.get("matching_safety", {})
+    if not isinstance(raw, Mapping):
+        return 0.0
+    return max(0.0, float(raw.get("minimum_score_gap", 0.0) or 0.0))
+
+
+def score_candidate(
+    source_row: Mapping[str, object],
+    target_row: Mapping[str, object],
+    config: MatchingConfig,
+    *,
+    semantic_score: float | None = None,
+) -> CandidateScore:
+    scores: list[FieldScore] = []
+    weighted = 0.0
+    compared_weight = 0
+    configured_weight = sum(rule.weight for rule in config.rules if rule.weight > 0)
     for rule in config.rules:
-        result=score_field_rule(source_row,target_row,rule,semantic_score=semantic_score)
-        if result is None or rule.weight <= 0: continue
-        scores.append(result); weighted += result.score*rule.weight; matched_weight += rule.weight
-    raw=weighted/matched_weight if matched_weight else 0.0
-    return CandidateScore(raw, round(raw*100.0,4), scores, any(item.conflict for item in scores))
+        result = score_field_rule(source_row, target_row, rule, semantic_score=semantic_score)
+        if result is None or rule.weight <= 0:
+            continue
+        scores.append(result)
+        weighted += result.score * rule.weight
+        compared_weight += rule.weight
+    raw = weighted / compared_weight if compared_weight else 0.0
+    coverage = compared_weight / configured_weight if configured_weight else 0.0
+    minimum_fields, minimum_coverage = _matching_safety(config)
+    safe = len(scores) >= minimum_fields and coverage >= minimum_coverage
+    return CandidateScore(
+        raw,
+        round(raw * 100.0, 4),
+        scores,
+        any(item.conflict for item in scores),
+        len(scores),
+        compared_weight,
+        configured_weight,
+        round(coverage, 6),
+        safe,
+    )
 
 
-def allowed_by_scope(source_row: Mapping[str, object], target_row: Mapping[str, object], config: MatchingConfig) -> bool:
-    if config.scope_mode == "GLOBAL": return True
-    source_field=config.scope.source_field; target_field=config.scope.target_field
-    if not source_field or not target_field: return False
-    source_value=source_row.get(source_field); target_value=target_row.get(target_field)
-    if source_value is None or target_value is None: return False
-    if config.scope_mode == "STRICT": return str(source_value)==str(target_value)
-    return str(target_value) in {str(v) for v in config.scope.mapping.get(str(source_value),[])}
+def allowed_by_scope(
+    source_row: Mapping[str, object],
+    target_row: Mapping[str, object],
+    config: MatchingConfig,
+) -> bool:
+    if config.scope_mode == "GLOBAL":
+        return True
+    source_field = config.scope.source_field
+    target_field = config.scope.target_field
+    if not source_field or not target_field:
+        return False
+    source_value = source_row.get(source_field)
+    target_value = target_row.get(target_field)
+    if source_value is None or target_value is None:
+        return False
+    if config.scope_mode == "STRICT":
+        return str(source_value) == str(target_value)
+    return str(target_value) in {str(value) for value in config.scope.mapping.get(str(source_value), [])}
 
 
 def decide_status(score: float, config: MatchingConfig) -> str:
-    if score > float(config.decision.success_threshold): return "MATCHED"
-    if config.decision.review_enabled and score > float(config.decision.review_threshold): return "REVIEW"
+    if score > float(config.decision.success_threshold):
+        return "MATCHED"
+    if config.decision.review_enabled and score > float(config.decision.review_threshold):
+        return "REVIEW"
     return "UNMATCHED"
