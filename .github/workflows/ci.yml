@@ -15,6 +15,8 @@ jobs:
       - run: pytest -q
       - name: Real-world matching quality (scan baseline)
         run: python scripts/evaluate_matching_quality.py
+      - name: Real-world field score diagnostics
+        run: python scripts/diagnose_matching_scores.py
       - run: python -m compileall -q src
       - run: bash -n installer/install.sh
       - run: python scripts/check_repo_files.py
