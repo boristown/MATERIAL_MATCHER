@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from material_matcher.api._legacy_app import create_app as _legacy_create_app
+from material_matcher.api._legacy_app import COOKIE_NAME, create_app as _legacy_create_app
 from material_matcher.domain.errors import DomainError
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.decision_calibration_service import DecisionCalibrationService
