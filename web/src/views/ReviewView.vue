@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
@@ -8,7 +8,7 @@ import {
   fetchCalibrationStatistics,
   fetchCandidates,
   fetchWorkbenchPage,
-  previewReDecision,
+  reDecideSingleThreshold,
   runReviewBatch,
   uploadManualWorkbook,
   type ReviewBatchAction,
@@ -65,6 +65,12 @@ type Candidate = {
   score: number
   target_payload: Record<string, unknown>
   field_scores?: FieldScore[]
+}
+
+type CandidateDisplayField = {
+  id: string
+  label: string
+  value: string
 }
 
 type WorkbenchItem = {
@@ -159,6 +165,7 @@ const candidateError = ref<Record<string, boolean>>({})
 const expandedRows = ref<Record<string, boolean>>({})
 const selectedByRow = ref<Record<string, string>>({})
 const mutationBusyRow = ref('')
+const comparisonPanelRefs = new Map<string, HTMLElement>()
 
 const mappingRules = ref<FieldDescriptor[]>([])
 const selectedFieldIds = ref<string[]>([])
@@ -166,9 +173,7 @@ const fieldSelectionTouched = ref(false)
 const showAllFields = ref(false)
 
 const currentSuccessThreshold = ref(88)
-const currentReviewThreshold = ref(75)
 const draftSuccessThreshold = ref(88)
-const draftReviewThreshold = ref(75)
 const thresholdPreview = ref<ThresholdPreview | null>(null)
 const thresholdPreviewSignature = ref('')
 const previewBusy = ref(false)
@@ -214,9 +219,9 @@ const selectedExplicitCount = computed(() => selectedRowIds.value.length)
 const allPageSelected = computed(() => currentPageIds.value.length > 0 && currentPageIds.value.every(id => selectedRowIds.value.includes(id)))
 const hasSelection = computed(() => selectAllFiltered.value || selectedExplicitCount.value > 0)
 const selectionCount = computed(() => selectAllFiltered.value ? workbenchTotal.value : selectedExplicitCount.value)
-const thresholdDirty = computed(() => draftSuccessThreshold.value !== currentSuccessThreshold.value || draftReviewThreshold.value !== currentReviewThreshold.value)
-const thresholdValid = computed(() => draftReviewThreshold.value >= 0 && draftReviewThreshold.value < draftSuccessThreshold.value && draftSuccessThreshold.value <= 100)
-const currentPreviewSignature = computed(() => `${draftSuccessThreshold.value}:${draftReviewThreshold.value}`)
+const thresholdDirty = computed(() => draftSuccessThreshold.value !== currentSuccessThreshold.value)
+const thresholdValid = computed(() => draftSuccessThreshold.value >= 1 && draftSuccessThreshold.value <= 100)
+const currentPreviewSignature = computed(() => `${draftSuccessThreshold.value}`)
 const canApplyThreshold = computed(() => thresholdDirty.value && thresholdValid.value && thresholdPreview.value !== null && thresholdPreviewSignature.value === currentPreviewSignature.value)
 const maxHistogramCount = computed(() => Math.max(1, ...top1Histogram.value.map(item => item.count), ...gapHistogram.value.map(item => item.count)))
 
@@ -277,6 +282,11 @@ function formatPercent(value: number | null | undefined): string {
   const normalized = Math.abs(Number(value)) <= 1 ? Number(value) * 100 : Number(value)
   return `${normalized.toFixed(2)}%`
 }
+function formatDelta(after: number, before: number): string {
+  const delta = Number(after) - Number(before)
+  if (!Number.isFinite(delta) || delta === 0) return '0'
+  return `${delta > 0 ? '+' : ''}${formatNumber(delta)}`
+}
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—'
   return value.slice(0, 19).replace('T', ' ')
@@ -331,6 +341,31 @@ function apiErrorMessage(error: any, fallback: string): string {
 }
 function candidatesFor(item: WorkbenchItem): Candidate[] {
   return (candidateMap.value[item.source_row_id] ?? item.candidates ?? []).slice(0, 5)
+}
+function candidateDisplayFields(candidate: Candidate): CandidateDisplayField[] {
+  const selectedIds = new Set(selectedFieldIds.value)
+  const ordered = [
+    ...pageFieldDescriptors.value.filter(field => selectedIds.has(field.id)),
+    ...pageFieldDescriptors.value.filter(field => !selectedIds.has(field.id)),
+  ]
+  const result: CandidateDisplayField[] = []
+  const seen = new Set<string>()
+  const code = normalizedText(candidate.target_group_code)
+  const add = (id: string, label: string, value: string): void => {
+    const normalized = normalizedText(value)
+    if (!normalized || normalized === code || seen.has(normalized) || result.length >= 2) return
+    seen.add(normalized)
+    result.push({ id, label, value })
+  }
+  for (const field of ordered) {
+    add(field.id, field.label, fieldValue(candidate.target_payload, field.targetFields))
+    if (result.length >= 2) return result
+  }
+  for (const [key, value] of Object.entries(candidate.target_payload ?? {})) {
+    add(`fallback:${key}`, key, rawValue(value))
+    if (result.length >= 2) break
+  }
+  return result
 }
 function selectedCandidate(item: WorkbenchItem): Candidate | null {
   const selected = selectedByRow.value[item.source_row_id]
@@ -434,6 +469,28 @@ function currentSelection(): ReviewSelection {
 }
 function histogramWidth(count: number): string {
   return `${Math.max(2, Math.round(count / maxHistogramCount.value * 100))}%`
+}
+function setComparisonPanelRef(sourceRowId: string, element: any): void {
+  if (element instanceof HTMLElement) comparisonPanelRefs.set(sourceRowId, element)
+  else comparisonPanelRefs.delete(sourceRowId)
+}
+async function revealComparisonPanel(sourceRowId: string): Promise<void> {
+  await nextTick()
+  const panel = comparisonPanelRefs.get(sourceRowId)
+  if (!panel) return
+  const wrap = panel.closest('.review-table-wrap') as HTMLElement | null
+  if (!wrap) return
+  const panelRect = panel.getBoundingClientRect()
+  const wrapRect = wrap.getBoundingClientRect()
+  const visibleTop = Math.max(wrapRect.top, 44)
+  const visibleBottom = Math.min(wrapRect.bottom, window.innerHeight) - 12
+  if (panelRect.top >= visibleTop && panelRect.bottom <= visibleBottom) return
+  const delta = panelRect.top < visibleTop
+    ? panelRect.top - visibleTop
+    : Math.min(panelRect.top - visibleTop, panelRect.bottom - visibleBottom)
+  if (Math.abs(delta) < 1) return
+  if (wrap.scrollHeight > wrap.clientHeight + 1) wrap.scrollTop += delta
+  else window.scrollBy(0, delta)
 }
 
 function normalizeCandidate(candidate: any): Candidate {
@@ -551,24 +608,19 @@ async function refreshSummary(taskId: string): Promise<void> {
 async function loadCalibration(taskId: string, fallbackConfig?: any): Promise<void> {
   const fallbackDecision = fallbackConfig?.decision ?? {}
   const fallbackSuccess = Number(fallbackDecision.success_threshold ?? 88)
-  const fallbackReview = Number(fallbackDecision.review_threshold ?? 75)
   try {
     const data = await fetchCalibrationStatistics(taskId)
     const current = data?.current ?? {}
     currentSuccessThreshold.value = Number(current.success_threshold ?? fallbackSuccess)
-    currentReviewThreshold.value = Number(current.review_threshold ?? fallbackReview)
     draftSuccessThreshold.value = currentSuccessThreshold.value
-    draftReviewThreshold.value = currentReviewThreshold.value
     top1Histogram.value = normalizeHistogram(data?.top1_score_histogram)
     gapHistogram.value = normalizeHistogram(data?.top1_top2_gap_histogram)
   } catch (error) {
     currentSuccessThreshold.value = Number.isFinite(fallbackSuccess) ? fallbackSuccess : 88
-    currentReviewThreshold.value = Number.isFinite(fallbackReview) ? fallbackReview : 75
     draftSuccessThreshold.value = currentSuccessThreshold.value
-    draftReviewThreshold.value = currentReviewThreshold.value
     top1Histogram.value = []
     gapHistogram.value = []
-    ElMessage.warning(apiErrorMessage(error, '分数分布读取失败，仍可使用基础双阈值调整'))
+    ElMessage.warning(apiErrorMessage(error, '分数分布读取失败，仍可调整自动匹配阈值'))
   }
 }
 async function loadItems(resetPage = false, version = contextVersion): Promise<void> {
@@ -611,6 +663,7 @@ async function loadWorkbenchContext(taskId: string): Promise<void> {
   selectedByRow.value = {}
   candidateMap.value = {}
   expandedRows.value = {}
+  comparisonPanelRefs.clear()
   fieldSelectionTouched.value = false
   thresholdPreview.value = null
   thresholdPreviewSignature.value = ''
@@ -699,11 +752,15 @@ async function ensureCandidates(item: WorkbenchItem): Promise<void> {
 async function toggleCandidates(item: WorkbenchItem): Promise<void> {
   const next = !expandedRows.value[item.source_row_id]
   expandedRows.value = { ...expandedRows.value, [item.source_row_id]: next }
-  if (next) await ensureCandidates(item)
+  if (next) {
+    await ensureCandidates(item)
+    await revealComparisonPanel(item.source_row_id)
+  }
 }
-function setSelectedValue(item: WorkbenchItem, value: string): void {
+async function setSelectedValue(item: WorkbenchItem, value: string): Promise<void> {
   selectedByRow.value = { ...selectedByRow.value, [item.source_row_id]: value }
   expandedRows.value = { ...expandedRows.value, [item.source_row_id]: true }
+  await revealComparisonPanel(item.source_row_id)
 }
 async function applyRowSelection(item: WorkbenchItem): Promise<void> {
   const selected = selectedByRow.value[item.source_row_id]
@@ -779,13 +836,13 @@ async function previewThreshold(): Promise<void> {
   if (!activeTaskId.value || !thresholdValid.value) return
   previewBusy.value = true
   try {
-    const data = await previewReDecision(activeTaskId.value, draftSuccessThreshold.value, draftReviewThreshold.value, 'preview')
+    const data = await reDecideSingleThreshold(activeTaskId.value, draftSuccessThreshold.value, 'preview')
     thresholdPreview.value = normalizeThresholdPreview(data)
     thresholdPreviewSignature.value = currentPreviewSignature.value
   } catch (error) {
     thresholdPreview.value = null
     thresholdPreviewSignature.value = ''
-    ElMessage.error(apiErrorMessage(error, '双阈值影响预览失败'))
+    ElMessage.error(apiErrorMessage(error, '自动匹配阈值影响预览失败'))
   } finally {
     previewBusy.value = false
   }
@@ -794,8 +851,8 @@ async function applyThreshold(): Promise<void> {
   if (!activeTaskId.value || !canApplyThreshold.value) return
   try {
     await ElMessageBox.confirm(
-      `自动匹配阈值 ${currentSuccessThreshold.value} → ${draftSuccessThreshold.value}，人工处理下限 ${currentReviewThreshold.value} → ${draftReviewThreshold.value}。`,
-      '应用双阈值',
+      `自动匹配阈值 ${currentSuccessThreshold.value} → ${draftSuccessThreshold.value}。未达到阈值但有可用候选的记录将交给人工处理。`,
+      '应用自动匹配阈值',
       { confirmButtonText: '确认应用', cancelButtonText: '取消', type: 'warning' },
     )
   } catch {
@@ -803,16 +860,15 @@ async function applyThreshold(): Promise<void> {
   }
   applyBusy.value = true
   try {
-    await previewReDecision(activeTaskId.value, draftSuccessThreshold.value, draftReviewThreshold.value, 'apply')
+    await reDecideSingleThreshold(activeTaskId.value, draftSuccessThreshold.value, 'apply')
     currentSuccessThreshold.value = draftSuccessThreshold.value
-    currentReviewThreshold.value = draftReviewThreshold.value
     thresholdPreview.value = null
     thresholdPreviewSignature.value = ''
     clearSelection()
     await Promise.all([refreshSummary(activeTaskId.value), loadCalibration(activeTaskId.value), loadItems(true)])
-    ElMessage.success('双阈值已应用')
+    ElMessage.success('自动匹配阈值已应用')
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '应用双阈值失败'))
+    ElMessage.error(apiErrorMessage(error, '应用自动匹配阈值失败'))
   } finally {
     applyBusy.value = false
   }
@@ -842,6 +898,7 @@ async function onManualUpload(event: Event): Promise<void> {
 onMounted(() => void load())
 onBeforeUnmount(() => {
   stopPolling()
+  comparisonPanelRefs.clear()
   ++contextVersion
 })
 </script>
@@ -945,12 +1002,11 @@ onBeforeUnmount(() => {
         <div class="review-strategy-head">
           <div>
             <div class="review-section-kicker">全局判定调参</div>
-            <h3>双阈值一起调整，只显示真实数量变化</h3>
-            <p>预览只使用已经落库的分数，不重新做向量化和候选召回；没有金标时不展示任何准确率推测。</p>
+            <h3>只调整自动匹配阈值，其余有候选记录交给人工</h3>
+            <p>达到自动匹配阈值的记录由系统自动完成；未达到但有可用候选的记录进入人工处理。预览只使用已落库分数，不重新向量化、召回或评分。</p>
           </div>
           <div class="review-current-thresholds">
-            <span>自动匹配阈值 <b>{{ currentSuccessThreshold }}</b></span>
-            <span>人工处理下限 <b>{{ currentReviewThreshold }}</b></span>
+            <span>当前自动匹配阈值 <b>{{ currentSuccessThreshold }}</b></span>
           </div>
         </div>
         <div class="review-threshold-editor-grid">
@@ -958,33 +1014,29 @@ onBeforeUnmount(() => {
             <div class="review-threshold-label"><span>自动匹配阈值</span><b>{{ draftSuccessThreshold }}</b></div>
             <el-slider v-model="draftSuccessThreshold" :min="1" :max="100" :step="1" @input="invalidateThresholdPreview" />
           </div>
-          <div>
-            <div class="review-threshold-label"><span>人工处理下限</span><b>{{ draftReviewThreshold }}</b></div>
-            <el-slider v-model="draftReviewThreshold" :min="0" :max="99" :step="1" @input="invalidateThresholdPreview" />
-          </div>
           <div class="review-threshold-actions">
             <el-button type="primary" plain :loading="previewBusy" :disabled="!thresholdDirty || !thresholdValid" @click="previewThreshold">预览影响</el-button>
             <el-button type="primary" :loading="applyBusy" :disabled="!canApplyThreshold" @click="applyThreshold">应用新阈值</el-button>
           </div>
         </div>
-        <div v-if="!thresholdValid" class="review-threshold-error">需满足：0 ≤ 人工处理下限 &lt; 自动匹配阈值 ≤ 100。</div>
+        <div v-if="!thresholdValid" class="review-threshold-error">自动匹配阈值需在 1～100 之间。</div>
         <div class="review-threshold-preview">
           <div class="review-current-after-grid">
-            <div><span>状态</span><b>当前</b><b>调整后</b></div>
-            <div><span>自动匹配</span><b>{{ formatNumber(thresholdPreview?.before.matched ?? summary.automatic_matched) }}</b><b>{{ thresholdPreview ? formatNumber(thresholdPreview.after.matched) : '—' }}</b></div>
-            <div><span>待人工</span><b>{{ formatNumber(thresholdPreview?.before.review ?? summary.pending_review) }}</b><b>{{ thresholdPreview ? formatNumber(thresholdPreview.after.review) : '—' }}</b></div>
-            <div><span>未匹配</span><b>{{ formatNumber(thresholdPreview?.before.unmatched ?? summary.unmatched) }}</b><b>{{ thresholdPreview ? formatNumber(thresholdPreview.after.unmatched) : '—' }}</b></div>
+            <div><span>状态</span><b>当前</b><b>调整后</b><b>变化</b></div>
+            <div><span>预计自动匹配</span><b>{{ formatNumber(thresholdPreview?.before.matched ?? summary.automatic_matched) }}</b><b>{{ thresholdPreview ? formatNumber(thresholdPreview.after.matched) : '—' }}</b><b>{{ thresholdPreview ? formatDelta(thresholdPreview.after.matched, thresholdPreview.before.matched) : '—' }}</b></div>
+            <div><span>预计需要人工处理</span><b>{{ formatNumber(thresholdPreview?.before.review ?? summary.pending_review) }}</b><b>{{ thresholdPreview ? formatNumber(thresholdPreview.after.review) : '—' }}</b><b>{{ thresholdPreview ? formatDelta(thresholdPreview.after.review, thresholdPreview.before.review) : '—' }}</b></div>
+            <div><span>无可用候选 / 未匹配</span><b>{{ formatNumber(thresholdPreview?.before.unmatched ?? summary.unmatched) }}</b><b>{{ thresholdPreview ? formatNumber(thresholdPreview.after.unmatched) : '—' }}</b><b>{{ thresholdPreview ? formatDelta(thresholdPreview.after.unmatched, thresholdPreview.before.unmatched) : '—' }}</b></div>
           </div>
           <div class="review-histogram-grid">
             <div class="review-histogram-card">
-              <div class="review-histogram-head"><b>第一候选分数分布</b><span>0-10 ... 90-100</span></div>
+              <div class="review-histogram-head"><b>Top1 分数分布</b><span>0-10 ... 90-100</span></div>
               <div v-if="top1Histogram.length" class="review-histogram">
                 <div v-for="bucket in top1Histogram" :key="bucket.min" class="review-histogram-row"><span>{{ bucket.min }}-{{ bucket.max }}</span><div><i :style="{ width: histogramWidth(bucket.count) }"></i></div><b>{{ formatNumber(bucket.count) }}</b></div>
               </div>
-              <div v-else class="review-histogram-empty">当前后端未返回分数分布；#36 calibration API 可用后会自动展示。</div>
+              <div v-else class="review-histogram-empty">当前后端未返回分数分布。</div>
             </div>
             <div class="review-histogram-card">
-              <div class="review-histogram-head"><b>第一 / 第二候选分差分布</b><span>Top1 score - Top2 score</span></div>
+              <div class="review-histogram-head"><b>Top1 / Top2 分差分布</b><span>Top1 score - Top2 score</span></div>
               <div v-if="gapHistogram.length" class="review-histogram">
                 <div v-for="bucket in gapHistogram" :key="bucket.min" class="review-histogram-row"><span>{{ bucket.min }}-{{ bucket.max }}</span><div><i :style="{ width: histogramWidth(bucket.count) }"></i></div><b>{{ formatNumber(bucket.count) }}</b></div>
               </div>
@@ -1072,7 +1124,11 @@ onBeforeUnmount(() => {
                   <td class="review-score-col"><b>{{ formatScore(item.top1_score) }}</b><span>分差 {{ formatScore(item.score_gap) }}</span></td>
                   <td class="review-candidates-col">
                     <div v-if="candidatesFor(item).length" class="review-candidate-buttons">
-                      <button v-for="candidate in candidatesFor(item)" :key="candidate.rank" type="button" :class="{ 'is-selected': selectedByRow[item.source_row_id] === candidate.target_group_code }" @click="setSelectedValue(item, candidate.target_group_code)"><span>Top {{ candidate.rank }}</span><b :title="candidate.target_group_code">{{ candidate.target_group_code || '—' }}</b><small>{{ formatScore(candidate.score) }} 分</small></button>
+                      <button v-for="candidate in candidatesFor(item)" :key="candidate.rank" type="button" :class="{ 'is-selected': selectedByRow[item.source_row_id] === candidate.target_group_code }" @click="setSelectedValue(item, candidate.target_group_code)">
+                        <span class="review-candidate-topline"><span>Top {{ candidate.rank }}</span><small>{{ formatScore(candidate.score) }} 分</small></span>
+                        <b class="review-candidate-code" :title="candidate.target_group_code">{{ candidate.target_group_code || '—' }}</b>
+                        <span v-for="field in candidateDisplayFields(candidate)" :key="field.id" class="review-candidate-meta" :title="`${field.label}：${field.value}`"><em>{{ field.label }}</em><i>{{ field.value }}</i></span>
+                      </button>
                       <button type="button" class="is-none" :class="{ 'is-selected': selectedByRow[item.source_row_id] === NONE_SELECTION }" @click="setSelectedValue(item, NONE_SELECTION)"><span>无匹配</span><b>均不匹配</b><small>不选 Top5</small></button>
                     </div>
                     <div v-else class="review-lazy-candidates">
@@ -1091,7 +1147,7 @@ onBeforeUnmount(() => {
                 <tr v-if="expandedRows[item.source_row_id]" class="review-expanded-row">
                   <td colspan="6">
                     <div v-if="candidateLoading[item.source_row_id]" class="review-inline-loading">正在加载 Top 5 候选…</div>
-                    <div v-else-if="selectedCandidate(item)" class="review-expanded-card">
+                    <div v-else-if="selectedCandidate(item)" :ref="element => setComparisonPanelRef(item.source_row_id, element)" class="review-expanded-card">
                       <div class="review-expanded-head"><div><strong>当前对比：{{ selectedCandidate(item)?.target_group_code }}</strong><span v-if="selectedCandidate(item)?.target_row_number">目标 Excel 第 {{ selectedCandidate(item)?.target_row_number }} 行</span></div><span>字段状态：一致 / 部分一致 / 不一致 / 无数据</span></div>
                       <div class="review-comparison-scroll">
                         <table class="review-comparison-table">
