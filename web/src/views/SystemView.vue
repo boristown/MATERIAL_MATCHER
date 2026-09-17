@@ -263,7 +263,7 @@ onMounted(refresh)
                 <template #default="scope"><el-button link type="primary" @click="openReset(scope.row)">重置密码</el-button></template>
               </el-table-column>
             </el-table>
-            <el-alert title="管理员可维护账号；操作员可执行匹配任务和业务字典维护；复核员负责人工确认与结果复核；只读用户仅查看。系统禁止停用或降级最后一个管理员。" type="info" :closable="false" />
+            <el-alert title="管理员可维护账号；操作员可执行匹配任务和同义词配置维护；复核员负责人工确认与结果复核；只读用户仅查看。系统禁止停用或降级最后一个管理员。" type="info" :closable="false" />
           </div>
 
           <el-empty v-else description="当前账号没有用户管理权限。你仍可修改自己的密码，并在“运行状态”查看服务是否正常。" />
