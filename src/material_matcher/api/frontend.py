@@ -5,15 +5,22 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from material_matcher.build_info import build_about_payload
+
 
 def attach_frontend(app: FastAPI, dist_dir: Path) -> None:
     """Serve a built Vue SPA from the same process as the API.
 
-    The route is registered after all API routes. Unknown /api paths stay 404
-    instead of accidentally returning index.html, while application routes fall
-    back to the SPA entry point. File resolution is constrained to dist_dir.
+    UI build/about metadata is attached here so deployment-facing metadata stays
+    independent from the business API wrapper. The catch-all route is registered
+    last: unknown /api paths remain 404 while application routes fall back to the
+    SPA entry point. File resolution is constrained to dist_dir.
     """
     root = dist_dir.resolve()
+
+    @app.get("/api/about", include_in_schema=False)
+    def about() -> dict[str, str]:
+        return build_about_payload()
 
     @app.get("/{frontend_path:path}", include_in_schema=False)
     def frontend(frontend_path: str):
