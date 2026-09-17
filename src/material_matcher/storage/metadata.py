@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS match_items(
   PRIMARY KEY(task_id, source_row_id),
   FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );
+CREATE INDEX IF NOT EXISTS idx_match_items_task_status_score ON match_items(task_id,current_status,top1_score);
 CREATE TABLE IF NOT EXISTS match_candidates(
   task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, rank INTEGER NOT NULL,
   target_row_number INTEGER, target_group_code TEXT NOT NULL, target_payload TEXT NOT NULL,
@@ -79,6 +80,34 @@ CREATE TABLE IF NOT EXISTS reviews(
   original_status TEXT NOT NULL, selected_group_code TEXT, action TEXT NOT NULL,
   operator TEXT NOT NULL, comment TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_reviews_task_item ON reviews(task_id,source_row_id);
+CREATE TABLE IF NOT EXISTS decision_revisions(
+  task_id TEXT NOT NULL,
+  revision_no INTEGER NOT NULL,
+  success_threshold REAL NOT NULL,
+  review_threshold REAL NOT NULL,
+  operator TEXT NOT NULL,
+  before_counts TEXT NOT NULL,
+  after_counts TEXT NOT NULL,
+  transitions TEXT NOT NULL,
+  rollback_of_revision INTEGER,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(task_id,revision_no),
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_decision_revisions_task_created ON decision_revisions(task_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS result_revisions(
+  task_id TEXT NOT NULL,
+  revision_no INTEGER NOT NULL,
+  decision_revision_no INTEGER NOT NULL,
+  file_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(task_id,revision_no),
+  UNIQUE(task_id,file_id),
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+  FOREIGN KEY(file_id) REFERENCES files(file_id)
+);
+CREATE INDEX IF NOT EXISTS idx_result_revisions_task_decision ON result_revisions(task_id,decision_revision_no,revision_no DESC);
 CREATE TABLE IF NOT EXISTS match_operation_logs(
   operation_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
@@ -140,13 +169,15 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at ON benchmark_runs(start
 CREATE TABLE IF NOT EXISTS evaluation_runs(
   run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, truth_file_id TEXT NOT NULL,
   key_mode TEXT NOT NULL, key_column TEXT NOT NULL, expected_column TEXT NOT NULL,
+  expected_result_column TEXT,
   metrics TEXT NOT NULL, created_at TEXT NOT NULL,
   FOREIGN KEY(task_id) REFERENCES tasks(task_id),
   FOREIGN KEY(truth_file_id) REFERENCES files(file_id)
 );
 CREATE INDEX IF NOT EXISTS idx_evaluation_runs_task_created ON evaluation_runs(task_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS evaluation_items(
-  run_id TEXT NOT NULL, truth_key TEXT NOT NULL, expected_group_code TEXT NOT NULL,
+  run_id TEXT NOT NULL, truth_key TEXT NOT NULL, expected_result TEXT NOT NULL DEFAULT 'MATCH',
+  expected_group_code TEXT NOT NULL,
   matched_task_row INTEGER NOT NULL, source_row_id TEXT, source_id TEXT,
   original_status TEXT, current_status TEXT, top1_group_code TEXT, final_group_code TEXT,
   top1_score REAL, top1_correct INTEGER NOT NULL, final_correct INTEGER NOT NULL,
@@ -189,11 +220,11 @@ class MetadataRepository:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
             # Forward-compatible migrations for deployments created before source /
-            # target original-row traceability was introduced. New audit/actor
-            # capabilities use additive tables so the historical 19-column tasks
-            # table remains compatible with existing tools and tests.
+            # target original-row traceability and calibration revisions existed.
             self._ensure_column(connection, "match_items", "source_row_number", "INTEGER")
             self._ensure_column(connection, "match_candidates", "target_row_number", "INTEGER")
+            self._ensure_column(connection, "evaluation_runs", "expected_result_column", "TEXT")
+            self._ensure_column(connection, "evaluation_items", "expected_result", "TEXT NOT NULL DEFAULT 'MATCH'")
             connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")
             connection.execute("UPDATE task_runtime SET current_phase='RECOVERING', updated_at=datetime('now') WHERE task_id IN (SELECT task_id FROM tasks WHERE status='RECOVERING')")
 
