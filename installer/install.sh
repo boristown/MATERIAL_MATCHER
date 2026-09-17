@@ -2,10 +2,13 @@
 set -euo pipefail
 
 APP_USER="material_matcher"
-OPT="/opt/material_matcher"
+OPT="${MATERIAL_MATCHER_INSTALL_DIR:-/opt/material_matcher}"
 ETC="/etc/material_matcher"
 VAR="/var/lib/material_matcher"
 LOG="/var/log/material_matcher"
+REQUESTED_DATA_DIR="${MATERIAL_MATCHER_INSTALL_DATA_DIR:-}"
+REQUESTED_PORT="${MATERIAL_MATCHER_INSTALL_PORT:-}"
+REQUESTED_ADMIN_PASSWORD="${MATERIAL_MATCHER_INSTALL_ADMIN_PASSWORD:-}"
 PASSWORD_FILE="$ETC/secret/admin_password.env"
 SERVER_ENV="$ETC/server.env"
 STORAGE_ENV="$ETC/storage.env"
@@ -17,6 +20,22 @@ DEFAULT_SESSION_TTL_SECONDS=1209600
 fail() { echo "安装失败：$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || fail "请使用 sudo ./install.sh"
+[[ "$OPT" == /* ]] || fail "安装路径必须是绝对路径：$OPT"
+[[ "$OPT" != *$'\n'* && "$OPT" != *$'\r'* ]] || fail "安装路径包含非法换行"
+[[ "$OPT" != *[[:space:]]* ]] || fail "安装路径暂不支持空格，请选择不含空格的目录"
+if [[ -n "$REQUESTED_DATA_DIR" ]]; then
+  [[ "$REQUESTED_DATA_DIR" == /* ]] || fail "数据路径必须是绝对路径：$REQUESTED_DATA_DIR"
+  [[ "$REQUESTED_DATA_DIR" != *$'\n'* && "$REQUESTED_DATA_DIR" != *$'\r'* ]] || fail "数据路径包含非法换行"
+fi
+if [[ -n "$REQUESTED_PORT" ]]; then
+  [[ "$REQUESTED_PORT" =~ ^[0-9]+$ ]] || fail "端口必须是数字"
+  (( REQUESTED_PORT >= 1 && REQUESTED_PORT <= 65535 )) || fail "端口必须在 1-65535 之间"
+fi
+if [[ -n "$REQUESTED_ADMIN_PASSWORD" ]]; then
+  (( ${#REQUESTED_ADMIN_PASSWORD} >= 10 )) || fail "admin 初始密码至少 10 位"
+  [[ "$REQUESTED_ADMIN_PASSWORD" =~ [A-Za-z] && "$REQUESTED_ADMIN_PASSWORD" =~ [0-9] ]] || fail "admin 初始密码必须同时包含字母和数字"
+  [[ "$REQUESTED_ADMIN_PASSWORD" != *$'\n'* && "$REQUESTED_ADMIN_PASSWORD" != *$'\r'* ]] || fail "admin 初始密码包含非法换行"
+fi
 
 if [[ -z "$BUNDLE_ROOT" ]]; then
   if [[ -f "$SCRIPT_DIR/offline-manifest.json" ]]; then
@@ -83,6 +102,30 @@ choose_port() {
   fail "没有找到可用高位端口"
 }
 
+read_env_value() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 0
+  sed -n "s/^${key}=//p" "$file" | tail -1
+}
+
+write_server_port() {
+  local file="$1" port="$2"
+  python3 - "$file" "$port" <<'PY'
+from pathlib import Path
+import sys
+path=Path(sys.argv[1]); port=sys.argv[2]
+lines=path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+out=[]; replaced=False
+for line in lines:
+    if line.startswith('MATERIAL_MATCHER_PORT='):
+        out.append(f'MATERIAL_MATCHER_PORT={port}'); replaced=True
+    else:
+        out.append(line)
+if not replaced: out.append(f'MATERIAL_MATCHER_PORT={port}')
+path.write_text('\n'.join(out)+'\n',encoding='utf-8')
+PY
+}
+
 activate_link() {
   local link="$1" target="$2" next="${1}.next.$$"
   rm -f "$next"
@@ -94,19 +137,25 @@ mkdir -p "$OPT/releases" "$ETC/secret" "$ETC/profiles" "$ETC/catalogs" \
   "$ETC/mappings" "$ETC/dictionaries" "$ETC/templates" "$LOG"
 
 if [[ ! -f "$STORAGE_ENV" ]]; then
-  data_mount=$(find_data_mount || true)
-  [[ -n "$data_mount" ]] || data_mount="/var/lib"
-  physical_data="$data_mount/material_matcher_data"
-  mkdir -p "$physical_data"
-  if [[ ! -e "$VAR" ]]; then
-    ln -s "$physical_data" "$VAR"
-  elif [[ -d "$VAR" && ! -L "$VAR" && -z "$(find "$VAR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
-    rmdir "$VAR"
-    ln -s "$physical_data" "$VAR"
+  if [[ -n "$REQUESTED_DATA_DIR" ]]; then
+    physical_data="$REQUESTED_DATA_DIR"
+    mkdir -p "$physical_data"
+    printf 'MATERIAL_MATCHER_DATA_MOUNT=%q\nMATERIAL_MATCHER_DATA_DIR=%q\n' "$(dirname "$physical_data")" "$physical_data" >"$STORAGE_ENV"
   else
-    physical_data="$VAR"
+    data_mount=$(find_data_mount || true)
+    [[ -n "$data_mount" ]] || data_mount="/var/lib"
+    physical_data="$data_mount/material_matcher_data"
+    mkdir -p "$physical_data"
+    if [[ ! -e "$VAR" ]]; then
+      ln -s "$physical_data" "$VAR"
+    elif [[ -d "$VAR" && ! -L "$VAR" && -z "$(find "$VAR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+      rmdir "$VAR"
+      ln -s "$physical_data" "$VAR"
+    else
+      physical_data="$VAR"
+    fi
+    printf 'MATERIAL_MATCHER_DATA_MOUNT=%q\nMATERIAL_MATCHER_DATA_DIR=%q\n' "$data_mount" "$VAR" >"$STORAGE_ENV"
   fi
-  printf 'MATERIAL_MATCHER_DATA_MOUNT=%q\nMATERIAL_MATCHER_DATA_DIR=%q\n' "$data_mount" "$VAR" >"$STORAGE_ENV"
 fi
 
 # storage.env is the single source of truth for persistent application data.
@@ -119,6 +168,12 @@ DATA_DIR="${MATERIAL_MATCHER_DATA_DIR:-}"
 [[ -n "$DATA_DIR" ]] || fail "$STORAGE_ENV 缺少 MATERIAL_MATCHER_DATA_DIR"
 [[ "$DATA_DIR" == /* ]] || fail "MATERIAL_MATCHER_DATA_DIR 必须是绝对路径：$DATA_DIR"
 mkdir -p "$DATA_DIR" "$VAR"
+
+if [[ -n "$REQUESTED_DATA_DIR" ]]; then
+  REQUESTED_DATA_REAL="$(readlink -m "$REQUESTED_DATA_DIR")"
+  CONFIGURED_DATA_REAL="$(readlink -m "$DATA_DIR")"
+  [[ "$REQUESTED_DATA_REAL" == "$CONFIGURED_DATA_REAL" ]] || fail "检测到已有 storage.env 数据目录 $DATA_DIR，与本次选择 $REQUESTED_DATA_DIR 不同。为防止切换数据库，本安装器拒绝自动改数据目录；请先按迁移文档处理。"
+fi
 
 DATA_REAL="$(readlink -m "$DATA_DIR")"
 VAR_REAL="$(readlink -m "$VAR")"
@@ -138,19 +193,39 @@ mkdir -p "$DATA_DIR/meta" "$DATA_DIR/datasets" "$DATA_DIR/uploads" "$DATA_DIR/re
   "$VAR/models/releases"
 
 if [[ ! -f "$SERVER_ENV" ]]; then
+  selected_port="${REQUESTED_PORT:-}"
+  if [[ -n "$selected_port" ]]; then
+    port_free "$selected_port" || fail "端口 $selected_port 已被占用"
+  else
+    selected_port="$(choose_port)"
+  fi
   printf 'MATERIAL_MATCHER_HOST=0.0.0.0\nMATERIAL_MATCHER_PORT=%s\nMATERIAL_MATCHER_SESSION_TTL_SECONDS=%s\n' \
-    "$(choose_port)" "$DEFAULT_SESSION_TTL_SECONDS" >"$SERVER_ENV"
-elif ! grep -q '^MATERIAL_MATCHER_SESSION_TTL_SECONDS=' "$SERVER_ENV"; then
-  printf 'MATERIAL_MATCHER_SESSION_TTL_SECONDS=%s\n' "$DEFAULT_SESSION_TTL_SECONDS" >>"$SERVER_ENV"
+    "$selected_port" "$DEFAULT_SESSION_TTL_SECONDS" >"$SERVER_ENV"
+else
+  existing_port="$(read_env_value "$SERVER_ENV" MATERIAL_MATCHER_PORT)"
+  if [[ -n "$REQUESTED_PORT" && "$REQUESTED_PORT" != "$existing_port" ]]; then
+    port_free "$REQUESTED_PORT" || fail "端口 $REQUESTED_PORT 已被占用"
+    write_server_port "$SERVER_ENV" "$REQUESTED_PORT"
+  fi
+  if ! grep -q '^MATERIAL_MATCHER_SESSION_TTL_SECONDS=' "$SERVER_ENV"; then
+    printf 'MATERIAL_MATCHER_SESSION_TTL_SECONDS=%s\n' "$DEFAULT_SESSION_TTL_SECONDS" >>"$SERVER_ENV"
+  fi
 fi
 
 if [[ ! -f "$PASSWORD_FILE" ]]; then
-  password=$(python3 - <<'PY'
+  if [[ -n "$REQUESTED_ADMIN_PASSWORD" ]]; then
+    password="$REQUESTED_ADMIN_PASSWORD"
+  else
+    password=$(python3 - <<'PY'
 import secrets, string
 alphabet=string.ascii_letters+string.digits
-print(''.join(secrets.choice(alphabet) for _ in range(10)))
+while True:
+    value=''.join(secrets.choice(alphabet) for _ in range(14))
+    if any(c.isalpha() for c in value) and any(c.isdigit() for c in value):
+        print(value); break
 PY
 )
+  fi
   printf 'MATERIAL_MATCHER_ADMIN_PASSWORD=%s\n' "$password" >"$PASSWORD_FILE"
 fi
 chown root:root "$PASSWORD_FILE"
@@ -198,7 +273,9 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
 
   [[ -x "$RELEASE_DEST/runtime/bin/python3" ]] || fail "自包含 Python Runtime 不可执行"
   [[ -x "$RELEASE_DEST/runtime/bin/material-matcher" ]] || fail "material-matcher 启动器不可执行"
-  [[ -f "$RELEASE_DEST/web/dist/index.html" ]] || fail "Vue 前端发布产物缺失"
+  [[ -f "$RELEASE_DEST/source/src/material_matcher/__init__.py" ]] || fail "后端源码缺失"
+  [[ -f "$RELEASE_DEST/source/web/package.json" ]] || fail "Vue 前端源码缺失"
+  [[ -f "$RELEASE_DEST/web-dist/index.html" ]] || fail "Vue 前端发布产物缺失"
   [[ -f "$RELEASE_DEST/release-manifest.json" ]] || fail "release manifest 缺失"
 fi
 
@@ -213,13 +290,16 @@ done
 if [[ "$MODEL_COPIED" == "1" ]]; then chown -R "$APP_USER:$APP_USER" "$MODEL_RELEASE_ROOT"; fi
 
 if [[ -n "$BUNDLE_ROOT" ]]; then
-  # 以正式运行用户、未来将激活的模型/前端路径执行切换前诊断；此时旧服务仍在线。
+  # 以正式运行用户、未来将激活的模型/前端/源码路径执行切换前诊断；旧服务此时仍在线。
   DOCTOR_ENV=(
+    "PYTHONPATH=$RELEASE_DEST/source/src"
     "MATERIAL_MATCHER_DATA_DIR=$DATA_DIR"
     "MATERIAL_MATCHER_CONFIG_DIR=$ETC"
     "MATERIAL_MATCHER_LOG_DIR=$LOG"
     "MATERIAL_MATCHER_MODEL_ROOT=$MODEL_RELEASE_ROOT"
-    "MATERIAL_MATCHER_WEB_DIST_DIR=$RELEASE_DEST/web/dist"
+    "MATERIAL_MATCHER_WEB_DIST_DIR=$RELEASE_DEST/web-dist"
+    "MATERIAL_MATCHER_RELEASE_MANIFEST=$RELEASE_DEST/release-manifest.json"
+    "MATERIAL_MATCHER_DEPLOYMENT_MODE=native-source"
   )
   if command -v runuser >/dev/null 2>&1; then
     runuser -u "$APP_USER" -- env "${DOCTOR_ENV[@]}" "$RELEASE_DEST/runtime/bin/material-matcher" doctor \
@@ -245,10 +325,13 @@ WorkingDirectory=$OPT/current
 EnvironmentFile=$SERVER_ENV
 EnvironmentFile=$STORAGE_ENV
 EnvironmentFile=$PASSWORD_FILE
+Environment="PYTHONPATH=$OPT/current/source/src"
 Environment=MATERIAL_MATCHER_CONFIG_DIR=$ETC
 Environment=MATERIAL_MATCHER_LOG_DIR=$LOG
 Environment=MATERIAL_MATCHER_MODEL_ROOT=$VAR/models/current
-Environment=MATERIAL_MATCHER_WEB_DIST_DIR=$OPT/current/web/dist
+Environment="MATERIAL_MATCHER_WEB_DIST_DIR=$OPT/current/web-dist"
+Environment="MATERIAL_MATCHER_RELEASE_MANIFEST=$OPT/current/release-manifest.json"
+Environment=MATERIAL_MATCHER_DEPLOYMENT_MODE=native-source
 ExecStart=$OPT/current/runtime/bin/material-matcher serve --host \${MATERIAL_MATCHER_HOST} --port \${MATERIAL_MATCHER_PORT}
 Restart=on-failure
 RestartSec=3
@@ -293,8 +376,7 @@ if [[ -x "$OPT/current/runtime/bin/material-matcher" ]]; then
     [[ -n "$BUNDLE_ROOT" ]] && rollback_activation
     fail "systemd 服务启用失败"
   fi
-  # 旧版 systemd(如 SLES12 的 228)会把与 stop 任务并发的 start 任务取消,
-  # 因此先等停止任务彻底落定,再显式 start,而不是依赖 enable --now。
+  # 旧版 systemd 会把与 stop 任务并发的 start 取消，因此先等停止彻底落定。
   for _ in $(seq 1 60); do
     [[ "$(systemctl is-active material_matcher.service 2>/dev/null || true)" == "inactive" ]] && break
     sleep 1
