@@ -5,10 +5,13 @@ import process from 'node:process'
 const root = process.cwd()
 const view = fs.readFileSync(path.join(root, 'src/views/ReviewView.vue'), 'utf8')
 const api = fs.readFileSync(path.join(root, 'src/services/reviewWorkbenchApi.ts'), 'utf8')
-const css = fs.readFileSync(path.join(root, 'src/styles/pages/review.css'), 'utf8')
+const css = [
+  fs.readFileSync(path.join(root, 'src/styles/pages/review.css'), 'utf8'),
+  fs.readFileSync(path.join(root, 'src/styles/pages/review-large-scale.css'), 'utf8'),
+].join('\n')
 
 const requiredView = [
-  "const PAGE_SIZE_OPTIONS = [50, 100, 200]",
+  'const PAGE_SIZE_OPTIONS = [50, 100, 200]',
   "{ key: 'all', label: '全部', backend: 'ALL' }",
   "backend: 'MATCHED'",
   "backend: 'REVIEW'",
@@ -19,6 +22,7 @@ const requiredView = [
   '标记均不匹配',
   '取消人工匹配',
   '恢复原结果',
+  '清除选择',
   '下载人工匹配 Excel',
   '上传人工匹配结果',
   '自动匹配阈值',
@@ -30,6 +34,7 @@ const requiredView = [
   '部分一致',
   '不一致',
   '无数据',
+  'server-side',
 ]
 
 const requiredApi = [
@@ -56,6 +61,7 @@ const requiredCss = [
   '.is-partial',
   '.is-different',
   '.is-empty',
+  '.review-action-col',
 ]
 
 for (const token of requiredView) {
@@ -69,6 +75,7 @@ for (const token of requiredCss) {
 }
 
 if (view.includes('hydrateCandidates')) throw new Error('ReviewView must not eager-load candidates for every row')
+if (view.includes('PAGE_SIZE_OPTIONS = [10') || view.includes('PAGE_SIZE_OPTIONS = [20')) throw new Error('STEP3 page size must be 50 / 100 / 200')
 
 for (const banned of ['关键字段', '为什么系统犹豫', '风险', '扣分项']) {
   if (view.includes(banned)) throw new Error(`Banned STEP3 wording found: ${banned}`)
