@@ -45,12 +45,17 @@ const requiredApi = [
   "'mark_unmatched'",
   "'cancel_manual_match'",
   "'restore_original'",
+  "CONFIRM_TOP1",
+  "MARK_UNMATCHED",
+  "CANCEL_MATCH",
+  "RESTORE_ALGORITHM",
+  'expected_version',
   'success_threshold: successThreshold',
   'review_threshold: reviewThreshold',
   'manual-review.xlsx',
   'manual-review/import',
   '/calibration',
-  '/workbench/batch',
+  '/workbench/bulk',
 ]
 
 const requiredCss = [
