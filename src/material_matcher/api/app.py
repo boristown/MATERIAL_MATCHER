@@ -243,6 +243,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     evaluations = BusinessEvaluationService(metadata, files)
     reviews = ReviewWorkbenchService(metadata)
 
+    def legacy_expected_version(task_id: str, source_row_id: str, operator: str) -> str:
+        # Compatibility for pre-version STEP3 clients: only the account that made
+        # the latest manual decision may omit expected_version. A different user
+        # gets an explicit conflict, and the resolved token is still checked in
+        # the following transactional update.
+        with metadata.connect() as connection:
+            item = connection.execute(
+                "SELECT updated_at FROM match_items WHERE task_id=? AND source_row_id=?",
+                (task_id, source_row_id),
+            ).fetchone()
+            if item is None:
+                raise DomainError("MATCH_ITEM_NOT_FOUND", "匹配记录不存在", status_code=404)
+            latest = connection.execute(
+                """SELECT operator,operation_type FROM match_operation_logs
+                   WHERE task_id=? AND source_row_id=?
+                   ORDER BY operated_at DESC,rowid DESC LIMIT 1""",
+                (task_id, source_row_id),
+            ).fetchone()
+            if latest is None:
+                latest = connection.execute(
+                    """SELECT operator,action AS operation_type FROM reviews
+                       WHERE task_id=? AND source_row_id=?
+                       ORDER BY created_at DESC,rowid DESC LIMIT 1""",
+                    (task_id, source_row_id),
+                ).fetchone()
+            if latest is None or str(latest["operation_type"]) in {"CANCEL_MATCH", "CANCEL_UNMATCHED", "RESTORE_ALGORITHM"}:
+                raise DomainError("TASK_STATE_CONFLICT", "当前记录没有可修改的人工判断", status_code=409)
+            latest_operator = str(latest["operator"] or "system")
+            if latest_operator != (operator or "system"):
+                raise DomainError(
+                    "VERSION_CONFLICT",
+                    "记录已被其他用户修改，请刷新后重试",
+                    status_code=409,
+                    details={"latest_operator": latest_operator},
+                )
+            return str(item["updated_at"] or "")
+
     _drop_route(app, "/api/tasks/{task_id}/re-decide", "POST")
     _drop_route(app, "/api/tasks/{task_id}/finalize", "POST")
     _drop_route(app, "/api/tasks/{task_id}/evaluations", "POST")
@@ -348,7 +385,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # existing different manual result. Destructive rematch/cancel operations require
     # the version returned by the list API so reviewer A cannot overwrite reviewer B.
     def _legacy_match(task_id: str, source_row_id: str, payload: LegacyDecisionRequest, request: Request, *, rematch: bool = False) -> dict[str, object]:
-        expected = _require_expected_version(payload.expected_version) if rematch else payload.expected_version
+        expected = (
+            payload.expected_version
+            or (legacy_expected_version(task_id, source_row_id, str(request.state.username)) if rematch else None)
+        )
         decision: dict[str, object] = {
             "source_row_id": source_row_id,
             "target_group_code": payload.target_id,
@@ -379,7 +419,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _legacy_single_result(reviews, task_id, source_row_id, result)
 
     def _legacy_cancel(task_id: str, source_row_id: str, payload: LegacyCommentRequest, request: Request, action: str) -> dict[str, object]:
-        expected = _require_expected_version(payload.expected_version)
+        expected = payload.expected_version or legacy_expected_version(
+            task_id, source_row_id, str(request.state.username)
+        )
         result = reviews.bulk_action(
             task_id,
             action=action,
