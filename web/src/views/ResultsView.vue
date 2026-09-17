@@ -8,6 +8,7 @@ import '../styles/pages/results.css'
 type TaskRow = Record<string, unknown> & {
   id: string
   name: string
+  scheme_name: string
   stage: string
   progress: number
   status: string
@@ -95,7 +96,7 @@ const waitingState = computed(() => {
   if (RUNNING_STATUSES.includes(task.status)) {
     return {
       title: '正在等待第二步计算完成',
-      description: `任务「${task.name}」仍在计算中，结果文件尚未生成，当前不可下载。`,
+      description: `方案「${task.scheme_name}」仍在计算中，结果文件尚未生成，当前不可下载。`,
       action: '查看计算进度',
       path: `/tasks/${task.id}`,
       showProgress: true,
@@ -104,7 +105,7 @@ const waitingState = computed(() => {
   if (task.status === 'COMPLETED' && task.stage === 'REVIEW') {
     return {
       title: '正在等待第三步人工处理完成',
-      description: `任务「${task.name}」已完成计算，但仍有记录需要人工处理，完成后才能形成正式结果。`,
+      description: `方案「${task.scheme_name}」已完成计算，但仍有记录需要人工处理，完成后才能形成正式结果。`,
       action: '进入人工处理',
       path: `/tasks/${task.id}`,
       showProgress: false,
@@ -113,16 +114,16 @@ const waitingState = computed(() => {
   if (task.status === 'COMPLETED' && task.stage === 'RESULT') {
     return {
       title: '前序步骤已完成，结果文件尚未生成',
-      description: `任务「${task.name}」已经可以生成最终结果，请进入任务完成结果生成。`,
-      action: '进入任务生成结果',
+      description: `方案「${task.scheme_name}」已经可以生成最终结果，请进入匹配详情完成结果生成。`,
+      action: '进入匹配详情',
       path: `/tasks/${task.id}`,
       showProgress: false,
     }
   }
   return {
-    title: '任务尚未形成可下载结果',
-    description: `任务「${task.name}」当前状态为“${statusLabel(task.status)}”，请进入任务查看详情。`,
-    action: '查看任务',
+    title: '本次匹配尚未形成可下载结果',
+    description: `方案「${task.scheme_name}」当前状态为“${statusLabel(task.status)}”，请进入匹配详情查看。`,
+    action: '查看匹配详情',
     path: `/tasks/${task.id}`,
     showProgress: false,
   }
@@ -323,7 +324,8 @@ async function load(): Promise<void> {
     tasks.value = ((tasksResponse.data ?? []) as Record<string, unknown>[]).map(task => ({
       ...task,
       id: String(task.task_id),
-      name: String(task.name ?? '未命名任务'),
+      name: String(task.name ?? ''),
+      scheme_name: String(task.scheme_name ?? '未命名方案'),
       stage: String(task.stage ?? ''),
       progress: Number(task.progress ?? 0),
       status: String(task.status ?? ''),
@@ -366,7 +368,7 @@ async function download(task: TaskRow): Promise<void> {
     const response = (await api.get(`/tasks/${task.id}/exports`)).data
     const exportInfo = asExportInfo(response?.final_result)
     if (!exportInfo?.download_url) {
-      ElMessage.warning('该任务尚未生成可下载的最终结果')
+      ElMessage.warning('该方案尚未生成可下载的最终结果')
       await load()
       return
     }
@@ -401,12 +403,13 @@ onMounted(load)
                 <span class="result-ready-dot" :class="{ warning: allUnmatched }"></span>
                 {{ allUnmatched ? '结果已生成 · 建议检查匹配质量' : '最近一次已生成结果' }}
               </div>
-              <h3>{{ latestResult.name }}</h3>
+              <h3>{{ latestResult.scheme_name }}</h3>
               <div class="result-meta-line">
+                <span>开始时间：{{ formatTime(latestResult.started_at) }}</span>
                 <span>最终结果生成时间：{{ formatTime(resultCompletedAt(latestResult)) }}</span>
               </div>
             </div>
-            <el-button type="primary" plain @click="openTask(latestResult)">查看任务详情</el-button>
+            <el-button type="primary" plain @click="openTask(latestResult)">查看匹配详情</el-button>
           </div>
 
           <div class="result-metrics">
@@ -421,18 +424,18 @@ onMounted(load)
             <div><span>创建账号</span><b>{{ createdAccount }}</b></div>
             <div><span>创建时间</span><b>{{ formatTime(latestResult.created_at) }}</b></div>
             <div><span>启动账号</span><b>{{ startedAccount }}</b></div>
-            <div><span>启动时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
+            <div><span>开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
             <div><span>最终结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
           </div>
 
           <div v-if="allUnmatched" class="result-quality-alert">
             <div class="result-quality-alert-copy">
               <span class="result-quality-kicker">需要关注</span>
-              <h4>本次任务已完成，但当前没有形成有效匹配结果。</h4>
+              <h4>本次匹配已完成，但当前没有形成有效匹配结果。</h4>
               <p>建议回到第三步查看候选相似度和字段对比，再判断是否需要调整匹配条件或进行人工确认。</p>
             </div>
             <div class="result-quality-actions">
-              <el-button type="warning" plain @click="openTask(latestResult)">进入任务检查第三步</el-button>
+              <el-button type="warning" plain @click="openTask(latestResult)">进入第三步检查</el-button>
             </div>
           </div>
 
@@ -446,7 +449,7 @@ onMounted(load)
                 <b>最近一次生成结果预览</b>
                 <span>展示 {{ previewRows.length }} 条业务结果</span>
               </div>
-              <el-button link type="primary" @click="openTask(latestResult)">查看完整任务 →</el-button>
+              <el-button link type="primary" @click="openTask(latestResult)">查看完整匹配详情 →</el-button>
             </div>
             <div class="result-preview-explain">{{ previewNarrative }}</div>
             <el-table v-if="previewRows.length" :data="previewRows" size="small" class="result-preview-table">
@@ -468,7 +471,7 @@ onMounted(load)
               <div><b>正式结果文件</b><span>一个 Excel 即包含交付、复核和审计所需内容</span></div>
             </div>
             <div class="result-download-primary">
-              <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport" @click="downloadExport(finalExport, 'final', '该任务尚未生成可下载的最终匹配结果')">
+              <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport" @click="downloadExport(finalExport, 'final', '该方案尚未生成可下载的最终匹配结果')">
                 下载最终匹配结果 Excel
               </el-button>
               <span>包含“匹配摘要、最终匹配结果、Top5候选、人工操作记录、未匹配清单”五类内容，并保留源/目标业务字段。</span>
@@ -491,14 +494,15 @@ onMounted(load)
             <h3>{{ waitingState.title }}</h3>
             <p>{{ waitingState.description }}</p>
             <div class="result-state-meta">
-              <span>任务：{{ pendingTask.name }}</span>
+              <span>方案：{{ pendingTask.scheme_name }}</span>
+              <span>开始时间：{{ formatTime(pendingTask.started_at) }}</span>
               <span>阶段：{{ stageLabels[pendingTask.stage] ?? pendingTask.stage }}</span>
               <span>状态：{{ statusLabel(pendingTask.status) }}</span>
             </div>
             <el-progress v-if="waitingState.showProgress" :percentage="Math.round(pendingTask.progress)" :stroke-width="10" class="result-wait-progress"/>
             <div class="result-state-actions">
               <el-button type="primary" @click="router.push(waitingState.path)">{{ waitingState.action }}</el-button>
-              <el-button @click="router.push('/tasks')">查看任务列表</el-button>
+              <el-button @click="router.push('/tasks')">查看匹配列表</el-button>
             </div>
           </div>
         </div>
@@ -510,10 +514,10 @@ onMounted(load)
           <div class="result-state-content">
             <span class="result-state-kicker">暂无输出结果</span>
             <h3>尚无任何已经生成完成的结果</h3>
-            <p>当前没有可下载结果，也没有正在推进中的任务。请先创建任务并完成计算与必要的人工处理。</p>
+            <p>当前没有可下载结果，也没有正在推进中的匹配。请先选择方案并完成计算与必要的人工处理。</p>
             <div class="result-state-actions">
-              <el-button type="primary" @click="router.push('/tasks/new')">新建匹配任务</el-button>
-              <el-button @click="router.push('/tasks')">查看任务列表</el-button>
+              <el-button type="primary" @click="router.push('/profiles')">选择匹配方案</el-button>
+              <el-button @click="router.push('/tasks')">查看匹配列表</el-button>
             </div>
           </div>
         </div>
@@ -522,11 +526,12 @@ onMounted(load)
 
     <div class="panel results-history">
       <div class="section-head results-history-head">
-        <div><h3>历史结果</h3><p>已生成过正式 Excel 的任务，可再次查看或下载。</p></div>
+        <div><h3>历史结果</h3><p>已生成过正式 Excel 的匹配结果，可再次查看或下载。</p></div>
         <span class="results-history-count">{{ generatedResults.length }} 个结果</span>
       </div>
       <el-table :data="generatedResults" size="default" empty-text="暂无历史结果">
-        <el-table-column label="任务" min-width="230"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.name }}</a></template></el-table-column>
+        <el-table-column label="方案名称" min-width="230"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a></template></el-table-column>
+        <el-table-column label="开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
         <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
         <el-table-column label="源数据总数" width="120"><template #default="scope">{{ scope.row.total_rows ? formatCount(scope.row.total_rows) : '—' }}</template></el-table-column>
         <el-table-column label="状态" width="105"><template #default="scope"><el-tag size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
