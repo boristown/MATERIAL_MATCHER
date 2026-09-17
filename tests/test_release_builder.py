@@ -61,7 +61,7 @@ def _runtime(tmp_path: Path) -> Path:
         "set -eu\n"
         "BIN_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "RELEASE_ROOT=$(CDPATH= cd -- \"$BIN_DIR/../..\" && pwd)\n"
-        "export PYTHONPATH=\"$RELEASE_ROOT/app${PYTHONPATH:+:$PYTHONPATH}\"\n"
+        "export PYTHONPATH=\"$RELEASE_ROOT/source/src${PYTHONPATH:+:$PYTHONPATH}\"\n"
         "exec \"$BIN_DIR/python3\" -m material_matcher.cli \"$@\"\n",
         encoding="utf-8",
     )
@@ -83,14 +83,14 @@ def _runtime(tmp_path: Path) -> Path:
 
 
 def _web_dist(tmp_path: Path) -> Path:
-    dist = tmp_path / "web-dist"
+    dist = tmp_path / "web-dist-input"
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<html>material matcher</html>", encoding="utf-8")
     (dist / "assets/app.js").write_text("console.log('ok')", encoding="utf-8")
     return dist
 
 
-def test_build_release_creates_self_contained_layout(tmp_path: Path) -> None:
+def test_build_release_creates_source_visible_layout(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     version = _project_version(repo_root)
     output = tmp_path / "release"
@@ -101,8 +101,9 @@ def test_build_release_creates_self_contained_layout(tmp_path: Path) -> None:
             "--runtime-dir", str(_runtime(tmp_path)),
             "--web-dist-dir", str(_web_dist(tmp_path)),
             "--output-dir", str(output),
-            "--release-version", version,
             "--target-arch", _arch(),
+            "--git-commit", "abc123test",
+            "--build-time", "2026-09-17T06:00:00+00:00",
         ],
         check=True,
         text=True,
@@ -112,13 +113,26 @@ def test_build_release_creates_self_contained_layout(tmp_path: Path) -> None:
     manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
     assert manifest["release_version"] == version
     assert manifest["target_arch"] == _arch()
+    assert manifest["source_path"] == "source/src"
+    assert manifest["web_dist_path"] == "web-dist"
+    assert manifest["deployment_mode"] == "native-source"
+    assert manifest["git_commit"] == "abc123test"
     assert len(manifest["runtime_manifest_sha256"]) == 64
     assert len(manifest["source_tree_sha256"]) == 64
     assert len(manifest["web_tree_sha256"]) == 64
     assert (output / "runtime/runtime-manifest.json").is_file()
-    assert (output / "app/material_matcher/cli.py").is_file()
-    assert (output / "web/dist/index.html").is_file()
-    assert (output / "runtime/bin/material-matcher").stat().st_mode & 0o111
+    assert (output / "source/src/material_matcher/cli.py").is_file()
+    assert (output / "source/web/package.json").is_file()
+    assert (output / "source/scripts/build_release.py").is_file()
+    assert (output / "source/installer/install.sh").is_file()
+    assert (output / "source/docker/compose.yaml").is_file()
+    assert (output / "source/pyproject.toml").is_file()
+    assert (output / "web-dist/index.html").is_file()
+    assert (output / "tools/rebuild_frontend.sh").is_file()
+    build_info = json.loads((output / "web-dist/build-info.json").read_text(encoding="utf-8"))
+    assert build_info["version"] == version
+    assert build_info["git_commit"] == "abc123test"
+    assert build_info["deployment_mode"] == "native-source"
 
     help_result = subprocess.run(
         [str(output / "runtime/bin/material-matcher"), "--help"],
@@ -160,7 +174,6 @@ def test_build_release_rejects_tampered_runtime(tmp_path: Path) -> None:
             "--runtime-dir", str(runtime),
             "--web-dist-dir", str(_web_dist(tmp_path)),
             "--output-dir", str(tmp_path / "release"),
-            "--release-version", _project_version(repo_root),
             "--target-arch", _arch(),
         ],
         text=True,
