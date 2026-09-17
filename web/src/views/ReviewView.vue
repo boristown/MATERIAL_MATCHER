@@ -28,7 +28,6 @@ type ReviewSummary = {
 
 type ReviewTask = {
   id: string
-  name: string
   scheme_name: string
   stage: string
   progress: number
@@ -251,7 +250,6 @@ const coreVisibleFields = computed(() => visibleFieldDescriptors.value.slice(0, 
 function normalizeTask(task: any): ReviewTask {
   return {
     id: String(task.task_id ?? ''),
-    name: String(task.name ?? ''),
     scheme_name: String(task.scheme_name ?? '未命名方案'),
     stage: String(task.stage ?? ''),
     progress: Number(task.progress ?? 0),

@@ -141,7 +141,14 @@ const profileTaskIssues = computed(() => {
   if (!sourceIdColumn.value) issues.push('已发布方案未配置源数据标识字段')
   return [...new Set(issues)]
 })
-const profileTaskValid = computed(() => Boolean(name.value.trim()) && Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
+const draftTemplateProfileId = ref('')
+const schemeTitle = computed((): string => {
+  const explicit = String((task.value as Record<string, unknown> | null)?.scheme_name ?? '')
+  const profileId = String(appliedProfile.value?.id ?? draftTemplateProfileId.value ?? '')
+  const viaProfile = profiles.value.find(item => item.profile_id === profileId)?.name ?? ''
+  return explicit || profileTaskMeta.value?.name || viaProfile || (draftId.value ? '匹配任务草稿' : '新建匹配任务')
+})
+const profileTaskValid = computed(() => Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
 const profileFilterSummary = computed(() => {
   if (!filterEnabled.value || !filterField.value || !filterValues.value.length) return '不过滤'
   return `${filterField.value} ${filterMode.value === 'exclude' ? '排除' : '包含'} ${filterValues.value.join('、')}`
@@ -336,7 +343,6 @@ async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   loadDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   profileTaskMeta.value = { name: detail.name, version: Number(published.version_no), sha256: String(published.sha256 ?? '') }
-  name.value = `${detail.name} - 匹配任务`
 }
 function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
@@ -449,7 +455,6 @@ async function publishProfileChanges(): Promise<void> {
 
 function buildDraftPayload(catalogVersion: string | null = catalogVersionId.value || null): Record<string, unknown> {
   return {
-    name: name.value.trim() || '未命名匹配任务',
     source_file_id: source.value?.file_id ?? null,
     catalog_version_id: catalogVersion,
     template_profile_id: appliedProfile.value?.id ?? null,
@@ -460,7 +465,7 @@ function buildDraftPayload(catalogVersion: string | null = catalogVersionId.valu
 
 async function ensureDraft(): Promise<void> {
   if (draftId.value) return
-  const draft = (await api.post('/task-drafts', { name: name.value.trim() || '未命名匹配任务' })).data
+  const draft = (await api.post('/task-drafts', {})).data
   draftId.value = String(draft.draft_id)
   if (!route.params.taskId && route.query.draft !== draftId.value) {
     await router.replace({ path: route.path, query: { ...route.query, draft: draftId.value } })
@@ -487,7 +492,7 @@ async function resolveCatalogVersionForDraft(): Promise<string | null> {
     return catalogVersionId.value
   }
   const catalog = (await api.post('/catalogs', {
-    name: `${name.value.trim() || '任务'}-自动标准数据`,
+    name: `${schemeTitle.value}-自动标准数据`,
     source_file_id: target.value.file_id,
     group_code_column: groupCodeColumn.value,
   })).data
@@ -733,7 +738,7 @@ function downloadResult(): void { window.location.href = `/api/tasks/${task.valu
 async function restoreDraft(id: string): Promise<void> {
   const draft = (await api.get(`/task-drafts/${id}`)).data
   draftId.value = String(draft.draft_id)
-  name.value = String(draft.name ?? '')
+  draftTemplateProfileId.value = String(draft.template_profile_id ?? '')
   const configDocument = draft.config_document ?? {}
   loadDocument(configDocument)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
@@ -763,7 +768,6 @@ async function restoreDraft(id: string): Promise<void> {
 }
 async function restoreTask(taskId: string): Promise<void> {
   task.value = (await api.get(`/tasks/${taskId}`)).data
-  name.value = task.value.name
   const configDocument = task.value.config_snapshot ?? {}
   loadDocument(configDocument)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
@@ -858,7 +862,7 @@ onBeforeUnmount(() => {
       <div>
         <h2 v-if="isProfileEditorMode">{{ editingProfileId ? `编辑方案 · ${name || '未命名方案'}` : '新建匹配方案' }}</h2>
         <h2 v-else-if="isProfileTaskCreateMode">用方案创建匹配任务</h2>
-        <h2 v-else>{{ name || '新建匹配任务' }}</h2>
+        <h2 v-else>{{ schemeTitle }}</h2>
         <p v-if="isProfileEditorMode">方案配置/编辑模式：这里只维护字段映射、过滤、权重、阈值与发布，不创建或启动业务任务。</p>
         <p v-else-if="isProfileTaskCreateMode">上传本次左右两份 Excel；已发布方案作为初始配置，当前任务内仍可调整映射、权重和阈值。</p>
         <p v-else>上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始任务</p>
@@ -913,10 +917,6 @@ onBeforeUnmount(() => {
             <h3 style="margin:0">第一步 · 数据上传</h3>
             <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
           </div>
-        </div>
-        <div class="task-name-row">
-          <label>任务名称</label>
-          <el-input v-model="name" maxlength="120" show-word-limit placeholder="例如：2026年9月集团码匹配"/>
         </div>
         <DualExcelUploadPanel
           :source="source"
@@ -1197,14 +1197,6 @@ onBeforeUnmount(() => {
 .profile-compatibility-alert {
   margin-top: 14px;
 }
-.task-name-row {
-  display: grid;
-  grid-template-columns: 100px minmax(0, 520px);
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0 18px;
-}
-.task-name-row label,
 .profile-editor-meta label > span {
   font-size: 13px;
   font-weight: 600;
@@ -1282,8 +1274,7 @@ onBeforeUnmount(() => {
   .profile-summary-grid .wide {
     grid-column: span 2;
   }
-  .profile-editor-meta,
-  .task-name-row {
+  .profile-editor-meta {
     grid-template-columns: 1fr;
   }
 }

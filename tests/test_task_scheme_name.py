@@ -52,14 +52,15 @@ def test_task_exposes_business_scheme_name_without_replacing_internal_name(tmp_p
     tasks, _, _, task_id = _start_profile_task(meta)
 
     task = tasks.get_task(task_id)
-    assert task["name"] == "SMOKE-1.1.5"
+    # User-supplied draft names are no longer stored; the internal column is system-generated.
+    assert task["name"] == f"run-{task_id[:8]}"
     assert task["scheme_name"] == "电子元器件集团码匹配方案"
     assert task["config_snapshot"]["advanced"]["scheme_display_name"] == "电子元器件集团码匹配方案"
     assert task["created_by"] == "operator"
     assert task["started_by"] == "operator"
 
     listed = next(item for item in tasks.list_tasks() if item["task_id"] == task_id)
-    assert listed["name"] == "SMOKE-1.1.5"
+    assert listed["name"] == f"run-{task_id[:8]}"
     assert listed["scheme_name"] == "电子元器件集团码匹配方案"
 
 
@@ -91,7 +92,7 @@ def test_legacy_task_uses_current_profile_name_only_when_no_frozen_name_exists(t
     profiles.rename(profile_id, "历史兼容方案名")
     legacy = tasks.get_task(task_id)
     assert legacy["scheme_name"] == "历史兼容方案名"
-    assert legacy["name"] == "SMOKE-1.1.5"
+    assert legacy["name"] == f"run-{task_id[:8]}"
 
 
 def test_legacy_task_without_any_scheme_source_uses_business_friendly_fallback(tmp_path: Path) -> None:
@@ -118,4 +119,4 @@ def test_legacy_task_without_any_scheme_source_uses_business_friendly_fallback(t
     legacy = tasks.get_task(task_id)
     assert legacy["scheme_name"] == UNNAMED_SCHEME
     assert legacy["scheme_name"] != legacy["name"]
-    assert legacy["name"] == "run-technical-001"
+    assert legacy["name"] == f"run-{task_id[:8]}"
