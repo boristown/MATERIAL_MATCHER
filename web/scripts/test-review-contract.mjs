@@ -5,7 +5,10 @@ import process from 'node:process'
 const root = process.cwd()
 const view = fs.readFileSync(path.join(root, 'src/views/ReviewView.vue'), 'utf8')
 const api = fs.readFileSync(path.join(root, 'src/services/reviewWorkbenchApi.ts'), 'utf8')
-const css = fs.readFileSync(path.join(root, 'src/styles/pages/review.css'), 'utf8')
+const css = [
+  fs.readFileSync(path.join(root, 'src/styles/pages/review.css'), 'utf8'),
+  fs.readFileSync(path.join(root, 'src/styles/pages/review-large-scale.css'), 'utf8'),
+].join('\n')
 
 const requiredView = [
   "const PAGE_SIZE_OPTIONS = [50, 100, 200]",
