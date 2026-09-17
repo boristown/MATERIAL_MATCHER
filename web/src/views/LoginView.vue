@@ -12,12 +12,14 @@ const confirmPassword = ref('')
 const error = ref('')
 const busy = ref(false)
 const passwordChangeRequired = ref(false)
+const appVersion = ref('')
 const router = useRouter()
 
-onMounted(() => {
+onMounted(async () => {
   if (consumeAuthExpiredNotice()) {
     ElMessage.warning('登录已失效，请重新登录')
   }
+  try { appVersion.value = String((await api.get('/health')).data?.version ?? '') } catch { /* 版本信息仅作展示 */ }
 })
 
 async function login(): Promise<void> {
@@ -65,23 +67,30 @@ async function changePassword(): Promise<void> {
 
 <template>
   <div class="login">
-    <div class="card">
-      <h1>物料集团码匹配引擎</h1>
-      <template v-if="!passwordChangeRequired">
-        <p>使用分配的本地账号登录</p>
-        <el-input v-model="username" placeholder="用户名" autocomplete="username" />
-        <el-input v-model="password" type="password" show-password placeholder="密码" autocomplete="current-password" @keyup.enter="login" />
-        <p class="error">{{ error }}</p>
-        <el-button type="primary" class="full" :loading="busy" :disabled="!username.trim()||!password" @click="login">登录</el-button>
-      </template>
-      <template v-else>
-        <p>账号 {{ username }} 需要先修改初始/重置密码。</p>
-        <el-alert title="新密码至少10个字符，并同时包含字母和数字。修改成功后需要重新登录。" type="warning" :closable="false" />
-        <el-input v-model="newPassword" type="password" show-password placeholder="新密码" autocomplete="new-password" />
-        <el-input v-model="confirmPassword" type="password" show-password placeholder="再次输入新密码" autocomplete="new-password" @keyup.enter="changePassword" />
-        <p class="error">{{ error }}</p>
-        <el-button type="primary" class="full" :loading="busy" :disabled="!newPassword||!confirmPassword" @click="changePassword">修改密码</el-button>
-      </template>
+    <div class="login-stage">
+      <div class="card">
+        <div class="login-brand">
+          <img class="login-logo" src="/favicon.svg" alt="小罡 AI" />
+          <span class="login-brand-name">小罡 AI</span>
+        </div>
+        <h1><span>物料集团码</span><span>智能匹配平台</span></h1>
+        <template v-if="!passwordChangeRequired">
+          <p class="login-sub">使用分配的本地账号登录</p>
+          <el-input v-model="username" size="large" placeholder="用户名" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" />
+          <el-input v-model="password" size="large" type="password" show-password placeholder="密码" autocomplete="current-password" @keyup.enter="login" />
+          <p class="error">{{ error }}</p>
+          <el-button type="primary" class="full" :loading="busy" :disabled="!username.trim()||!password" @click="login">登录</el-button>
+        </template>
+        <template v-else>
+          <p class="login-sub">账号 {{ username }} 需要先修改初始/重置密码。</p>
+          <el-alert title="新密码至少10个字符，并同时包含字母和数字。修改成功后需要重新登录。" type="warning" :closable="false" />
+          <el-input v-model="newPassword" size="large" type="password" show-password placeholder="新密码" autocomplete="new-password" />
+          <el-input v-model="confirmPassword" size="large" type="password" show-password placeholder="再次输入新密码" autocomplete="new-password" @keyup.enter="changePassword" />
+          <p class="error">{{ error }}</p>
+          <el-button type="primary" class="full" :loading="busy" :disabled="!newPassword||!confirmPassword" @click="changePassword">修改密码</el-button>
+        </template>
+      </div>
+      <div class="login-foot"><span>小罡 AI</span><span v-if="appVersion">v{{ appVersion }}</span></div>
     </div>
   </div>
 </template>
