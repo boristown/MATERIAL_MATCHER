@@ -3,34 +3,7 @@ name: ci
 on:
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
-  fixture-data:
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install -e '.[dev]'
-      - run: python scripts/generate_realistic_test_data.py
-      - name: Commit generated CSV fixture
-        run: |
-          git add tests/fixtures/realistic_materials/generated/
-          if git diff --cached --quiet; then
-            echo "generated fixture already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "testdata: add generated origin-seed CSV fixture"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   backend:
     runs-on: ubuntu-latest
     steps:
