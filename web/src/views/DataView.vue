@@ -78,6 +78,19 @@ const selected = computed(() => dictionaries.value.find(item => item.dictionary_
 const dirty = computed(() => serializeRows() !== baseRows.value || caseSensitive.value !== baseCaseSensitive.value || creatingNew.value)
 const hasChanges = computed(() => serializeRows() !== baseRows.value || caseSensitive.value !== baseCaseSensitive.value)
 const mappingCount = computed(() => Object.keys(mappingFromRows()).length)
+const canonicalGroups = computed(() => {
+  const counts = new Map<string, number>()
+  for (const row of rows.value) {
+    const target = row.target.trim()
+    if (!target) continue
+    counts.set(target, (counts.get(target) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([canonical, count]) => ({ canonical, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6)
+})
 const visibleRows = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
   return rows.value
@@ -308,8 +321,8 @@ onMounted(async () => {
     <div class="toolbar data-view__header">
       <div>
         <span class="data-view__eyebrow">业务维护</span>
-        <h2>同义词配置</h2>
-        <p>用于统一物料名称、厂家、规格等内容的不同写法。修改保存后自动形成新版本，不影响历史任务。</p>
+        <h2>同义词配置 <el-tag class="syn-mode-tag" type="primary" effect="plain" size="small">写法归一化</el-tag></h2>
+        <p>将物料中的不同写法统一为标准写法后再参与匹配。源数据和集团码标准数据都会使用同一套归一化规则。修改保存后自动形成新版本，不影响历史任务。</p>
       </div>
       <el-button @click="refresh" :loading="loading || technicalLoading">刷新</el-button>
     </div>
@@ -317,11 +330,11 @@ onMounted(async () => {
     <section class="dictionary-guide" aria-label="同义词说明">
       <div>
         <strong>什么时候需要同义词？</strong>
-        <p>当同一种物料、厂家或规格存在简称、同义词或不同写法时，在这里统一成标准表达，匹配会更准。</p>
+        <p>当同一种物料、厂家或规格存在简称、俗称或不同写法时，在这里登记"其他写法 → 标准写法"，匹配前两侧都会先归一，命中更稳。</p>
       </div>
       <div>
         <strong>不会影响历史结果</strong>
-        <p>保存后系统自动生成新的同义词版本；已经运行的任务仍使用当时的版本，便于追溯。</p>
+        <p>每条规则是单向归一：只把左侧写法转成右侧标准写法，不会反向扩大范围。保存后自动生成新版本，已运行任务仍使用当时版本，便于追溯。</p>
       </div>
       <em>{{ dictionaries.length }} 张同义词表</em>
     </section>
@@ -368,8 +381,15 @@ onMounted(async () => {
         </label>
       </div>
 
+      <div class="syn-example">
+        <strong>例如</strong>
+        <span class="syn-example__pair"><code>光耦</code><i>→</i><code>光电耦合器</code></span>
+        <span class="syn-example__pair"><code>光耦合集成电路</code><i>→</i><code>光电耦合器</code></span>
+        <em>匹配时两边都会先转换成标准写法，再进行比较。</em>
+      </div>
+
       <div class="syn-toolbar">
-        <el-input v-model="searchKeyword" clearable placeholder="搜索同义词（原始写法或统一写法）" class="syn-search" />
+        <el-input v-model="searchKeyword" clearable placeholder="搜索同义词（其他写法或标准写法）" class="syn-search" />
         <div class="syn-toolbar__actions">
           <el-button v-if="canMaintain" :disabled="!dirty" @click="revertChanges">放弃修改</el-button>
           <el-button v-if="canMaintain" type="primary" plain @click="addMappingRow">+ 添加一条</el-button>
@@ -379,15 +399,15 @@ onMounted(async () => {
 
       <div class="syn-grid" :class="{ 'is-readonly': !canMaintain }">
         <div class="syn-grid__head">
-          <span>原始写法</span>
+          <span>其他写法</span>
           <span class="syn-arrow" aria-hidden="true"></span>
-          <span>统一写法</span>
+          <span>标准写法</span>
           <span class="syn-actions-head">操作</span>
         </div>
         <div v-for="{ row, index } in visibleRows" :key="index" class="syn-grid__row">
-          <el-input v-model="row.source" placeholder="例如：三极管" :disabled="!canMaintain" />
+          <el-input v-model="row.source" placeholder="例如：光耦" :disabled="!canMaintain" />
           <span class="syn-arrow" aria-hidden="true">→</span>
-          <el-input v-model="row.target" placeholder="例如：晶体管" :disabled="!canMaintain" />
+          <el-input v-model="row.target" placeholder="例如：光电耦合器" :disabled="!canMaintain" />
           <span class="syn-actions">
             <el-button v-if="canMaintain" link type="danger" @click="removeMappingRow(index)">删除</el-button>
           </span>
@@ -395,6 +415,10 @@ onMounted(async () => {
         <p v-if="!visibleRows.length && rows.length" class="syn-empty">没有匹配“{{ searchKeyword }}”的同义词。</p>
         <p v-if="!rows.length" class="syn-empty">还没有同义词，点击“+ 添加一条”开始维护。</p>
       </div>
+      <p v-if="canonicalGroups.length" class="syn-groups">
+        <span class="syn-groups__label">标准写法聚合</span>
+        <el-tag v-for="group in canonicalGroups" :key="group.canonical" type="info" effect="plain" size="small">{{ group.canonical }} ← {{ group.count }} 种写法</el-tag>
+      </p>
       <p class="syn-save-note">保存后将形成新的同义词版本，历史任务不会受到影响。</p>
     </div>
 
@@ -454,7 +478,7 @@ onMounted(async () => {
         <el-table-column type="expand">
           <template #default="scope">
             <div class="history-detail">
-              <div class="history-detail__head"><span>原始写法</span><span>→</span><span>统一写法</span></div>
+              <div class="history-detail__head"><span>其他写法</span><span>→</span><span>标准写法</span></div>
               <div v-for="(value, key) in scope.row.document?.mapping ?? {}" :key="key" class="history-detail__row">
                 <span>{{ key }}</span><span>→</span><span>{{ value }}</span>
               </div>

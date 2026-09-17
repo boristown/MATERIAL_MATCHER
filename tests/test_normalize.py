@@ -75,3 +75,24 @@ def test_pipeline_memo_key_respects_dictionary_version_anchor() -> None:
     assert apply_processing_pipeline("A", [base]).value == "B"
     assert apply_processing_pipeline("A", [v2]).value == "C"
     assert apply_processing_pipeline("A", [base]).value == "B"
+
+
+def test_synonym_normalization_applies_identically_on_source_and_target_sides() -> None:
+    steps = [
+        {"op": "trim"},
+        {"op": "unicode_normalize", "options": {"form": "NFKC"}},
+        {"op": "dictionary_map", "options": {
+            "mapping": {"光耦": "光电耦合器", "光耦合集成电路": "光电耦合器", "半导体集成电路": "集成电路"},
+            "mode": "replace",
+            "on_missing": "keep",
+        }},
+    ]
+    source = apply_processing_pipeline("光耦", steps)
+    target = apply_processing_pipeline("光耦合集成电路", steps)
+    assert source.text == target.text == "光电耦合器"
+    # The model stays one-directional (alias -> canonical); it must never
+    # expand a canonical term back into a narrower alias.
+    canonical = apply_processing_pipeline("集成电路", steps)
+    assert canonical.text == "集成电路"
+    grouped = apply_processing_pipeline("贴片半导体集成电路", steps)
+    assert grouped.text == "贴片集成电路"
