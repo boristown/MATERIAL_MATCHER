@@ -79,6 +79,24 @@ def _validate_tree_symlinks(root: Path) -> None:
             raise ValueError(f"运行时符号链接逃逸目录：{path.relative_to(root)}") from exc
 
 
+def _git_commit(repo_root: Path) -> str:
+    import os as _os
+
+    env_value = _os.environ.get("MM_GIT_COMMIT", "").strip()
+    if env_value:
+        return env_value
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        return result.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _project_version(repo_root: Path) -> str:
     with (repo_root / "pyproject.toml").open("rb") as stream:
         pyproject = tomllib.load(stream)
@@ -181,6 +199,27 @@ def build_release(
     )
     shutil.copytree(web_dist_dir, output_dir / "web/dist", symlinks=False)
 
+    # 源码可见交付：现场可查看/修改/离线重建所需的完整工程源码。
+    source_dir = output_dir / "source"
+    shutil.copytree(
+        repo_root / "src",
+        source_dir / "src",
+        symlinks=False,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
+    shutil.copytree(
+        repo_root / "web",
+        source_dir / "web",
+        symlinks=False,
+        ignore=shutil.ignore_patterns("node_modules", "dist", ".vite", "__pycache__"),
+    )
+    shutil.copytree(repo_root / "scripts", source_dir / "scripts", symlinks=False,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(repo_root / "installer", source_dir / "installer", symlinks=False)
+    for name in ("pyproject.toml", "README.md"):
+        if (repo_root / name).is_file():
+            shutil.copy2(repo_root / name, source_dir / name)
+
     python = output_dir / "runtime/bin/python3"
     launcher = output_dir / "runtime/bin/material-matcher"
     if not python.is_file() or not os.access(python, os.X_OK):
@@ -207,8 +246,10 @@ def build_release(
         "release_version": release_version,
         "target_arch": expected_arch,
         "python_version": runtime_info["python"],
+        "git_commit": _git_commit(repo_root),
         "runtime_manifest_sha256": _sha256(runtime_manifest_path),
         "source_tree_sha256": _tree_sha256(output_dir / "app"),
+        "release_source_tree_sha256": _tree_sha256(output_dir / "source"),
         "web_tree_sha256": _tree_sha256(output_dir / "web/dist"),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
