@@ -434,7 +434,8 @@ class ResultExportService:
         created_by = self._task_actor(task_id, task, "created")
         started_by = self._task_actor(task_id, task, "started")
         scheme_name = resolve_task_scheme_name(self.meta, dict(task))
-        business_stamp = "".join(ch for ch in str(generated_at) if ch.isdigit())[:14]
+        business_digits = "".join(ch for ch in str(generated_at) if ch.isdigit())[:14]
+        business_stamp = f"{business_digits[:8]}_{business_digits[8:14]}"
         summary_rows = [
             ("方案名称", scheme_name, "源数据总数", len(items)),
             ("自动匹配数", counts["MATCHED"], "人工匹配数", counts["CONFIRMED"]),
