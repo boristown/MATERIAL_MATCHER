@@ -25,6 +25,16 @@ def _check_path(path: Path, *, write: bool = False) -> dict[str, object]:
     return {"ok": ok, "path": str(path), "exists": exists, "writable": os.access(path, os.W_OK) if exists else False}
 
 
+def _release_manifest_path(web_dist_dir: Path) -> Path:
+    configured = os.getenv("MATERIAL_MATCHER_RELEASE_MANIFEST", "").strip()
+    if configured:
+        return Path(configured)
+    if web_dist_dir.name == "web-dist":
+        return web_dist_dir.parent / "release-manifest.json"
+    # Backward-compatible lookup for the historical release/web/dist layout.
+    return web_dist_dir.parent.parent / "release-manifest.json"
+
+
 def deployment_diagnostics(
     settings: object,
     *,
@@ -60,8 +70,7 @@ def deployment_diagnostics(
         "details": embedding,
     }
 
-    release_root = web_dist_dir.parent.parent
-    release_manifest_path = release_root / "release-manifest.json"
+    release_manifest_path = _release_manifest_path(web_dist_dir)
     release_manifest: dict[str, object] | None = None
     release_error: str | None = None
     if release_manifest_path.is_file():
