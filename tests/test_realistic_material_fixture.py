@@ -32,13 +32,13 @@ def test_origin_zip_is_the_real_fixture_source() -> None:
     assert SEED_ZIP.exists(), "origin_data.zip must stay versioned as the canonical public seed package"
     sources, targets, inventory = discover_seed_rows(SEED_ZIP)
 
-    assert len(inventory["seed_files_scanned"]) >= 10
-    assert inventory["source_seed_rows"] == len(sources) > 0
-    assert inventory["target_seed_rows"] == len(targets) > 0
-    assert inventory["source_seed_by_type"]["Z001"] > 0
-    assert inventory["source_seed_by_type"]["Z006"] > 0
-    assert inventory["target_seed_by_type"]["Z001"] > 0
-    assert inventory["target_seed_by_type"]["Z006"] > 0
+    assert len(inventory["seed_files_scanned"]) >= 10, inventory
+    assert inventory["source_seed_rows"] == len(sources) > 0, inventory
+    assert inventory["target_seed_rows"] == len(targets) > 0, inventory
+    assert inventory["source_seed_by_type"]["Z001"] > 0, inventory
+    assert inventory["source_seed_by_type"]["Z006"] > 0, inventory
+    assert inventory["target_seed_by_type"]["Z001"] > 0, inventory
+    assert inventory["target_seed_by_type"]["Z006"] > 0, inventory
     assert len(inventory["seed_zip_sha256"]) == 64
 
     pairs = build_seed_pairs(sources, targets)
