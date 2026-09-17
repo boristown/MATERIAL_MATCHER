@@ -86,10 +86,24 @@ def test_redecide_and_workbench_search_api(tmp_path: Path, authed) -> None:
     # 非法阈值拒绝
     assert client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 40, "review_threshold": 50}).status_code == 422
 
-    # finalize 后禁止再重判
-    fin = client.post(f"/api/tasks/{task}/finalize", json={"allow_unresolved_review": True})
-    assert fin.status_code == 200
-    assert client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 70, "review_threshold": 50}).status_code == 409
+    # 正式结果生成后仍允许全局调参，但必须保留旧结果并形成新版本。
+    fin_v1 = client.post(f"/api/tasks/{task}/finalize", json={"allow_unresolved_review": True})
+    assert fin_v1.status_code == 200
+    first_file = fin_v1.json()["result_file_id"]
+    first_versions = client.get(f"/api/tasks/{task}/result-revisions").json()
+    assert len(first_versions) == 1
+
+    redecide_v2 = client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 70, "review_threshold": 50})
+    assert redecide_v2.status_code == 200
+    assert redecide_v2.json()["revision_no"] >= 2
+    fin_v2 = client.post(f"/api/tasks/{task}/finalize", json={"allow_unresolved_review": True})
+    assert fin_v2.status_code == 200
+    assert fin_v2.json()["result_file_id"] != first_file
+    versions = client.get(f"/api/tasks/{task}/result-revisions").json()
+    assert len(versions) == 2
+    assert {row["file_id"] for row in versions} == {first_file, fin_v2.json()["result_file_id"]}
+    assert client.get(f"/api/tasks/{task}/result-revisions/1").status_code == 200
+
     export = client.get(f"/api/tasks/{task}/result")
     assert export.status_code == 200
     from openpyxl import load_workbook
