@@ -7,7 +7,6 @@ import '../styles/pages/results.css'
 
 type TaskRow = Record<string, unknown> & {
   id: string
-  name: string
   scheme_name: string
   stage: string
   progress: number
@@ -324,7 +323,6 @@ async function load(): Promise<void> {
     tasks.value = ((tasksResponse.data ?? []) as Record<string, unknown>[]).map(task => ({
       ...task,
       id: String(task.task_id),
-      name: String(task.name ?? ''),
       scheme_name: String(task.scheme_name ?? '未命名方案'),
       stage: String(task.stage ?? ''),
       progress: Number(task.progress ?? 0),

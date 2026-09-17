@@ -26,22 +26,34 @@ type ReviewSummary = {
   automatic_matched: number
 }
 
-type ReviewTask = {
+type ReviewHistoryRow = {
+  task_id: string
+  scheme_name: string
+  sequence: number | null
+  sequence_total: number | null
+  stage: string
+  status: string
+  result_file_id: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  total: number
+  matched: number
+  review: number
+  confirmed: number
+  unmatched: number
+}
+
+type RunningTask = {
   id: string
-  name: string
   scheme_name: string
   stage: string
-  progress: number
   status: string
+  progress: number
   created_at: string
-  started_at?: string | null
-  finished_at?: string | null
-  result_file_id?: string | null
-  error_code?: string | null
-  error_message?: string | null
-  config_snapshot?: Record<string, any>
-  summary?: ReviewSummary
-  summaryError?: boolean
+  started_at: string | null
+  error_code: string | null
+  error_message: string | null
 }
 
 type ProgressState = {
@@ -136,11 +148,14 @@ const STATUS_TABS: Array<{ key: StatusFilter; label: string; backend: ReviewStat
   { key: 'unmatched', label: '未匹配', backend: 'UNMATCHED' },
 ]
 
-const reviewRows = ref<ReviewTask[]>([])
+const HISTORY_PREVIEW_LIMIT = 8
+
+const historyRows = ref<ReviewHistoryRow[]>([])
+const historyExpanded = ref(false)
 const activeTaskId = ref('')
-const calculatingTask = ref<ReviewTask | null>(null)
+const calculatingTask = ref<RunningTask | null>(null)
 const calculatingProgress = ref<ProgressState | null>(null)
-const latestFailed = ref<ReviewTask | null>(null)
+const latestFailed = ref<RunningTask | null>(null)
 const loadError = ref('')
 const loading = ref(false)
 
@@ -190,17 +205,12 @@ let pollTimer: number | undefined
 let progressRefreshing = false
 let contextVersion = 0
 
-const activeTask = computed(() => reviewRows.value.find(task => task.id === activeTaskId.value) ?? null)
-const workspaceTasks = computed(() => reviewRows.value.filter(task => {
-  if (task.summaryError) return false
-  const s = task.summary
-  return Boolean(s && (s.pending_review + s.confirmed + s.unmatched + s.automatic_matched) > 0)
-}))
-const hasUnknownReviewState = computed(() => reviewRows.value.some(task => task.summaryError))
+const activeTask = computed(() => historyRows.value.find(task => task.task_id === activeTaskId.value) ?? null)
+const workspaceTasks = computed(() => historyRows.value.filter(task => task.total > 0))
+const visibleHistory = computed(() => historyExpanded.value ? workspaceTasks.value : workspaceTasks.value.slice(0, HISTORY_PREVIEW_LIMIT))
 const consoleMode = computed<'ready' | 'waiting' | 'empty' | 'error'>(() => {
   if (loadError.value) return 'error'
   if (activeTask.value) return 'ready'
-  if (hasUnknownReviewState.value) return 'error'
   if (calculatingTask.value) return 'waiting'
   return 'empty'
 })
@@ -248,21 +258,36 @@ const visibleFieldDescriptors = computed(() => {
 })
 const coreVisibleFields = computed(() => visibleFieldDescriptors.value.slice(0, 3))
 
-function normalizeTask(task: any): ReviewTask {
+function normalizeHistoryRow(row: any): ReviewHistoryRow {
+  return {
+    task_id: String(row.task_id ?? ''),
+    scheme_name: String(row.scheme_name ?? '未命名方案'),
+    sequence: row.sequence === null || row.sequence === undefined ? null : Number(row.sequence),
+    sequence_total: row.sequence_total === null || row.sequence_total === undefined ? null : Number(row.sequence_total),
+    stage: String(row.stage ?? ''),
+    status: String(row.status ?? ''),
+    result_file_id: row.result_file_id ? String(row.result_file_id) : null,
+    created_at: String(row.created_at ?? ''),
+    started_at: row.started_at ? String(row.started_at) : null,
+    finished_at: row.finished_at ? String(row.finished_at) : null,
+    total: Number(row.total ?? 0),
+    matched: Number(row.matched ?? 0),
+    review: Number(row.review ?? 0),
+    confirmed: Number(row.confirmed ?? 0),
+    unmatched: Number(row.unmatched ?? 0),
+  }
+}
+function normalizeRunningTask(task: any): RunningTask {
   return {
     id: String(task.task_id ?? ''),
-    name: String(task.name ?? ''),
     scheme_name: String(task.scheme_name ?? '未命名方案'),
     stage: String(task.stage ?? ''),
-    progress: Number(task.progress ?? 0),
     status: String(task.status ?? ''),
+    progress: Number(task.progress ?? 0),
     created_at: String(task.created_at ?? ''),
     started_at: task.started_at ? String(task.started_at) : null,
-    finished_at: task.finished_at ? String(task.finished_at) : null,
-    result_file_id: task.result_file_id ? String(task.result_file_id) : null,
     error_code: task.error_code ? String(task.error_code) : null,
     error_message: task.error_message ? String(task.error_message) : null,
-    config_snapshot: task.config_snapshot ?? undefined,
   }
 }
 
@@ -292,6 +317,16 @@ function formatDelta(after: number, before: number): string {
 function formatDate(value: string | null | undefined): string {
   if (!value) return '—'
   return value.slice(0, 19).replace('T', ' ')
+}
+function formatListTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  return value.slice(0, 16).replace('T', ' ')
+}
+function historyStatusLabel(row: ReviewHistoryRow): string {
+  if (row.result_file_id) return '生成结果'
+  if (row.review > 0) return '待人工处理'
+  if (row.status === 'COMPLETED') return '已全部处理'
+  return '已完成'
 }
 function rawValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return ''
@@ -564,23 +599,6 @@ function startPollingIfNeeded(): void {
   stopPolling()
   if (consoleMode.value === 'waiting' && calculatingTask.value) pollTimer = window.setInterval(() => void refreshCalculatingProgress(), 3000)
 }
-async function loadReviewSummary(task: ReviewTask): Promise<ReviewTask> {
-  try {
-    const response = (await api.get(`/tasks/${task.id}/workbench/summary`)).data ?? {}
-    return {
-      ...task,
-      summary: {
-        pending_review: Number(response.pending_review ?? 0),
-        confirmed: Number(response.confirmed ?? 0),
-        unmatched: Number(response.unmatched ?? 0),
-        automatic_matched: Number(response.automatic_matched ?? 0),
-      },
-      summaryError: false,
-    }
-  } catch {
-    return { ...task, summaryError: true }
-  }
-}
 async function refreshCalculatingProgress(): Promise<void> {
   const task = calculatingTask.value
   if (!task || progressRefreshing) return
@@ -604,8 +622,14 @@ async function refreshSummary(taskId: string): Promise<void> {
     unmatched: Number(response.unmatched ?? 0),
     automatic_matched: Number(response.automatic_matched ?? 0),
   }
-  const row = reviewRows.value.find(item => item.id === taskId)
-  if (row) row.summary = { ...summary.value }
+  const row = historyRows.value.find(item => item.task_id === taskId)
+  if (row) {
+    row.matched = summary.value.automatic_matched
+    row.review = summary.value.pending_review
+    row.confirmed = summary.value.confirmed
+    row.unmatched = summary.value.unmatched
+    row.total = row.matched + row.review + row.confirmed + row.unmatched
+  }
 }
 async function loadCalibration(taskId: string, fallbackConfig?: any): Promise<void> {
   const fallbackDecision = fallbackConfig?.decision ?? {}
@@ -693,30 +717,28 @@ async function load(): Promise<void> {
   loadError.value = ''
   stopPolling()
   try {
-    const tasks = ((await api.get('/tasks')).data ?? [])
-      .map((task: any) => normalizeTask(task))
-      .sort((a: ReviewTask, b: ReviewTask) => b.created_at.localeCompare(a.created_at))
-    const candidates = tasks.filter((task: ReviewTask) => task.status === 'COMPLETED' && ['REVIEW', 'RESULT'].includes(task.stage))
-    reviewRows.value = await Promise.all(candidates.map((task: ReviewTask) => loadReviewSummary(task)))
-    calculatingTask.value = tasks.find((task: ReviewTask) => task.stage === 'CALCULATE' && RUNNING_STATUSES.includes(task.status)) ?? null
-    latestFailed.value = tasks.find((task: ReviewTask) => task.status === 'FAILED') ?? null
+    const [tasksResponse, historyResponse] = await Promise.all([api.get('/tasks'), api.get('/tasks/review-history')])
+    const runningTasks = ((tasksResponse.data ?? []) as any[]).map((task: any) => normalizeRunningTask(task))
+    historyRows.value = ((historyResponse.data ?? []) as any[]).map((row: any) => normalizeHistoryRow(row))
+    calculatingTask.value = runningTasks.find(task => task.stage === 'CALCULATE' && RUNNING_STATUSES.includes(task.status)) ?? null
+    latestFailed.value = runningTasks.find(task => task.status === 'FAILED') ?? null
     calculatingProgress.value = null
     const requestedTaskId = typeof route.query.task === 'string' ? route.query.task : ''
-    const requested = workspaceTasks.value.find(task => task.id === requestedTaskId)
-    const preserved = workspaceTasks.value.find(task => task.id === activeTaskId.value)
+    const requested = workspaceTasks.value.find(task => task.task_id === requestedTaskId)
+    const preserved = workspaceTasks.value.find(task => task.task_id === activeTaskId.value)
     const nextTask = requested ?? preserved ?? workspaceTasks.value[0] ?? null
-    activeTaskId.value = nextTask?.id ?? ''
-    if (nextTask) await loadWorkbenchContext(nextTask.id)
+    activeTaskId.value = nextTask?.task_id ?? ''
+    if (nextTask) await loadWorkbenchContext(nextTask.task_id)
     else {
       ++contextVersion
       workbenchItems.value = []
       workbenchTotal.value = 0
       candidateMap.value = {}
       summary.value = { pending_review: 0, confirmed: 0, unmatched: 0, automatic_matched: 0 }
-      if (calculatingTask.value && !hasUnknownReviewState.value) await refreshCalculatingProgress()
+      if (calculatingTask.value) await refreshCalculatingProgress()
     }
   } catch (error) {
-    reviewRows.value = []
+    historyRows.value = []
     activeTaskId.value = ''
     calculatingTask.value = null
     calculatingProgress.value = null
@@ -728,13 +750,14 @@ async function load(): Promise<void> {
   }
 }
 async function selectTask(taskId: string): Promise<void> {
-  const task = workspaceTasks.value.find(row => row.id === taskId)
-  if (!task) return
-  await router.replace({ path: '/review', query: { task: task.id } })
-  await loadWorkbenchContext(task.id)
+  const task = workspaceTasks.value.find(row => row.task_id === taskId)
+  if (!task || task.task_id === activeTaskId.value) return
+  await router.replace({ path: '/review', query: { task: task.task_id } })
+  await loadWorkbenchContext(task.task_id)
+  document.querySelector('.review-page')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
-function openTask(task: ReviewTask): void {
-  void router.push(`/tasks/${task.id}`)
+function openTask(taskId: string): void {
+  void router.push(`/tasks/${taskId}`)
 }
 async function ensureCandidates(item: WorkbenchItem): Promise<void> {
   if (candidatesFor(item).length || candidateLoading.value[item.source_row_id]) return
@@ -913,9 +936,6 @@ onBeforeUnmount(() => {
         <p>批量处理大多数记录，只对少量真正需要判断的数据展开 Top 1～Top 5。</p>
       </div>
       <div class="review-toolbar-actions">
-        <el-select v-if="workspaceTasks.length > 1" :model-value="activeTaskId" class="review-task-switcher" placeholder="切换方案" @change="selectTask">
-          <el-option v-for="taskRow in workspaceTasks" :key="taskRow.id" :label="`${taskRow.scheme_name} · ${formatNumber(taskRow.summary?.pending_review)} 条待人工`" :value="taskRow.id" />
-        </el-select>
         <template v-if="activeTaskId">
           <el-button @click="downloadManualWorkbook(activeTaskId)">下载人工匹配 Excel</el-button>
           <el-button :loading="importBusy" @click="startManualUpload">上传人工匹配结果</el-button>
@@ -942,7 +962,7 @@ onBeforeUnmount(() => {
           <div class="review-wait-percent"><b>{{ waitingPercent }}%</b><span>计算进度</span></div>
           <el-progress :percentage="waitingPercent" :stroke-width="10" :show-text="false" />
         </div>
-        <div class="review-console-action"><el-button type="primary" plain size="large" @click="openTask(calculatingTask)">查看计算进度</el-button></div>
+        <div class="review-console-action"><el-button type="primary" plain size="large" @click="openTask(calculatingTask.id)">查看计算进度</el-button></div>
       </template>
       <template v-else-if="consoleMode === 'error'">
         <div class="review-console-main">
@@ -967,15 +987,81 @@ onBeforeUnmount(() => {
     </section>
 
     <template v-if="consoleMode === 'ready' && activeTask">
-      <section class="review-task-hero">
-        <div>
-          <div class="review-section-kicker">方案名称 · {{ activeTask.scheme_name }}</div>
-          <h3>先筛选和批量处理，再展开少量需要判断的记录</h3>
-          <p>列表只请求当前页，状态、搜索、分数范围和分页都交给服务端处理；不会生成十万行 Vue DOM，也不会一次加载全量候选。</p>
+      <section class="review-current-card" aria-label="当前查看的计算">
+        <div class="review-current-head">
+          <div class="review-section-kicker">当前查看</div>
+          <span v-if="activeTask.sequence !== null" class="review-current-seq">第 {{ activeTask.sequence }} 次计算</span>
+          <span v-else class="review-current-seq is-legacy">历史计算</span>
+          <el-tag size="small" effect="plain" :type="activeTask.result_file_id ? 'success' : (activeTask.review > 0 ? 'warning' : 'info')">{{ historyStatusLabel(activeTask) }}</el-tag>
         </div>
-        <div class="review-task-hero-meta">
-          <span>开始时间 {{ formatDate(activeTask.started_at ?? activeTask.created_at) }}</span>
-          <span>计算完成 {{ formatDate(activeTask.finished_at) }}</span>
+        <h3 class="review-current-scheme" :title="activeTask.scheme_name">{{ activeTask.scheme_name }}</h3>
+        <dl class="review-current-grid">
+          <div><dt>方案名称</dt><dd :title="activeTask.scheme_name">{{ activeTask.scheme_name }}</dd></div>
+          <div><dt>计算序号</dt><dd>{{ activeTask.sequence !== null ? `第 ${activeTask.sequence} 次计算${activeTask.sequence_total && activeTask.sequence_total > 1 ? `（该方案共 ${activeTask.sequence_total} 次）` : ''}` : '历史计算（无法确认序号）' }}</dd></div>
+          <div><dt>开始时间</dt><dd>{{ formatDate(activeTask.started_at ?? activeTask.created_at) }}</dd></div>
+          <div><dt>计算完成</dt><dd>{{ formatDate(activeTask.finished_at) }}</dd></div>
+          <div><dt>当前状态</dt><dd>{{ historyStatusLabel(activeTask) }}</dd></div>
+          <div><dt>待人工</dt><dd><b>{{ formatNumber(activeTask.review) }}</b> 条</dd></div>
+        </dl>
+      </section>
+
+      <section class="review-history-panel" aria-label="历史计算记录">
+        <div class="review-history-head">
+          <div>
+            <div class="review-section-kicker">历史计算记录</div>
+            <h3>点击任意一次计算可切换人工调整工作台</h3>
+          </div>
+          <span class="review-history-count">共 {{ formatNumber(workspaceTasks.length) }} 条</span>
+        </div>
+        <div class="review-history-wrap">
+          <table class="review-history-table">
+            <thead>
+              <tr>
+                <th class="review-history-seq-col">序号</th>
+                <th class="review-history-scheme-col">方案名称</th>
+                <th class="review-history-time-col">开始时间</th>
+                <th class="review-history-time-col">完成时间</th>
+                <th class="review-history-num-col">数据量</th>
+                <th class="review-history-num-col">自动匹配</th>
+                <th class="review-history-num-col">待人工</th>
+                <th class="review-history-num-col">未匹配</th>
+                <th class="review-history-status-col">状态</th>
+                <th class="review-history-action-col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in visibleHistory"
+                :key="row.task_id"
+                :class="{ 'is-active': row.task_id === activeTaskId }"
+                @click="selectTask(row.task_id)"
+              >
+                <td class="review-history-seq-col">
+                  <b v-if="row.sequence !== null">第 {{ row.sequence }} 次</b>
+                  <span v-else class="review-history-legacy">历史计算</span>
+                </td>
+                <td class="review-history-scheme-col">
+                  <span :title="row.scheme_name">{{ row.scheme_name }}</span>
+                  <em v-if="row.task_id === activeTaskId" class="review-history-active-tag">当前查看</em>
+                </td>
+                <td class="review-history-time-col">{{ formatListTime(row.started_at ?? row.created_at) }}</td>
+                <td class="review-history-time-col">{{ formatListTime(row.finished_at) }}</td>
+                <td class="review-history-num-col">{{ formatNumber(row.total) }}</td>
+                <td class="review-history-num-col">{{ formatNumber(row.matched) }}</td>
+                <td class="review-history-num-col">{{ formatNumber(row.review) }}</td>
+                <td class="review-history-num-col">{{ formatNumber(row.unmatched) }}</td>
+                <td class="review-history-status-col"><span class="review-history-status" :class="row.result_file_id ? 'is-final' : (row.review > 0 ? 'is-pending' : 'is-done')">{{ historyStatusLabel(row) }}</span></td>
+                <td class="review-history-action-col">
+                  <el-button v-if="row.task_id === activeTaskId" link type="primary" disabled>查看中</el-button>
+                  <el-button v-else link type="primary" @click.stop="selectTask(row.task_id)">查看</el-button>
+                  <el-button link type="info" @click.stop="openTask(row.task_id)">详情</el-button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="workspaceTasks.length > HISTORY_PREVIEW_LIMIT" class="review-history-more">
+          <el-button link type="primary" @click="historyExpanded = !historyExpanded">{{ historyExpanded ? '收起，只看最近 8 条' : `查看全部计算记录（${formatNumber(workspaceTasks.length)} 条）` }}</el-button>
         </div>
       </section>
 
@@ -1181,19 +1267,5 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </template>
-
-    <section class="panel review-list-panel">
-      <div class="section-head"><div><h3>可人工调整的方案</h3><p class="review-section-desc">可切换其它已完成匹配计算的方案。</p></div></div>
-      <el-table v-if="reviewRows.length" :data="reviewRows" size="default">
-        <el-table-column label="方案名称" min-width="220"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a><div class="row-sub">开始 {{ formatDate(scope.row.started_at ?? scope.row.created_at) }}</div></template></el-table-column>
-        <el-table-column label="自动匹配" width="110"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.automatic_matched) }}</template></el-table-column>
-        <el-table-column label="待人工" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.pending_review) }}</template></el-table-column>
-        <el-table-column label="已人工" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.confirmed) }}</template></el-table-column>
-        <el-table-column label="未匹配" width="100"><template #default="scope">{{ scope.row.summaryError ? '—' : formatNumber(scope.row.summary?.unmatched) }}</template></el-table-column>
-        <el-table-column label="计算完成" width="170"><template #default="scope">{{ formatDate(scope.row.finished_at) }}</template></el-table-column>
-        <el-table-column label="操作" width="130"><template #default="scope"><el-button v-if="workspaceTasks.some(task => task.id === scope.row.id)" link type="primary" @click="selectTask(scope.row.id)">进入工作台</el-button><el-button v-else link type="info" @click="openTask(scope.row)">查看详情</el-button></template></el-table-column>
-      </el-table>
-      <el-empty v-else description="暂无已完成匹配计算的方案" :image-size="72" />
-    </section>
   </div>
 </template>

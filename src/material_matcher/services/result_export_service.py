@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
+from material_matcher.services.task_service import resolve_task_scheme_name, safe_business_filename
 from material_matcher.storage.metadata import MetadataRepository
 
 
@@ -432,8 +433,11 @@ class ResultExportService:
         summary.merge_cells("A1:D1")
         created_by = self._task_actor(task_id, task, "created")
         started_by = self._task_actor(task_id, task, "started")
+        scheme_name = resolve_task_scheme_name(self.meta, dict(task))
+        business_digits = "".join(ch for ch in str(generated_at) if ch.isdigit())[:14]
+        business_stamp = f"{business_digits[:8]}_{business_digits[8:14]}"
         summary_rows = [
-            ("任务名称", task.get("name") or "", "源数据总数", len(items)),
+            ("方案名称", scheme_name, "源数据总数", len(items)),
             ("自动匹配数", counts["MATCHED"], "人工匹配数", counts["CONFIRMED"]),
             ("未匹配数", counts["UNMATCHED"], "待处理数", counts["REVIEW"]),
             ("创建账号", created_by, "启动账号", started_by),
@@ -627,7 +631,7 @@ class ResultExportService:
         workbook.save(output)
         output.seek(0)
         return self.files.save_stream(
-            f"物料集团码匹配结果_{task.get('name') or task_id}.xlsx",
+            f"物料集团码匹配结果_{safe_business_filename(scheme_name)}_{business_stamp}.xlsx",
             "result",
             output,
             self.settings.max_total_upload_bytes,

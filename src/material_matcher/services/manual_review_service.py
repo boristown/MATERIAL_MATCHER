@@ -11,6 +11,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from material_matcher.domain.errors import DomainError
+from material_matcher.services.task_service import resolve_task_scheme_name, safe_business_filename
 from material_matcher.storage.metadata import MetadataRepository
 
 
@@ -479,7 +480,7 @@ class ManualReviewService:
 
         guide = workbook.create_sheet("填写说明")
         guide.append(["人工匹配 Excel"])
-        guide.append(["任务名称", task.get("name")])
+        guide.append(["方案名称", resolve_task_scheme_name(self.repo, dict(task))])
         guide.append(["填写方式", "仅填写“人工选择”列；可选择候选1～候选5或“均不匹配”。空白行会被忽略。"])
         guide.append(["多人协作", "可复制或拆分本文件给多人处理，再分别上传；系统会幂等合并，相同结果安全跳过，不同结果返回冲突且不会覆盖。"])
         guide["A1"].font = Font(bold=True, size=14)

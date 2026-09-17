@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import hashlib
 import json
+import re
 from typing import Any
 import uuid
 
@@ -18,6 +19,45 @@ SCHEME_SNAPSHOT_KEY = "scheme_display_name"
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat()
+
+
+def resolve_task_scheme_name(repo: MetadataRepository, task: dict[str, Any]) -> str:
+    """Single business-name resolver for every screen, export and file name.
+
+    Order: frozen start-time snapshot -> linked profile -> 未命名方案.
+    It must never fall back to tasks.name: that column is an internal
+    compatibility field (run-xxxxxxxx, or legacy SMOKE/test values).
+    """
+    snapshot = task.get("config_snapshot")
+    if isinstance(snapshot, str):
+        try:
+            snapshot = json.loads(snapshot)
+        except (TypeError, ValueError):
+            snapshot = None
+    frozen = TaskService.snapshot_scheme_name(snapshot)
+    if frozen:
+        return frozen
+    profile_id = task.get("profile_id")
+    if profile_id:
+        with repo.connect() as connection:
+            row = connection.execute("SELECT name FROM profiles WHERE profile_id=?", (str(profile_id),)).fetchone()
+        if row is not None:
+            name = str(row["name"] or "").strip()
+            if name:
+                return name
+    return UNNAMED_SCHEME
+
+
+_UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+
+
+def safe_business_filename(scheme_name: object, max_length: int = 60) -> str:
+    """Turn a scheme name into a safe file-name fragment for business users."""
+    text = _UNSAFE_FILENAME.sub("", str(scheme_name or "")).strip().strip(".")
+    text = re.sub(r"\s+", " ", text)
+    if not text:
+        return UNNAMED_SCHEME
+    return text[:max_length].rstrip(" .")
 
 
 def _canonical(value: object) -> str:
@@ -57,6 +97,11 @@ class TaskService:
         return name or None
 
     @staticmethod
+    @staticmethod
+    def snapshot_scheme_name(snapshot: object) -> str | None:
+        return TaskService._snapshot_scheme_name(snapshot)
+
+    @staticmethod
     def _snapshot_scheme_name(snapshot: object) -> str | None:
         if not isinstance(snapshot, dict):
             return None
@@ -83,16 +128,12 @@ class TaskService:
         # New tasks always read the immutable start-time snapshot. For legacy tasks
         # created before this field existed, the linked profile is the best available
         # business source. Never fall back to task.name because it may be SMOKE-/test-/run-*.
-        task["scheme_name"] = (
-            self._snapshot_scheme_name(task.get("config_snapshot"))
-            or self._profile_name(task.get("profile_id"))
-            or UNNAMED_SCHEME
-        )
+        task["scheme_name"] = resolve_task_scheme_name(self.repo, task)
         return task
 
     def create_draft(
         self,
-        name: str,
+        name: str | None = None,
         *,
         template_profile_id: str | None = None,
         template_profile_version: int | None = None,
@@ -100,6 +141,9 @@ class TaskService:
     ) -> dict[str, object]:
         draft_id = uuid.uuid4().hex
         created_at = _now()
+        # "任务名称" is no longer a business concept. The legacy column keeps only a
+        # system-generated internal id (run-xxxxxxxx); user input is never consumed.
+        internal_name = f"run-{draft_id[:8]}"
         document = self.dictionaries.bind_references(config_document) if config_document is not None else {}
         if config_document is not None:
             MatchingConfig.model_validate(document)
@@ -112,7 +156,7 @@ class TaskService:
                 "INSERT INTO task_drafts VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     draft_id,
-                    name,
+                    internal_name,
                     None,
                     None,
                     template_profile_id,
@@ -195,9 +239,9 @@ class TaskService:
             if field in payload:
                 value = payload[field]
                 if field == "name":
-                    value = str(value or "").strip()
-                    if not value:
-                        raise DomainError("INVALID_REQUEST", "任务名称不能为空", status_code=422)
+                    # Legacy clients may still send name; it is accepted for API
+                    # compatibility and then ignored — drafts have no business name.
+                    continue
                 updates.append(f"{field}=?")
                 values.append(value)
 
@@ -284,12 +328,13 @@ class TaskService:
         task_id = uuid.uuid4().hex
         created_at = _now()
         actor_name = actor or "system"
+        internal_name = f"run-{task_id[:8]}"
         with self.repo.connect() as connection:
             connection.execute(
                 "INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     task_id,
-                    draft["name"],
+                    internal_name,
                     draft["source_file_id"],
                     draft["catalog_version_id"],
                     draft.get("template_profile_id"),
@@ -344,12 +389,40 @@ class TaskService:
         if row is None:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
         task = self.repo.decode(row, ("config_snapshot",)) or {}
+        with self.repo.connect() as connection:
+            run_count = connection.execute(
+                """SELECT CASE WHEN ? IS NOT NULL THEN
+                          (SELECT COUNT(*) FROM tasks t2 WHERE t2.profile_id=?
+                            AND (t2.created_at<? OR (t2.created_at=? AND t2.task_id<=?)))
+                        ELSE
+                          (SELECT COUNT(*) FROM tasks t2 WHERE t2.profile_id IS NULL AND t2.source_file_id=?
+                            AND t2.catalog_version_id=? AND t2.config_sha256=?
+                            AND (t2.created_at<? OR (t2.created_at=? AND t2.task_id<=?)))
+                        END""",
+                (
+                    task.get("profile_id"), task.get("profile_id"),
+                    task.get("created_at"), task.get("created_at"), task_id,
+                    task.get("source_file_id"), task.get("catalog_version_id"), task.get("config_sha256"),
+                    task.get("created_at"), task.get("created_at"), task_id,
+                ),
+            ).fetchone()[0]
+        task["run_number"] = int(run_count or 1)
         return self._with_scheme_name(self._with_actor_fields(task, actor_row))
 
     def list_tasks(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
             rows = connection.execute(
-                """SELECT t.*, a.created_by AS actor_created_by, a.started_by AS actor_started_by
+                """SELECT t.*, a.created_by AS actor_created_by, a.started_by AS actor_started_by,
+(CASE WHEN t.profile_id IS NOT NULL THEN
+                          (SELECT COUNT(*) FROM tasks t2
+                            WHERE t2.profile_id=t.profile_id
+                              AND (t2.created_at<t.created_at OR (t2.created_at=t.created_at AND t2.task_id<=t.task_id)))
+                        ELSE
+                          (SELECT COUNT(*) FROM tasks t2
+                            WHERE t2.profile_id IS NULL AND t2.source_file_id=t.source_file_id
+                              AND t2.catalog_version_id=t.catalog_version_id AND t2.config_sha256=t.config_sha256
+                              AND (t2.created_at<t.created_at OR (t2.created_at=t.created_at AND t2.task_id<=t.task_id)))
+                        END) AS run_number
                    FROM tasks t LEFT JOIN task_actors a ON a.task_id=t.task_id
                    ORDER BY t.created_at DESC"""
             ).fetchall()
@@ -358,5 +431,92 @@ class TaskService:
             item = self.repo.decode(row, ("config_snapshot",)) or {}
             item["created_by"] = item.pop("actor_created_by", None)
             item["started_by"] = item.pop("actor_started_by", None)
+            item["run_number"] = int(item.get("run_number") or 1)
             result.append(self._with_scheme_name(item))
         return result
+
+    def review_history(self) -> list[dict[str, object]]:
+        """STEP3 history summary: one aggregate query, business scheme names, stable ordinals.
+
+        Returns every completed calculation that can be opened in the review workbench,
+        newest first. Per-task counts come from a single GROUP BY over the covering
+        match_items index (no per-task summary round-trips); "第 N 次计算" ordinals are
+        derived per scheme from the immutable start time so the numbering never jumps
+        between refreshes. Tasks whose business scheme cannot be recovered keep
+        sequence=None and the UI labels them "历史计算" instead of a fake ordinal.
+        """
+        with self.repo.connect() as connection:
+            rows = connection.execute(
+                """SELECT t.task_id,t.config_snapshot,t.profile_id,t.stage,t.status,t.total_rows,
+                          t.created_at,t.started_at,t.finished_at,t.result_file_id,
+                          COALESCE(SUM(CASE WHEN m.current_status='MATCHED' THEN 1 ELSE 0 END),0) AS matched_count,
+                          COALESCE(SUM(CASE WHEN m.current_status='REVIEW' THEN 1 ELSE 0 END),0) AS review_count,
+                          COALESCE(SUM(CASE WHEN m.current_status='CONFIRMED' THEN 1 ELSE 0 END),0) AS confirmed_count,
+                          COALESCE(SUM(CASE WHEN m.current_status='UNMATCHED' THEN 1 ELSE 0 END),0) AS unmatched_count
+                   FROM tasks t
+                   LEFT JOIN match_items m ON m.task_id=t.task_id
+                   WHERE t.status='COMPLETED' AND t.stage IN ('REVIEW','RESULT')
+                   GROUP BY t.task_id
+                   ORDER BY COALESCE(t.started_at,t.created_at) DESC,t.task_id DESC"""
+            ).fetchall()
+        items: list[dict[str, object]] = []
+        missing_profile_ids: set[str] = set()
+        for row in rows:
+            decoded = self.repo.decode(row, ("config_snapshot",)) or {}
+            snapshot = decoded.get("config_snapshot")
+            scheme_name = self._snapshot_scheme_name(snapshot)
+            profile_id = str(row["profile_id"]) if row["profile_id"] else None
+            if scheme_name is None and profile_id:
+                missing_profile_ids.add(profile_id)
+            items.append(
+                {
+                    "task_id": str(row["task_id"]),
+                    "scheme_name": scheme_name or "",
+                    "profile_id": profile_id,
+                    "stage": str(row["stage"]),
+                    "status": str(row["status"]),
+                    "result_file_id": str(row["result_file_id"]) if row["result_file_id"] else None,
+                    "started_at": str(row["started_at"]) if row["started_at"] else None,
+                    "finished_at": str(row["finished_at"]) if row["finished_at"] else None,
+                    "created_at": str(row["created_at"]),
+                    "total": int(row["total_rows"] or 0),
+                    "matched": int(row["matched_count"] or 0),
+                    "review": int(row["review_count"] or 0),
+                    "confirmed": int(row["confirmed_count"] or 0),
+                    "unmatched": int(row["unmatched_count"] or 0),
+                }
+            )
+        profile_names: dict[str, str] = {}
+        if missing_profile_ids:
+            with self.repo.connect() as connection:
+                placeholders = ",".join("?" * len(missing_profile_ids))
+                for profile_row in connection.execute(
+                    f"SELECT profile_id,name FROM profiles WHERE profile_id IN ({placeholders})",
+                    tuple(sorted(missing_profile_ids)),
+                ).fetchall():
+                    name = str(profile_row["name"] or "").strip()
+                    if name:
+                        profile_names[str(profile_row["profile_id"])] = name
+        for item in items:
+            scheme_name = str(item["scheme_name"])
+            if not scheme_name:
+                profile_id = item["profile_id"]
+                scheme_name = profile_names.get(str(profile_id)) if profile_id else None
+                if not scheme_name:
+                    scheme_name = UNNAMED_SCHEME
+            item["scheme_name"] = scheme_name
+            item.pop("profile_id", None)
+        groups: dict[str, list[dict[str, object]]] = {}
+        for item in sorted(items, key=lambda entry: (str(entry["started_at"] or entry["created_at"]), str(entry["task_id"]))):
+            if str(item["scheme_name"]) != UNNAMED_SCHEME:
+                groups.setdefault(str(item["scheme_name"]), []).append(item)
+        for scheme_group in groups.values():
+            for ordinal, item in enumerate(scheme_group, start=1):
+                item["sequence"] = ordinal
+        for item in items:
+            item.setdefault("sequence", None)
+            item["sequence_total"] = len(groups[str(item["scheme_name"])]) if str(item["scheme_name"]) in groups else None
+            total = int(item["total"] or 0)
+            if total <= 0:
+                item["total"] = int(item["matched"]) + int(item["review"]) + int(item["confirmed"]) + int(item["unmatched"])
+        return items
