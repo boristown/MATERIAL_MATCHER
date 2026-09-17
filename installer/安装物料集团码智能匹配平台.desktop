@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=安装物料集团码智能匹配平台
+Comment=打开物料集团码智能匹配平台安装向导
+Exec=bash -c 'DIR="$(dirname "$1")"; cd "$DIR" && exec "$DIR/启动安装.sh"' _ %k
+Terminal=false
+Icon=system-software-install
+Categories=System;Utility;
+StartupNotify=true
