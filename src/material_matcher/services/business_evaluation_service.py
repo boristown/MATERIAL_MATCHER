@@ -177,7 +177,6 @@ class BusinessEvaluationService:
             raise DomainError("TASK_STATE_CONFLICT", "只有计算完成的任务才能进行准确率验收", status_code=409)
 
         configured_top_n = self._configured_top_n(task)
-        # Keep stable production metrics even when a task retained fewer candidates.
         recall_ks = [1, 3, 5, 10]
         truth = self._truth(truth_file_id, key_column, expected_group_code_column, expected_result_column)
         items = self._task_items(task_id, key_mode, list(truth))
@@ -237,12 +236,15 @@ class BusinessEvaluationService:
                     no_match_false_positive += 1
 
             final_correct += int(final_ok)
-            if current_status == "MATCHED":
+            # These three rates describe the model/global-decision workload before
+            # manual review. Preserve the original status even after reviewers
+            # confirm/reject rows so acceptance cannot improve merely by doing work.
+            if original_status == "MATCHED":
                 automatic_rows += 1
                 automatic_correct += int(is_positive and top1 == expected)
-            if current_status == "REVIEW":
+            if original_status == "REVIEW":
                 review_rows += 1
-            if current_status == "UNMATCHED":
+            if original_status == "UNMATCHED":
                 unmatched_rows += 1
             if current_status in {"MATCHED", "CONFIRMED", "UNMATCHED"}:
                 resolved_rows += 1
