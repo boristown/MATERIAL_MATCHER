@@ -1,0 +1,38 @@
+{
+ "task_id": "bd8823b4df48487ca1e79bd4cc51678e",
+ "mode": "preview",
+ "success_threshold": 76.0,
+ "review_threshold": 55.0,
+ "before": {
+  "matched": 139,
+  "review": 516,
+  "unmatched": 345,
+  "confirmed": 0
+ },
+ "after": {
+  "matched": 531,
+  "review": 463,
+  "unmatched": 6,
+  "confirmed": 0
+ },
+ "matched_delta": 392,
+ "review_delta": -53,
+ "unmatched_delta": -339,
+ "affected_rows": 731,
+ "transitions": {
+  "MATCHED->MATCHED": 139,
+  "REVIEW->MATCHED": 392,
+  "REVIEW->REVIEW": 124,
+  "UNMATCHED->REVIEW": 339,
+  "UNMATCHED->UNMATCHED": 6
+ },
+ "human_protected": 0,
+ "critical_conflict_protected": 0,
+ "ambiguity_protected": 0,
+ "summary": {
+  "automatic_matched": 531,
+  "pending_review": 463,
+  "unmatched": 6,
+  "confirmed": 0
+ }
+}

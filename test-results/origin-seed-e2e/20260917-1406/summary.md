@@ -31,3 +31,23 @@
 ## 文件
 
 environment.json / data_inspection.json / dry_run.json / workbench_summary.json / automatic_evaluation.json / row_results.csv(1000 行全量,含 Top1-Top5 与真值对照)/ review_queue.csv(516)/ unmatched_queue.csv(345)/ auto_matched_sample.csv(139)/ operation_log.csv(人工阶段待补)/ metrics_auto_stage.json / top5.jsonl / run.log / manifest.json(种子清单复制)/ acceptance_truth_from_ground_truth.csv(ground_truth Y/N→MATCH/NO_MATCH 无损格式映射,原真值未改)。
+
+---
+
+## 阶段二:决策阈值重判(2026-09-17 14:33,admin,decision-revision #1,可回滚)
+
+按用户指令将自动匹配率调至过半。先离线试算(结果与系统 preview 完全一致),再经业务 API
+`re-decide preview→apply`(88/72 → **76/55**),系统写入 REDECIDE_THRESHOLDS 审计事件,revision #1 由 admin 创建。
+
+| 指标 | 阶段一(88/72) | 阶段二(76/55) |
+| --- | --- | --- |
+| 自动匹配 | 139(13.9%) | **531(53.1%)** |
+| 自动精确率 | 100% | **98.49%(523/531)** |
+| 自动误匹配 | 0 | **8**(全部为 N 样本,分数恰为 77.71,Top1=HTWZ010000233825ZS0004747,清单见 false_auto_reject_list.csv) |
+| 待人工核对 | 516 | 463(Y 377 / N 86) |
+| 自动判定未匹配 | 345(含 Y 漏匹配 253) | 6(全部 N,风险解除) |
+
+已知代价与边界:77.71 与相邻 Y 分数(76.02/76.29)交叠,任何 >50% 的自动率在真值语义下都必然吃掉这 8 条 N;
+该 8 条已在导出清单中列明,人工核对时应在工作台"自动匹配"筛选下改判为"均不匹配"。
+新增文件:redecide_preview_76_55.json / redecide_apply_76_55.json / evaluation_after_redecide.json /
+false_auto_reject_list.csv / row_results.csv(76/55 口径,阶段一原件保留为 *_stage1_88_72.csv)。
