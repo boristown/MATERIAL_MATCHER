@@ -28,7 +28,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.shell { display: flex; min-height: 100vh; }
+.shell { display: flex; min-height: 100vh; min-height: 100dvh; }
 
 aside {
   width: 224px;
@@ -291,3 +291,50 @@ code { word-break: break-all; background: #f1f5f9; padding: 1px 6px; border-radi
 .row-link:hover { text-decoration: underline; }
 .row-sub { font-size: 11px; color: #9aa5b8; margin-top: 2px; }
 @media (max-width: 1100px) { .hero { flex-direction: column; align-items: stretch; } .hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ===== 手机端适配（≤760px）：仅新增覆盖，桌面规则保持原样 ===== */
+@media (max-width: 760px) {
+  .shell { display: block; }
+  aside {
+    position: static;
+    inset: auto;
+    width: auto;
+    padding: 10px 12px 12px;
+  }
+  .brand { padding: 2px 4px 12px; }
+  .brand-mark, .brand-logo { width: 34px; height: 34px; }
+  .step-nav { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; scrollbar-width: none; }
+  .step-nav::-webkit-scrollbar { display: none; }
+  .step-nav::before { display: none; }
+  .step-nav button { width: auto; flex: 0 0 auto; align-items: center; padding: 8px 10px; margin: 0; }
+  .step-nav .nav-desc { display: none; }
+  .support-nav { display: flex; flex-direction: row; gap: 6px; margin-top: 10px; overflow-x: auto; scrollbar-width: none; }
+  .support-nav::-webkit-scrollbar { display: none; }
+  .support-nav button { width: auto; flex: 0 0 auto; padding: 8px 12px; margin: 0; }
+  .side-divider, .side-foot { display: none; }
+  main { margin-left: 0; }
+  header { padding: 0 14px; }
+  header b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .content { padding: 14px 14px 36px; }
+  .toolbar { flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+  .toolbar-actions { justify-content: flex-start; flex-wrap: wrap; width: 100%; }
+  .panel { padding: 16px 14px; }
+  .uploads { grid-template-columns: 1fr; gap: 12px; }
+  .scope-config .el-select { width: 100%; }
+  .content .el-input, .content .el-select, .content .el-slider, .content .el-input-number { max-width: 100%; }
+  .actions { flex-wrap: wrap; justify-content: stretch; }
+  .actions .el-button { flex: 1 1 auto; margin-left: 0; }
+  .actions .el-button + .el-button { margin-left: 0; }
+  .stats { gap: 8px; }
+  .stats b, .stats span { flex: 1 1 auto; text-align: center; }
+  .hero { padding: 18px 16px; gap: 18px; }
+  .hero-grid { grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .hero-ring { align-self: center; }
+  .hero.idle { flex-direction: column; align-items: stretch; gap: 12px; }
+  .idle-icon { width: 52px; height: 52px; font-size: 24px; }
+  .stage-steps .el-step__title { font-size: 11px; padding: 0 2px; }
+  .mapping-canvas { gap: 48px; }
+  .el-overlay-dialog .el-dialog { max-width: calc(100vw - 20px); }
+  .el-message-box { max-width: calc(100vw - 32px); }
+  .el-drawer { max-width: 100vw; }
+}

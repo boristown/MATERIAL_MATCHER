@@ -1,28 +1,29 @@
 {
-  "name": "material-matcher-web",
   "private": true,
   "version": "0.4.0",
   "type": "module",
+  "name": "material-matcher-web",
   "scripts": {
+    "test:login-brand": "node scripts/test-login-brand.mjs",
+    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && npm run test:business-name-contract && npm run test:login-brand && npm run test:mobile-responsive && vue-tsc -b && vite build",
+    "test:step-naming": "node scripts/test-step-naming.mjs",
     "test:browser-guard": "node scripts/test-browser-check.mjs",
+    "test:mobile-responsive": "node scripts/test-mobile-responsive.mjs",
     "test:review-contract": "node scripts/test-review-contract.mjs",
     "test:synonym-contract": "node scripts/test-synonym-contract.mjs",
-    "test:step-naming": "node scripts/test-step-naming.mjs",
     "test:review-history-contract": "node scripts/test-review-history-contract.mjs",
-    "test:business-name-contract": "node scripts/test-business-name-contract.mjs",
-    "test:login-brand": "node scripts/test-login-brand.mjs",
-    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && npm run test:business-name-contract && npm run test:login-brand && vue-tsc -b && vite build"
-  },
-  "dependencies": {
-    "axios": "^1.7.9",
-    "element-plus": "^2.8.8",
-    "vue": "^3.5.13",
-    "vue-router": "^4.5.0"
+    "test:business-name-contract": "node scripts/test-business-name-contract.mjs"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.1",
+    "@vitejs/plugin-vue": "^5.2.1",
     "vue-tsc": "^2.2.0"
+  },
+  "dependencies": {
+    "vue-router": "^4.5.0",
+    "element-plus": "^2.8.8",
+    "vue": "^3.5.13",
+    "axios": "^1.7.9"
   }
 }
