@@ -1,0 +1,30 @@
+services:
+  material-matcher:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        NODE_BASE_IMAGE: ${MM_NODE_BASE_IMAGE:-node:20-bookworm-slim}
+        PYTHON_BASE_IMAGE: ${MM_PYTHON_BASE_IMAGE:-python:3.11-slim}
+    image: ${MM_IMAGE_NAME:-material-matcher-source}:${MM_IMAGE_TAG:-local}
+    restart: unless-stopped
+    ports:
+      - "${MM_PORT:-18080}:18080"
+    environment:
+      MATERIAL_MATCHER_DATA_DIR: /data
+      MATERIAL_MATCHER_CONFIG_DIR: /config
+      MATERIAL_MATCHER_LOG_DIR: /logs
+      MATERIAL_MATCHER_ADMIN_PASSWORD: ${MM_ADMIN_PASSWORD:?请先在 .env 中设置 MM_ADMIN_PASSWORD}
+      MATERIAL_MATCHER_WEB_DIST_DIR: /app/web-dist
+      MATERIAL_MATCHER_DEPLOYMENT_MODE: docker-source
+      MATERIAL_MATCHER_GIT_COMMIT: ${MM_GIT_COMMIT:-}
+      MATERIAL_MATCHER_BUILD_TIME: ${MM_BUILD_TIME:-}
+    volumes:
+      # 应用源码在宿主机直接可见；修改 Python 后重启容器即可加载。
+      - ../src:/app/src:ro
+      - ../pyproject.toml:/app/pyproject.toml:ro
+      - ../web:/app/web-source:ro
+      # 数据、配置、日志全部使用明确的宿主机 bind mount，禁止匿名数据库 volume。
+      - ${MM_DATA_DIR:-./data}:/data
+      - ${MM_CONFIG_DIR:-./config}:/config
+      - ${MM_LOG_DIR:-./logs}:/logs
