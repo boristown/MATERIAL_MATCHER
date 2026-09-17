@@ -1,0 +1,3 @@
+Sep 17 20:21:43 erphost material-matcher[3797852]: INFO:     223.160.130.202:0 - "GET /api/tasks/3ddc8bd4dc644e72a1cfb59781c0389a/workbench/items?status=REVIEW&page=1&page_size=50&include_candidates=5 HTTP/1.1" 200 OK
+Sep 17 20:21:46 erphost material-matcher[3797852]: INFO:     127.0.0.1:62528 - "GET /api/health HTTP/1.1" 200 OK
+Sep 17 20:21:46 erphost material-matcher[3797852]: INFO:     183.241.165.198:0 - "GET /api/health HTTP/1.1" 200 OK
