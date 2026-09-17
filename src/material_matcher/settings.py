@@ -54,6 +54,9 @@ class Settings:
     acceptance_min_top1_accuracy: float | None = None
     acceptance_min_final_accuracy: float | None = None
     acceptance_max_review_rate: float | None = None
+    acceptance_min_candidate_recall_at_5: float | None = None
+    acceptance_min_automatic_precision: float | None = None
+    acceptance_max_no_match_false_positive_rate: float | None = None
     acceptance_max_scale_hours: float | None = None
 
     @property
@@ -76,6 +79,9 @@ class Settings:
             "min_top1_accuracy": self.acceptance_min_top1_accuracy,
             "min_final_accuracy": self.acceptance_min_final_accuracy,
             "max_review_rate": self.acceptance_max_review_rate,
+            "min_candidate_recall_at_5": self.acceptance_min_candidate_recall_at_5,
+            "min_automatic_precision": self.acceptance_min_automatic_precision,
+            "max_no_match_false_positive_rate": self.acceptance_max_no_match_false_positive_rate,
             "max_scale_hours": self.acceptance_max_scale_hours,
         }
 
@@ -107,6 +113,9 @@ class Settings:
             acceptance_min_top1_accuracy=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_TOP1_ACCURACY"),
             acceptance_min_final_accuracy=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_FINAL_ACCURACY"),
             acceptance_max_review_rate=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MAX_REVIEW_RATE"),
+            acceptance_min_candidate_recall_at_5=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_CANDIDATE_RECALL_AT_5"),
+            acceptance_min_automatic_precision=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MIN_AUTOMATIC_PRECISION"),
+            acceptance_max_no_match_false_positive_rate=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MAX_NO_MATCH_FALSE_POSITIVE_RATE"),
             acceptance_max_scale_hours=_optional_float("MATERIAL_MATCHER_ACCEPTANCE_MAX_SCALE_HOURS"),
         )
 
