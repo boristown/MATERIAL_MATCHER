@@ -239,13 +239,19 @@ export async function previewReDecision(taskId: string, successThreshold: number
 
 /**
  * STEP3 business UI intentionally exposes one threshold only. The legacy
- * re-decide API still requires review_threshold, so the adapter pins it to 0:
- * positive-score rows below the automatic threshold stay in REVIEW while
- * zero-score/no-usable-candidate rows may remain UNMATCHED. Historical dual-
- * threshold callers keep using previewReDecision unchanged.
+ * re-decide API still requires review_threshold, so the adapter pins it to 0
+ * and opts into inclusive success semantics: score >= the visible threshold
+ * is MATCHED, positive-score rows below it stay in REVIEW, and zero-score/no-
+ * usable-candidate rows may remain UNMATCHED. Historical callers keep the
+ * legacy dual-threshold behavior because single_threshold defaults to false.
  */
 export async function reDecideSingleThreshold(taskId: string, successThreshold: number, mode: 'preview' | 'apply'): Promise<any> {
-  return previewReDecision(taskId, successThreshold, STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR, mode)
+  return (await api.post(`/tasks/${taskId}/re-decide`, {
+    success_threshold: successThreshold,
+    review_threshold: STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR,
+    single_threshold: true,
+    mode,
+  })).data ?? {}
 }
 
 export function downloadManualWorkbook(taskId: string): void {
