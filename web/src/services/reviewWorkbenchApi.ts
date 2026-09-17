@@ -31,6 +31,14 @@ function errorStatus(error: any): number {
   return Number(error?.status ?? error?.response?.status ?? 0)
 }
 
+function errorCode(error: any): string {
+  return String(error?.code ?? error?.response?.data?.error?.code ?? '')
+}
+
+function errorMessage(error: any): string {
+  return String(error?.message ?? error?.response?.data?.error?.message ?? '操作失败')
+}
+
 function toNumber(value: unknown): number {
   const number = Number(value ?? 0)
   return Number.isFinite(number) ? number : 0
@@ -83,6 +91,48 @@ function normalizeBatchResult(data: any): ReviewBatchResult {
   }
 }
 
+async function runExplicitRowFallback(taskId: string, action: ReviewBatchAction, sourceRowIds: string[]): Promise<ReviewBatchResult> {
+  const details: ReviewBatchResult['details'] = []
+  let successCount = 0
+  let conflictCount = 0
+  const endpoint = action === 'cancel_manual_match' ? 'cancel-match' : 'cancel'
+
+  for (let offset = 0; offset < sourceRowIds.length; offset += 10) {
+    const chunk = sourceRowIds.slice(offset, offset + 10)
+    const results = await Promise.all(chunk.map(async sourceRowId => {
+      try {
+        await api.post(`/tasks/${taskId}/items/${sourceRowId}/${endpoint}`, { comment: '' })
+        return { ok: true, sourceRowId }
+      } catch (error) {
+        return { ok: false, sourceRowId, error }
+      }
+    }))
+    for (const result of results) {
+      if (result.ok) {
+        successCount += 1
+        continue
+      }
+      const code = errorCode(result.error)
+      const isConflict = errorStatus(result.error) === 409 || code.includes('CONFLICT')
+      if (isConflict) conflictCount += 1
+      details.push({
+        source_row_id: result.sourceRowId,
+        type: isConflict ? 'conflict' : 'error',
+        code,
+        message: errorMessage(result.error),
+      })
+    }
+  }
+
+  return {
+    success_count: successCount,
+    failed_count: details.length,
+    conflict_count: conflictCount,
+    details,
+    raw: { success_count: successCount, details },
+  }
+}
+
 async function postFutureBatch(taskId: string, action: ReviewBatchAction, selection: ReviewSelection): Promise<ReviewBatchResult | null> {
   try {
     const response = await api.post(`/tasks/${taskId}/workbench/batch`, { action, selection })
@@ -94,19 +144,22 @@ async function postFutureBatch(taskId: string, action: ReviewBatchAction, select
 }
 
 export async function runReviewBatch(taskId: string, action: ReviewBatchAction, selection: ReviewSelection): Promise<ReviewBatchResult> {
+  if (selection.mode === 'explicit') {
+    if (action === 'confirm_top1') {
+      const response = await api.post(`/tasks/${taskId}/workbench/batch-confirm-top1`, { source_row_ids: selection.source_row_ids })
+      return normalizeBatchResult(response.data ?? {})
+    }
+    if (action === 'mark_unmatched') {
+      const response = await api.post(`/tasks/${taskId}/workbench/batch-reject`, { source_row_ids: selection.source_row_ids })
+      return normalizeBatchResult(response.data ?? {})
+    }
+    return runExplicitRowFallback(taskId, action, selection.source_row_ids)
+  }
+
   const future = await postFutureBatch(taskId, action, selection)
   if (future) return future
 
-  if (selection.mode === 'explicit' && action === 'confirm_top1') {
-    const response = await api.post(`/tasks/${taskId}/workbench/batch-confirm-top1`, { source_row_ids: selection.source_row_ids })
-    return normalizeBatchResult(response.data ?? {})
-  }
-  if (selection.mode === 'explicit' && action === 'mark_unmatched') {
-    const response = await api.post(`/tasks/${taskId}/workbench/batch-reject`, { source_row_ids: selection.source_row_ids })
-    return normalizeBatchResult(response.data ?? {})
-  }
-
-  const error = new Error('当前后端尚未合并大批量 selection contract；请先合并万级人工匹配后端 PR。') as Error & { code?: string }
+  const error = new Error('当前后端尚未合并“按当前筛选批量处理”的 selection contract；本页显式选择仍可正常批量操作。') as Error & { code?: string }
   error.code = 'REVIEW_BATCH_API_PENDING'
   throw error
 }
