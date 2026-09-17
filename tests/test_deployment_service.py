@@ -22,7 +22,7 @@ def _settings(tmp_path: Path) -> Settings:
     data = tmp_path / "data"
     config = tmp_path / "etc"
     log = tmp_path / "log"
-    dist = tmp_path / "release/web/dist"
+    dist = tmp_path / "release/web-dist"
     for path in (data / "tmp", config, log, dist):
         path.mkdir(parents=True, exist_ok=True)
     (dist / "index.html").write_text("<html>ok</html>", encoding="utf-8")
@@ -36,6 +36,8 @@ def _settings(tmp_path: Path) -> Settings:
                 "python_version": platform.python_version(),
                 "source_tree_sha256": "a" * 64,
                 "web_tree_sha256": "b" * 64,
+                "source_path": "source/src",
+                "web_dist_path": "web-dist",
             }
         ),
         encoding="utf-8",
@@ -66,7 +68,7 @@ def test_deployment_diagnostics_accepts_matching_release_and_frontend(tmp_path: 
 
 def test_deployment_diagnostics_rejects_required_embedding_and_version_mismatch(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    release_manifest = settings.web_dist_dir.parent.parent / "release-manifest.json"
+    release_manifest = settings.web_dist_dir.parent / "release-manifest.json"
     payload = json.loads(release_manifest.read_text(encoding="utf-8"))
     payload["release_version"] = "9.9.9"
     release_manifest.write_text(json.dumps(payload), encoding="utf-8")
