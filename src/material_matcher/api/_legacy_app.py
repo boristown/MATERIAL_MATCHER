@@ -68,7 +68,9 @@ class UserPasswordReset(BaseModel):
 
 
 class DraftCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
+    # Legacy field. Drafts have no business name any more; if an old client still
+    # sends one it is accepted for compatibility and ignored server-side.
+    name: str | None = Field(default=None, max_length=120)
 
 
 class DraftPatch(BaseModel):
@@ -448,7 +450,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def rollback_profile(profile_id: str, version_no: int) -> dict[str, object]: return profiles.rollback(profile_id, version_no)
 
     @app.post("/api/task-drafts")
-    def create_draft(payload: DraftCreate) -> dict[str, object]: return tasks.create_draft(payload.name)
+    def create_draft(payload: DraftCreate) -> dict[str, object]: return tasks.create_draft()
     @app.get("/api/task-drafts")
     def list_drafts() -> list[dict[str, object]]: return tasks.list_drafts()
     @app.get("/api/task-drafts/{draft_id}")
@@ -548,11 +550,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/tasks/{task_id}/manual-review.xlsx")
     def download_manual_review(task_id: str) -> Response:
+        from urllib.parse import quote
+        from datetime import datetime as _dt
+
+        from material_matcher.services.task_service import safe_business_filename
+
+        task = tasks.get_task(task_id)
+        stamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+        download_name = f"人工匹配_{safe_business_filename(str(task.get('scheme_name') or ''))}_{stamp}.xlsx"
         workbook = manual_reviews.export_workbook(task_id)
         return Response(
             content=workbook.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="manual_review_{task_id}.xlsx"'},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(download_name)}"},
         )
 
     @app.post("/api/tasks/{task_id}/manual-review/import")

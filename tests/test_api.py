@@ -68,7 +68,9 @@ def test_task_workspace_draft_survives_relogin_with_full_step1_state(authed: Tes
         'config_document':document,
     })
     assert saved.status_code==200
-    assert saved.json()['name']=='可恢复任务'
+    # “任务名称” has been removed as a business concept: legacy name payloads are
+    # accepted and ignored; the draft keeps its system-generated internal name.
+    assert saved.json()['name']==draft['name'] and str(draft['name']).startswith('run-')
     assert saved.json()['config_document']==document
 
     assert authed.post('/api/auth/logout').status_code==200
