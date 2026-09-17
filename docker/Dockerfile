@@ -20,7 +20,8 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-RUN python -m pip install --no-cache-dir .
+# Docker Source must carry the same semantic-matching runtime extras as Native Source.
+RUN python -m pip install --no-cache-dir '.[embedding]'
 COPY --from=web-builder /build/web/dist/ ./web-dist/
 
 EXPOSE 18080
