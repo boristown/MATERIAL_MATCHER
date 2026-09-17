@@ -6,6 +6,7 @@ import tomllib
 from fastapi.testclient import TestClient
 
 from material_matcher import __version__
+from material_matcher.api.frontend import attach_frontend
 
 
 def test_pyproject_is_runtime_version_source() -> None:
@@ -18,11 +19,14 @@ def test_pyproject_is_runtime_version_source() -> None:
     assert "get_version" in init_text
 
 
-def test_health_and_about_report_runtime_version(authed: TestClient, monkeypatch) -> None:
+def test_health_and_about_report_runtime_version(authed: TestClient, monkeypatch, tmp_path: Path) -> None:
     health = authed.get("/api/health")
     assert health.status_code == 200
     assert health.json()["version"] == __version__
 
+    # Production serve attaches frontend routes before uvicorn starts; mirror that
+    # registration here without requiring a real built dist.
+    attach_frontend(authed.app, tmp_path / "missing-web-dist")
     monkeypatch.setenv("MATERIAL_MATCHER_BUILD_TIME", "2026-09-17T06:00:00+00:00")
     monkeypatch.setenv("MATERIAL_MATCHER_GIT_COMMIT", "abcdef123456")
     monkeypatch.setenv("MATERIAL_MATCHER_DEPLOYMENT_MODE", "docker-source")
