@@ -68,14 +68,22 @@ class DecisionCalibrationService:
         return DecisionCalibrationService._counts_from_rows(rows)
 
     @staticmethod
-    def _transition_rows(connection: Any, task_id: str, success: float, review: float) -> list[Any]:
+    def _transition_rows(
+        connection: Any,
+        task_id: str,
+        success: float,
+        review: float,
+        *,
+        inclusive_success: bool = False,
+    ) -> list[Any]:
+        success_operator = ">=" if inclusive_success else ">"
         return connection.execute(
-            """
+            f"""
             WITH thresholds(success_threshold,review_threshold) AS (VALUES(?,?)),
             classified AS (
               SELECT m.current_status AS old_status,
                      CASE
-                       WHEN m.top1_score > t.success_threshold
+                       WHEN m.top1_score {success_operator} t.success_threshold
                             AND m.critical_conflict=0
                             AND NOT EXISTS(
                               SELECT 1 FROM match_candidates c2
@@ -101,9 +109,22 @@ class DecisionCalibrationService:
         ).fetchall()
 
     @staticmethod
-    def _preview_from_connection(connection: Any, task_id: str, success: float, review: float) -> dict[str, object]:
+    def _preview_from_connection(
+        connection: Any,
+        task_id: str,
+        success: float,
+        review: float,
+        *,
+        inclusive_success: bool = False,
+    ) -> dict[str, object]:
         before = DecisionCalibrationService._full_counts(connection, task_id)
-        transitions_raw = DecisionCalibrationService._transition_rows(connection, task_id, success, review)
+        transitions_raw = DecisionCalibrationService._transition_rows(
+            connection,
+            task_id,
+            success,
+            review,
+            inclusive_success=inclusive_success,
+        )
         after = dict(before)
         transitions: dict[str, int] = {}
         affected = 0
@@ -126,18 +147,19 @@ class DecisionCalibrationService:
                )""",
             (task_id,),
         ).fetchone()[0])
+        success_operator = ">=" if inclusive_success else ">"
         critical_protected = int(connection.execute(
-            """SELECT COUNT(*) FROM match_items m
+            f"""SELECT COUNT(*) FROM match_items m
                WHERE m.task_id=? AND m.current_status IN ('MATCHED','REVIEW','UNMATCHED')
                  AND NOT EXISTS(SELECT 1 FROM reviews r WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id)
-                 AND m.top1_score>? AND m.critical_conflict=1""",
+                 AND m.top1_score{success_operator}? AND m.critical_conflict=1""",
             (task_id, success),
         ).fetchone()[0])
         ambiguity_protected = int(connection.execute(
-            """SELECT COUNT(*) FROM match_items m
+            f"""SELECT COUNT(*) FROM match_items m
                WHERE m.task_id=? AND m.current_status IN ('MATCHED','REVIEW','UNMATCHED')
                  AND NOT EXISTS(SELECT 1 FROM reviews r WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id)
-                 AND m.top1_score>?
+                 AND m.top1_score{success_operator}?
                  AND EXISTS(
                    SELECT 1 FROM match_candidates c2
                    WHERE c2.task_id=m.task_id AND c2.source_row_id=m.source_row_id AND c2.rank=2
@@ -151,6 +173,7 @@ class DecisionCalibrationService:
             "mode": "preview",
             "success_threshold": success,
             "review_threshold": review,
+            "single_threshold": inclusive_success,
             "before": before,
             "after": after,
             "matched_delta": after["matched"] - before["matched"],
@@ -163,11 +186,24 @@ class DecisionCalibrationService:
             "ambiguity_protected": ambiguity_protected,
         }
 
-    def preview(self, task_id: str, success_threshold: float, review_threshold: float) -> dict[str, object]:
+    def preview(
+        self,
+        task_id: str,
+        success_threshold: float,
+        review_threshold: float,
+        *,
+        inclusive_success: bool = False,
+    ) -> dict[str, object]:
         success, review = self._validate(success_threshold, review_threshold)
         with self.meta.connect() as connection:
             self._task(connection, task_id)
-            return self._preview_from_connection(connection, task_id, success, review)
+            return self._preview_from_connection(
+                connection,
+                task_id,
+                success,
+                review,
+                inclusive_success=inclusive_success,
+            )
 
     def batch_preview(self, task_id: str, scenarios: list[dict[str, float]]) -> dict[str, object]:
         if not scenarios:
@@ -295,20 +331,28 @@ class DecisionCalibrationService:
         *,
         operator: str = "system",
         rollback_of_revision: int | None = None,
+        inclusive_success: bool = False,
     ) -> dict[str, object]:
         success, review = self._validate(success_threshold, review_threshold)
+        success_operator = ">=" if inclusive_success else ">"
         now = _now()
         with self.meta.connect() as connection:
             task = self._task(connection, task_id)
-            preview = self._preview_from_connection(connection, task_id, success, review)
+            preview = self._preview_from_connection(
+                connection,
+                task_id,
+                success,
+                review,
+                inclusive_success=inclusive_success,
+            )
             previous_revision = self.current_revision_no(task_id, connection)
             self._ensure_result_snapshot(connection, task_id, task, previous_revision)
             revision_no = previous_revision + 1
             connection.execute(
-                """
+                f"""
                 UPDATE match_items
                 SET current_status = CASE
-                      WHEN top1_score>? AND critical_conflict=0
+                      WHEN top1_score{success_operator}? AND critical_conflict=0
                            AND NOT EXISTS(
                              SELECT 1 FROM match_candidates c2
                              WHERE c2.task_id=match_items.task_id AND c2.source_row_id=match_items.source_row_id AND c2.rank=2
@@ -319,7 +363,7 @@ class DecisionCalibrationService:
                       ELSE 'UNMATCHED'
                     END,
                     final_group_code = CASE
-                      WHEN top1_score>? AND critical_conflict=0
+                      WHEN top1_score{success_operator}? AND critical_conflict=0
                            AND NOT EXISTS(
                              SELECT 1 FROM match_candidates c2
                              WHERE c2.task_id=match_items.task_id AND c2.source_row_id=match_items.source_row_id AND c2.rank=2
@@ -371,6 +415,7 @@ class DecisionCalibrationService:
                         "revision_no": revision_no,
                         "success_threshold": success,
                         "review_threshold": review,
+                        "single_threshold": inclusive_success,
                         "operator": operator or "system",
                         "before": preview["before"],
                         "after": preview["after"],
@@ -390,11 +435,24 @@ class DecisionCalibrationService:
         mode: str = "apply",
         *,
         operator: str = "system",
+        single_threshold: bool = False,
     ) -> dict[str, object]:
+        effective_review = 0.0 if single_threshold else review_threshold
         if mode == "preview":
-            return self.preview(task_id, success_threshold, review_threshold)
+            return self.preview(
+                task_id,
+                success_threshold,
+                effective_review,
+                inclusive_success=single_threshold,
+            )
         if mode == "apply":
-            return self.apply(task_id, success_threshold, review_threshold, operator=operator)
+            return self.apply(
+                task_id,
+                success_threshold,
+                effective_review,
+                operator=operator,
+                inclusive_success=single_threshold,
+            )
         raise DomainError("INVALID_REDECIDE_MODE", "重判模式仅支持 preview 或 apply", status_code=422)
 
     def revisions(self, task_id: str) -> list[dict[str, object]]:
