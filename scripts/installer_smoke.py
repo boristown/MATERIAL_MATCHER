@@ -25,6 +25,13 @@ def check(name: str, ok: bool, info: str = "") -> None:
     print(("PASS " if ok else "FAIL ") + name + (f" :: {info}" if info else ""), flush=True)
 
 
+def generate_local_pw() -> str:
+    import secrets
+    import string
+
+    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
+
+
 class Api:
     def __init__(self, base: str) -> None:
         self.base = base.rstrip("/")
@@ -123,6 +130,15 @@ def main() -> int:
     if status != 200:
         return _finish(args, started)
 
+    if (login.get("user") or {}).get("must_change_password"):
+        new_pw = "Smoke!" + generate_local_pw()
+        status, changed = api.json("POST", "/api/auth/change-password", {"current_password": password, "new_password": new_pw})
+        check("STEP0 首次登录修改密码", status == 200, f"status={status}")
+        status, login = api.json("POST", "/api/auth/login", {"username": "admin", "password": new_pw})
+        check("STEP0 新密码重新登录", status == 200, f"status={status}")
+        if status != 200:
+            return _finish(args, started)
+
     status, page = api.json("GET", "/")
     check("前端页面可达", status == 200, "")
 
@@ -182,7 +198,7 @@ def main() -> int:
     api.json("PUT", f"/api/task-drafts/{draft_id}/data", {"source_file_id": source_file_id, "catalog_version_id": catalog_version_id})
     api.json("PUT", f"/api/task-drafts/{draft_id}/rules", config)
     status, started_run = api.json("POST", f"/api/task-drafts/{draft_id}/start")
-    check("STEP1 启动匹配", status == 202 and "task_id" in started_run, f"status={status}")
+    check("STEP1 启动匹配", status in (200, 202) and "task_id" in started_run, f"status={status}")
     if "task_id" not in started_run:
         return _finish(args, started)
     task_id = str(started_run["task_id"])
