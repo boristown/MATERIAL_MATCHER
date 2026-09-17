@@ -81,16 +81,55 @@ def _validate_tree_symlinks(root: Path) -> None:
 
 def _project_version(repo_root: Path) -> str:
     with (repo_root / "pyproject.toml").open("rb") as stream:
-        pyproject = tomllib.load(stream)
-    project_version = str(pyproject["project"]["version"])
-    init_text = (repo_root / "src/material_matcher/__init__.py").read_text(encoding="utf-8")
-    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', init_text, re.MULTILINE)
-    if not match:
-        raise ValueError("无法读取 material_matcher.__version__")
-    runtime_version = match.group(1)
-    if project_version != runtime_version:
-        raise ValueError(f"项目版本不一致：pyproject={project_version}, __version__={runtime_version}")
+        project_version = str(tomllib.load(stream)["project"]["version"])
+    if not RELEASE_VERSION_RE.fullmatch(project_version):
+        raise ValueError(f"pyproject.toml 中的项目版本不合法：{project_version!r}")
     return project_version
+
+
+def _git_commit(repo_root: Path) -> str:
+    configured = os.getenv("MATERIAL_MATCHER_GIT_COMMIT", "").strip()
+    if configured:
+        return configured
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+
+
+def _copy_source_tree(repo_root: Path, output_dir: Path) -> Path:
+    source_root = output_dir / "source"
+    source_root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        repo_root / "src" / "material_matcher",
+        source_root / "src" / "material_matcher",
+        symlinks=False,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
+    shutil.copytree(
+        repo_root / "web",
+        source_root / "web",
+        symlinks=False,
+        ignore=shutil.ignore_patterns("node_modules", "dist", ".vite", "*.map"),
+    )
+    for directory in ("scripts", "installer", "docker"):
+        candidate = repo_root / directory
+        if candidate.is_dir():
+            shutil.copytree(
+                candidate,
+                source_root / directory,
+                symlinks=False,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+    shutil.copy2(repo_root / "pyproject.toml", source_root / "pyproject.toml")
+    shutil.copy2(repo_root / "README.md", source_root / "README.md")
+    return source_root
 
 
 def _load_runtime_manifest(runtime_dir: Path) -> dict[str, object]:
@@ -110,22 +149,22 @@ def _load_runtime_manifest(runtime_dir: Path) -> dict[str, object]:
     return payload
 
 
-def _runtime_info(python: Path, app_dir: Path) -> dict[str, str]:
+def _runtime_info(python: Path, source_src_dir: Path) -> dict[str, str]:
     code = (
         "import json,platform; import material_matcher; "
         "print(json.dumps({'version': material_matcher.__version__, "
         "'arch': platform.machine(), 'python': platform.python_version()}))"
     )
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(app_dir) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONPATH"] = str(source_src_dir) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     result = subprocess.run([str(python), "-c", code], check=True, text=True, capture_output=True, env=env)
     return json.loads(result.stdout.strip())
 
 
-def _verify_imports(python: Path, app_dir: Path) -> None:
+def _verify_imports(python: Path, source_src_dir: Path) -> None:
     code = f"import {', '.join(REQUIRED_IMPORTS)}; import material_matcher"
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(app_dir) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env["PYTHONPATH"] = str(source_src_dir) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     subprocess.run([str(python), "-c", code], check=True, env=env)
 
 
@@ -134,17 +173,21 @@ def build_release(
     runtime_dir: Path,
     web_dist_dir: Path,
     output_dir: Path,
-    release_version: str,
+    release_version: str | None = None,
     target_arch: str | None = None,
+    git_commit: str | None = None,
+    build_time: str | None = None,
+    deployment_mode: str = "native-source",
     force: bool = False,
 ) -> Path:
-    if not RELEASE_VERSION_RE.fullmatch(release_version):
-        raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
-
     repo_root = Path(__file__).resolve().parents[1]
     project_version = _project_version(repo_root)
-    if release_version != project_version:
-        raise ValueError(f"release_version={release_version} 与项目版本 {project_version} 不一致")
+    if release_version is not None:
+        if not RELEASE_VERSION_RE.fullmatch(release_version):
+            raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
+        if release_version != project_version:
+            raise ValueError(f"release_version={release_version} 与项目版本 {project_version} 不一致")
+    effective_version = project_version
 
     runtime_dir = runtime_dir.resolve()
     web_dist_dir = web_dist_dir.resolve()
@@ -173,14 +216,12 @@ def build_release(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(runtime_dir, output_dir / "runtime", symlinks=True)
-    shutil.copytree(
-        repo_root / "src/material_matcher",
-        output_dir / "app/material_matcher",
-        symlinks=False,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
-    )
-    shutil.copytree(web_dist_dir, output_dir / "web/dist", symlinks=False)
+    source_root = _copy_source_tree(repo_root, output_dir)
+    shutil.copytree(web_dist_dir, output_dir / "web-dist", symlinks=False)
+    if (repo_root / "tools").is_dir():
+        shutil.copytree(repo_root / "tools", output_dir / "tools", symlinks=False)
 
+    source_src_dir = source_root / "src"
     python = output_dir / "runtime/bin/python3"
     launcher = output_dir / "runtime/bin/material-matcher"
     if not python.is_file() or not os.access(python, os.X_OK):
@@ -188,29 +229,49 @@ def build_release(
     if not launcher.is_file() or not os.access(launcher, os.X_OK):
         raise ValueError("自包含 runtime 缺少可执行 runtime/bin/material-matcher")
 
-    _verify_imports(python, output_dir / "app")
-    runtime_info = _runtime_info(python, output_dir / "app")
+    _verify_imports(python, source_src_dir)
+    runtime_info = _runtime_info(python, source_src_dir)
     runtime_arch = _normalize_arch(runtime_info["arch"])
     if runtime_arch != expected_arch:
         raise ValueError(f"runtime 实际架构 {runtime_arch} 与目标架构 {expected_arch} 不一致")
     if str(runtime_manifest.get("python_version") or "") != runtime_info["python"]:
         raise ValueError("Runtime 实际 Python 版本与 runtime manifest 不一致")
-    if runtime_info["version"] != release_version:
-        raise ValueError(f"release runtime 版本 {runtime_info['version']} 与 {release_version} 不一致")
+    if runtime_info["version"] != effective_version:
+        raise ValueError(f"release runtime 版本 {runtime_info['version']} 与 {effective_version} 不一致")
 
-    subprocess.run([str(launcher), "--help"], check=True, stdout=subprocess.DEVNULL, env={**os.environ, "PYTHONPATH": str(output_dir / "app")})
+    env = {**os.environ, "PYTHONPATH": str(source_src_dir)}
+    subprocess.run([str(launcher), "--help"], check=True, stdout=subprocess.DEVNULL, env=env)
+
+    created_at = build_time or datetime.now(timezone.utc).isoformat()
+    commit = git_commit if git_commit is not None else _git_commit(repo_root)
+    build_info = {
+        "product_name": "物料集团码智能匹配平台",
+        "version": effective_version,
+        "build_time": created_at,
+        "git_commit": commit,
+        "deployment_mode": deployment_mode,
+    }
+    (output_dir / "web-dist" / "build-info.json").write_text(
+        json.dumps(build_info, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     runtime_manifest_path = output_dir / "runtime" / RUNTIME_MANIFEST
     manifest = {
         "format_version": 1,
         "product": "MATERIAL_MATCHER_RELEASE",
-        "release_version": release_version,
+        "release_version": effective_version,
         "target_arch": expected_arch,
         "python_version": runtime_info["python"],
         "runtime_manifest_sha256": _sha256(runtime_manifest_path),
-        "source_tree_sha256": _tree_sha256(output_dir / "app"),
-        "web_tree_sha256": _tree_sha256(output_dir / "web/dist"),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_tree_sha256": _tree_sha256(source_root),
+        "web_tree_sha256": _tree_sha256(output_dir / "web-dist"),
+        "source_path": "source/src",
+        "web_dist_path": "web-dist",
+        "deployment_mode": deployment_mode,
+        "git_commit": commit,
+        "build_time": created_at,
+        "created_at": created_at,
     }
     manifest_path = output_dir / RELEASE_MANIFEST
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -218,12 +279,15 @@ def build_release(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="组装 MATERIAL_MATCHER 自包含 release；不联网、不下载依赖")
-    parser.add_argument("--runtime-dir", type=Path, required=True, help="scripts/prepare_runtime.py 生成的正式 Python runtime")
+    parser = argparse.ArgumentParser(description="组装 MATERIAL_MATCHER 源码可见 release；不联网、不下载依赖")
+    parser.add_argument("--runtime-dir", type=Path, required=True, help="scripts/prepare_runtime.py 准备的 Python runtime")
     parser.add_argument("--web-dist-dir", type=Path, required=True, help="Vue production build 输出目录")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--release-version", help="可选一致性检查；默认直接读取 pyproject.toml")
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), default=None)
+    parser.add_argument("--git-commit", default=None)
+    parser.add_argument("--build-time", default=None)
+    parser.add_argument("--deployment-mode", choices=("native-source", "docker-source"), default="native-source")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     try:
@@ -233,6 +297,9 @@ def main() -> None:
             output_dir=args.output_dir,
             release_version=args.release_version,
             target_arch=args.target_arch,
+            git_commit=args.git_commit,
+            build_time=args.build_time,
+            deployment_mode=args.deployment_mode,
             force=args.force,
         )
     except Exception as exc:
