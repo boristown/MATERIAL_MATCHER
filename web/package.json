@@ -8,7 +8,8 @@
     "test:review-contract": "node scripts/test-review-contract.mjs",
     "test:synonym-contract": "node scripts/test-synonym-contract.mjs",
     "test:step-naming": "node scripts/test-step-naming.mjs",
-    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && vue-tsc -b && vite build"
+    "test:review-history-contract": "node scripts/test-review-history-contract.mjs",
+    "build": "npm run test:browser-guard && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && vue-tsc -b && vite build"
   },
   "dependencies": {
     "axios": "^1.7.9",
