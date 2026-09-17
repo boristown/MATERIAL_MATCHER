@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import json
 import sys
@@ -113,9 +114,26 @@ def test_origin_seed_fixture_exports_csv_and_truth(tmp_path: Path) -> None:
     assert len(manifest["seed_zip_sha256"]) == 64
 
 
-def test_committed_generated_fixture_is_text_only_when_present() -> None:
-    if not GENERATED_DIR.exists():
-        return
+def test_committed_generated_fixture_is_current_and_text_only() -> None:
+    expected_names = {"source_materials_1000.csv", "target_group_codes_from_origin.csv", "ground_truth.csv", "manifest.json"}
+    assert GENERATED_DIR.exists()
     names = {path.name for path in GENERATED_DIR.iterdir() if path.is_file()}
-    assert names == {"source_materials_1000.csv", "target_group_codes_from_origin.csv", "ground_truth.csv", "manifest.json"}
+    assert names == expected_names
     assert not any(path.suffix.lower() in {".xlsx", ".xls", ".zip"} for path in GENERATED_DIR.iterdir() if path.is_file())
+
+    source_rows = list(iter_tabular_rows(GENERATED_DIR / "source_materials_1000.csv"))
+    target_rows = list(iter_tabular_rows(GENERATED_DIR / "target_group_codes_from_origin.csv"))
+    with (GENERATED_DIR / "ground_truth.csv").open("r", encoding="utf-8-sig", newline="") as stream:
+        truth_rows = list(csv.DictReader(stream))
+    manifest = json.loads((GENERATED_DIR / "manifest.json").read_text(encoding="utf-8"))
+
+    assert len(source_rows) == 1000
+    assert len(target_rows) == manifest["target_rows"] > 0
+    assert len(truth_rows) == 1000
+    assert sum(row["预期是否可匹配"] == "Y" for row in truth_rows) == 900
+    assert sum(row["预期是否可匹配"] == "N" for row in truth_rows) == 100
+    assert manifest["source_rows"] == 1000
+    assert manifest["expected_matched"] == 900
+    assert manifest["expected_unmatched"] == 100
+    assert manifest["source_type_distribution"] == {"Z001": 700, "Z006": 300}
+    assert manifest["seed_zip_sha256"] == hashlib.sha256(SEED_ZIP.read_bytes()).hexdigest()
