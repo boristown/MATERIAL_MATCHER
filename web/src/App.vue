@@ -17,6 +17,7 @@ const steps = [
 const support = [
   ['业务字典', '/data'],
   ['系统设置', '/system'],
+  ['关于', '/system/about'],
 ] as const
 const roleLabels: Record<string, string> = { admin: '管理员', operator: '操作员', reviewer: '复核员', viewer: '只读' }
 
@@ -25,6 +26,11 @@ const activeStep = computed<number | null>(() => {
   const fromRoute = Number(route.meta.navStep)
   return Number.isInteger(fromRoute) && fromRoute >= 1 && fromRoute <= 4 ? fromRoute : null
 })
+
+function supportActive(path: string): boolean {
+  if (path === '/system') return route.path === '/system'
+  return route.path.startsWith(path)
+}
 
 onMounted(async () => {
   try {
@@ -66,11 +72,11 @@ async function logout(): Promise<void> {
         </button>
       </div>
       <nav class="support-nav">
-        <button v-for="item in support" :key="item[1]" :class="{ active: route.path.startsWith(item[1]) }" @click="router.push(item[1])">
+        <button v-for="item in support" :key="item[1]" :class="{ active: supportActive(item[1]) }" @click="router.push(item[1])">
           <span class="nav-title">{{ item[0] }}</span>
         </button>
       </nav>
-      <div class="side-foot">{{ runtimeVersion ? `小罡 AI · v${runtimeVersion}` : '小罡 AI' }}</div>
+      <div class="side-foot">{{ runtimeVersion ? `v${runtimeVersion}` : '版本读取中' }}</div>
     </aside>
     <main>
       <header>
