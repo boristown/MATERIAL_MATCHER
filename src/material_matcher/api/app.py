@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from material_matcher.api._legacy_app import COOKIE_NAME, create_app as _legacy_create_app
+from material_matcher.build_info import build_about_payload
 from material_matcher.domain.errors import DomainError
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.decision_calibration_service import DecisionCalibrationService
@@ -67,12 +68,7 @@ def _legacy_summary(result: dict[str, object]) -> dict[str, int]:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the legacy application, then attach calibrated decision APIs.
-
-    Keeping the pre-existing route module intact makes this change easy to
-    review while allowing the calibration subsystem to remain independent from
-    MatchService and the core matcher.
-    """
+    """Build the legacy application, then attach calibrated decision APIs."""
 
     cfg = settings or Settings.load()
     app = _legacy_create_app(cfg)
@@ -85,6 +81,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _drop_route(app, "/api/tasks/{task_id}/re-decide", "POST")
     _drop_route(app, "/api/tasks/{task_id}/finalize", "POST")
     _drop_route(app, "/api/tasks/{task_id}/evaluations", "POST")
+
+    @app.get("/api/about")
+    def about() -> dict[str, str]:
+        """Return cheap runtime/build metadata for the authenticated About UI."""
+        return build_about_payload()
 
     @app.get("/api/tasks/{task_id}/calibration")
     def calibration_statistics(task_id: str) -> dict[str, object]:
