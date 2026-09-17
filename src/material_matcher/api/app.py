@@ -56,6 +56,16 @@ def _drop_route(app: FastAPI, path: str, method: str) -> None:
     ]
 
 
+def _legacy_summary(result: dict[str, object]) -> dict[str, int]:
+    counts = result.get("after") if isinstance(result.get("after"), dict) else {}
+    return {
+        "automatic_matched": int(counts.get("matched", 0)),
+        "pending_review": int(counts.get("review", 0)),
+        "unmatched": int(counts.get("unmatched", 0)),
+        "confirmed": int(counts.get("confirmed", 0)),
+    }
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the legacy application, then attach calibrated decision APIs.
 
@@ -86,13 +96,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/tasks/{task_id}/re-decide")
     def re_decide(task_id: str, payload: ReDecideRequest, request: Request) -> dict[str, object]:
-        return calibration.re_decide(
+        result = calibration.re_decide(
             task_id,
             payload.success_threshold,
             payload.review_threshold,
             payload.mode,
             operator=str(getattr(request.state, "username", "system")),
         )
+        result["summary"] = _legacy_summary(result)
+        return result
 
     @app.get("/api/tasks/{task_id}/decision-revisions")
     def decision_revisions(task_id: str) -> list[dict[str, object]]:
