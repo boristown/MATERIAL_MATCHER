@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import sys
 from pathlib import Path
 
 from material_matcher.ingestion.reader import iter_tabular_rows
@@ -15,6 +16,7 @@ def _load_generator_module():
     spec = importlib.util.spec_from_file_location("generate_realistic_test_data", script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -68,7 +70,6 @@ def test_realistic_fixture_has_900_100_truth_and_traceability() -> None:
     assert all(row["预期集团码"] in target_codes for row in matched_truth)
     assert all(row["预期集团码"] == "" for row in unmatched_truth)
 
-    # Every expected match must remain auditable back to an actual source and target row in origin_data.zip.
     assert all(row["种子源文件"] and int(row["种子源行号"]) > 0 for row in truth)
     assert all(row["种子目标文件"] and int(row["种子目标行号"]) > 0 for row in truth)
     assert all(float(row["种子配对分"]) >= 0.74 for row in truth)
