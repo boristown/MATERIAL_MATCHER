@@ -51,7 +51,7 @@ def _seed(meta: MetadataRepository) -> None:
             ),
         )
         rows = [
-            ("task-step3", "auto", "auto", "{}", "MATCHED", "MATCHED", "G-AUTO", 90.0, 70.0, 20.0, 0, "G-AUTO", now, now),
+            ("task-step3", "auto", "auto", "{}", "MATCHED", "MATCHED", "G-AUTO", 72.0, 70.0, 2.0, 0, "G-AUTO", now, now),
             ("task-step3", "low-positive", "low-positive", "{}", "UNMATCHED", "UNMATCHED", "G-LOW", 12.0, 5.0, 7.0, 0, None, now, now),
             ("task-step3", "no-candidate", "no-candidate", "{}", "UNMATCHED", "UNMATCHED", None, 0.0, 0.0, 0.0, 0, None, now, now),
             ("task-step3", "human-confirmed", "human-confirmed", "{}", "REVIEW", "CONFIRMED", "G-HUMAN", 20.0, 10.0, 10.0, 0, "G-HUMAN", now, now),
@@ -64,7 +64,7 @@ def _seed(meta: MetadataRepository) -> None:
         connection.executemany(
             f"INSERT INTO match_candidates({_CANDIDATE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?)",
             [
-                ("task-step3", "auto", 1, "G-AUTO", '{"name":"自动候选"}', 90.0, "[]", 0),
+                ("task-step3", "auto", 1, "G-AUTO", '{"name":"自动候选"}', 72.0, "[]", 0),
                 ("task-step3", "low-positive", 1, "G-LOW", '{"name":"低分候选"}', 12.0, "[]", 0),
                 ("task-step3", "human-confirmed", 1, "G-HUMAN", '{"name":"人工确认"}', 20.0, "[]", 0),
                 ("task-step3", "human-unmatched", 1, "G-REJECT", '{"name":"人工拒绝"}', 20.0, "[]", 0),
@@ -80,18 +80,44 @@ def _seed(meta: MetadataRepository) -> None:
         )
 
 
-def test_step3_single_threshold_floor_routes_positive_candidates_to_review_and_protects_human_results(tmp_path: Path) -> None:
+def test_step3_single_threshold_routes_positive_candidates_to_review_and_protects_human_results(tmp_path: Path) -> None:
     service, meta = _environment(tmp_path)
     _seed(meta)
 
-    preview = service.preview("task-step3", 72, 0)
+    # Historical dual-threshold behavior stays strict: score == 72 is not an
+    # automatic match when callers do not opt into STEP3 single-threshold mode.
+    legacy_preview = service.preview("task-step3", 72, 0)
+    assert legacy_preview["after"] == {"matched": 0, "review": 2, "unmatched": 2, "confirmed": 1}
+    assert legacy_preview["single_threshold"] is False
+
+    # STEP3's new mode implements the visible business rule exactly:
+    # score >= automatic threshold => MATCHED; lower positive scores => REVIEW.
+    preview = service.re_decide(
+        "task-step3",
+        72,
+        60,
+        "preview",
+        operator="step3-ui",
+        single_threshold=True,
+    )
     assert preview["before"] == {"matched": 1, "review": 0, "unmatched": 3, "confirmed": 1}
     assert preview["after"] == {"matched": 1, "review": 1, "unmatched": 2, "confirmed": 1}
+    assert preview["transitions"]["MATCHED->MATCHED"] == 1
     assert preview["transitions"]["UNMATCHED->REVIEW"] == 1
     assert preview["human_protected"] == 2
+    assert preview["review_threshold"] == 0.0
+    assert preview["single_threshold"] is True
 
-    applied = service.apply("task-step3", 72, 0, operator="step3-ui")
+    applied = service.re_decide(
+        "task-step3",
+        72,
+        60,
+        "apply",
+        operator="step3-ui",
+        single_threshold=True,
+    )
     assert applied["revision_no"] == 1
+    assert applied["single_threshold"] is True
 
     with meta.connect() as connection:
         states = {
