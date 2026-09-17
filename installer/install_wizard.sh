@@ -19,6 +19,7 @@ BUNDLE_ARCH=""
 BUNDLE_COMMIT=""
 INSTALL_LOG_DIR="/var/log/material_matcher/install-reports"
 WIZARD_LOG="${MM_WIZARD_LOG:-/var/tmp/material_matcher_wizard-$(date +%Y%m%d-%H%M%S).log}"
+IS_TTY=0; [[ -t 1 ]] && IS_TTY=1   # main 会被管道化，此处提前判定操作员终端
 
 # ---- 提权（.desktop / 启动安装.sh 已可能以 root 进入；此处兜底） ------------------
 if [[ $EUID -ne 0 ]]; then
@@ -360,7 +361,7 @@ main() {
   case "$PW_MODE" in
     keep)      pw_choice="保留现有密码（升级不重置）" ;;
     user)      pw_choice="由您手工设置" ;;
-    generated) pw_choice="自动生成，完成后显示一次" ;;
+    generated) pw_choice=$([[ "$IS_TTY" == "1" || -n "$GUI" ]] && echo "自动生成，完成后显示一次" || echo "自动生成（写入 root-only 密码文件，不回显）") ;;
   esac
 
   local mode_text="首次安装"
@@ -414,7 +415,12 @@ PY
 )"
   local pw_line=""
   if [[ "$PW_MODE" == "generated" ]]; then
-    pw_line="\n· 初始密码（请立即保存，本页面之后不再显示）：$MM_ADMIN_PASSWORD_SET"
+    if [[ "$IS_TTY" == "1" || -n "$GUI" ]]; then
+      pw_line="\n· 初始密码（请立即保存，本页面之后不再显示）：$MM_ADMIN_PASSWORD_SET"
+    else
+      # 非交互管道场景：密码绝不写入任何输出流/日志，仅指向 root-only 密码文件。
+      pw_line="\n· 初始密码已自动生成。出于安全，本输出与安装日志不包含密码明文；请系统管理员以 root 查看：/etc/material_matcher/secret/admin_password.env"
+    fi
   elif [[ "$PW_MODE" == "user" ]]; then
     pw_line="\n· 初始密码：您刚才设置的密码"
   else
@@ -448,4 +454,6 @@ _open_browser() {
 }
 
 main "$@" 2>&1 | tee -a "$WIZARD_LOG"
-exit "${PIPESTATUS[0]}"
+rc=${PIPESTATUS[0]}
+chmod 600 "$WIZARD_LOG" 2>/dev/null || true
+exit "$rc"
