@@ -90,11 +90,18 @@ ui_error() {
   printf '[ERROR] %s | %b\n' "$1" "$2" >>"$WIZARD_LOG" 2>/dev/null || true
 }
 
-ui_confirm() {  # -> 0 是 / 非0 否；$3/$4 可选自定义按钮文字
+ui_confirm() {  # -> 0 第一项 / 3 第二项 / 9 退出（终端）；$3/$4 选项文字
   case "$GUI" in
-    zenity)  zenity --question --title="$1" --text="$2" --width=600 --yes-label="${3:-继续}" --no-label="${4:-取消}" ;;
-    kdialog) kdialog --title "$1" --yesno "$2" ;;
-    *)       local a; printf '%b\n输入 y 继续，其它键取消：' "$2"; read -r a; [[ "$a" == "y" || "$a" == "Y" ]] ;;
+    zenity)  zenity --question --title="$1" --text="$2" --width=600 --yes-label="${3:-继续}" --no-label="${4:-取消}" && return 0
+             [[ $? == "1" ]] && return 3 || return 9 ;;
+    kdialog) kdialog --title "$1" --yesno "$2" && return 0
+             [[ $? == "1" ]] && return 3 || return 9 ;;
+    *)
+      local a
+      printf '%b\n请输入 y = %s；n = %s；其它键 = 退出安装（不做任何修改）：' "$2" "${3:-继续}" "${4:-取消}" >&2
+      read -r a
+      case "$a" in y|Y) return 0 ;; n|N) return 3 ;; *) return 9 ;; esac
+      ;;
   esac
 }
 
@@ -131,8 +138,13 @@ ui_password() {  # stdout 密码；空表示放弃手工输入
 generate_password() {
   "$PY" - <<'PY'
 import secrets, string
-alphabet = string.ascii_letters + string.digits
-print("".join(secrets.choice(alphabet) for _ in range(12)))
+letters = string.ascii_letters
+digits = string.digits
+pool = list(secrets.choice(letters + digits) for _ in range(10))
+pool[0] = secrets.choice(letters)
+pool[-1] = secrets.choice(digits)
+secrets.SystemRandom().shuffle(pool)
+print("".join(pool))
 PY
 }
 
@@ -315,11 +327,16 @@ main() {
   MM_DATA_DIR_SET=""
   if [[ "$IS_UPGRADE_DETECTED" == "1" ]]; then
     ui_note "数据位置" "检测到已有安装：升级将自动沿用现有数据目录（/etc/material_matcher/storage.env 指向的位置），不会移动、清空或重建任何业务数据。"
-  elif ui_confirm "数据位置" "数据目录默认由安装程序自动选择空间最大的安全磁盘，\n并通过 /var/lib/material_matcher 统一访问（推荐给绝大多数场景）。\n\n主按钮 / 输入 y …… 自动选择\n副按钮 / 输入其它 …… 手工指定数据目录（高级）" "自动选择" "手工指定"; then
-    MM_DATA_DIR_SET=""
   else
-    MM_DATA_DIR_SET="$(ui_entry "数据目录" "数据目录绝对路径（首次安装确定后将固定，后续升级始终沿用）" "/var/lib/material_matcher_data")" || { echo "已取消安装。"; exit 0; }
-    [[ "$MM_DATA_DIR_SET" == /* ]] || { ui_error "数据目录无效" "数据目录必须是绝对路径。"; exit 1; }
+    rc_choice=0; ui_confirm "数据位置" "数据目录默认由安装程序自动选择空间最大的安全磁盘，\n并通过 /var/lib/material_matcher 统一访问（推荐给绝大多数场景）。" "自动选择" "手工指定（高级）" || rc_choice=$?
+    if [[ "$rc_choice" == "0" ]]; then
+      MM_DATA_DIR_SET=""
+    elif [[ "$rc_choice" == "3" ]]; then
+      MM_DATA_DIR_SET="$(ui_entry "数据目录" "数据目录绝对路径（首次安装确定后将固定，后续升级始终沿用）" "/var/lib/material_matcher_data")" || { echo "已取消安装。"; exit 0; }
+      [[ "$MM_DATA_DIR_SET" == /* ]] || { ui_error "数据目录无效" "数据目录必须是绝对路径。"; exit 1; }
+    else
+      echo "用户已取消，未对系统做任何修改。"; exit 0
+    fi
   fi
 
   local port_default_eff="$PORT_DEFAULT"
@@ -345,16 +362,19 @@ main() {
     PW_MODE="keep"
     ui_note "管理员账号" "升级安装保留现有 admin 账号与密码，安装程序不会重置任何登录信息。"
   else
-    if ui_confirm "管理员密码" "请选择 admin 初始密码设置方式：\n\n主按钮 / 输入 y …… 由您手工输入密码\n副按钮 / 直接回车 …… 自动生成强密码（推荐给多数用户）" "手工输入" "自动生成"; then
+    rc_pw=0; ui_confirm "管理员密码" "请选择 admin 初始密码设置方式：\n\ny = 由您手工输入密码\nn = 自动生成强密码（完成后按环境策略显示或写入 root-only 文件）" "手工输入" "自动生成" || rc_pw=$?
+    if [[ "$rc_pw" == "0" ]]; then
       local pw
       while :; do
         pw="$(ui_password "设置管理员密码")" || { echo "已取消安装。"; exit 0; }
         if [[ -z "$pw" ]]; then PW_MODE="generated"; MM_ADMIN_PASSWORD_SET="$(generate_password)"; break; fi
-        if (( ${#pw} >= 10 )); then PW_MODE="user"; MM_ADMIN_PASSWORD_SET="$pw"; break; fi
-        ui_error "密码太短" "密码至少 10 位，请重新输入（或取消改用自动生成）。"
+        if (( ${#pw} >= 10 )) && [[ "$pw" =~ [A-Za-z] ]] && [[ "$pw" =~ [0-9] ]]; then PW_MODE="user"; MM_ADMIN_PASSWORD_SET="$pw"; break; fi
+        ui_error "密码不符合要求" "密码至少 10 位且需同时包含字母和数字（或改选自动生成）。"
       done
-    else
+    elif [[ "$rc_pw" == "3" ]]; then
       PW_MODE="generated"; MM_ADMIN_PASSWORD_SET="$(generate_password)"
+    else
+      echo "用户已取消，未对系统做任何修改。"; exit 0
     fi
   fi
   local pw_choice
@@ -369,7 +389,7 @@ main() {
   local data_text="自动选择安全数据盘"
   [[ "$IS_UPGRADE_DETECTED" == "1" ]] && data_text="沿用现有数据目录（不改动）"
   [[ -n "$MM_DATA_DIR_SET" ]] && data_text="$MM_DATA_DIR_SET"
-  ui_confirm "确认安装" "即将开始安装，请确认：\n\n· 产品：物料集团码智能匹配平台\n· 版本：${BUNDLE_VERSION:-未知}（commit ${BUNDLE_COMMIT:-见安装报告}）\n· 架构：${BUNDLE_ARCH:-未知}\n· 方式：$mode_text\n· 程序目录：$INSTALL_PREFIX\n· 数据目录：$data_text\n· 服务端口：$CHOSEN_PORT\n· 管理员密码：$pw_choice\n· 网络：完全离线安装，无需公网\n\n确认后开始安装，期间请勿关闭窗口。" || { echo "用户已取消，未对系统做任何修改。"; exit 0; }
+  ui_confirm "确认安装" "即将开始安装，请确认：\n\n· 产品：物料集团码智能匹配平台\n· 版本：${BUNDLE_VERSION:-未知}（commit ${BUNDLE_COMMIT:-见安装报告}）\n· 架构：${BUNDLE_ARCH:-未知}\n· 方式：$mode_text\n· 程序目录：$INSTALL_PREFIX\n· 数据目录：$data_text\n· 服务端口：$CHOSEN_PORT\n· 管理员密码：$pw_choice\n· 网络：完全离线安装，无需公网\n\n确认后开始安装，期间请勿关闭窗口。" "开始安装" "取消安装" || { echo "用户已取消，未对系统做任何修改。"; exit 0; }
 
   echo "开始安装（过程日志：$WIZARD_LOG）……"
   exec_install_with_progress

@@ -29,7 +29,8 @@ def generate_local_pw() -> str:
     import secrets
     import string
 
-    return "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
+    body = "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
+    return "Smoke" + body + str(secrets.choice("0123456789"))  # 保证含字母与数字且长度>=10
 
 
 class Api:
