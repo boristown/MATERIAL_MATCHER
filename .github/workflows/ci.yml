@@ -2,6 +2,7 @@ name: ci
 
 on:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -18,7 +19,10 @@ jobs:
       - name: Real-world field score diagnostics
         run: python scripts/diagnose_matching_scores.py
       - run: python -m compileall -q src
-      - run: bash -n installer/install.sh
+      - name: Shell syntax checks
+        run: bash -n installer/install.sh installer/install_wizard.sh installer/启动安装.sh tools/mmctl.sh tools/rebuild_frontend.sh tools/维护工具.sh
+      - name: Docker Compose source validation
+        run: MM_ADMIN_PASSWORD=TestAdmin123 docker compose -f docker/compose.yaml config >/dev/null
       - run: python scripts/check_repo_files.py
 
   frontend:
