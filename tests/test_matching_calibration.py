@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 
 from material_matcher.domain.models import MatchingConfig
-from material_matcher.matching.engine import match_rows
+from material_matcher.matching.engine import _row_result, match_rows
 from material_matcher.matching.scorer import score_candidate
 from material_matcher.normalize.pipeline import apply_processing_pipeline
 
@@ -126,19 +126,7 @@ def test_dynamic_weight_exposes_weak_evidence_and_blocks_auto_release(tmp_path: 
     assert rows[0].final_group_code is None
 
 
-def test_minimum_score_gap_routes_near_tie_to_review(tmp_path: Path) -> None:
-    source_path = tmp_path / "source.csv"
-    target_path = tmp_path / "target.csv"
-    with source_path.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=["id", "name", "detail"])
-        writer.writeheader()
-        writer.writerow({"id": "S1", "name": "轴承", "detail": "A"})
-    with target_path.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=["code", "name", "detail"])
-        writer.writeheader()
-        writer.writerow({"code": "G1", "name": "轴承", "detail": "A"})
-        writer.writerow({"code": "G2", "name": "轴承", "detail": "B"})
-
+def test_minimum_score_gap_routes_near_tie_to_review() -> None:
     config = MatchingConfig.model_validate(
         {
             "source_id_column": "id",
@@ -167,14 +155,18 @@ def test_minimum_score_gap_routes_near_tie_to_review(tmp_path: Path) -> None:
             "advanced": {"matching_safety": {"minimum_score_gap": 11}},
         }
     )
-    rows = match_rows(
-        source_path,
-        target_path,
-        config=config,
-        group_code_column="code",
-        max_target_rows=100,
-    )
-    assert rows[0].first_score == 100.0
-    assert rows[0].second_score == 90.0
-    assert rows[0].score_gap == 10.0
-    assert rows[0].status == "REVIEW"
+    source = {"id": "S1", "name": "轴承", "detail": "A"}
+    targets = [
+        ("G1", {"name": "轴承", "detail": "A"}, 2),
+        ("G2", {"name": "轴承", "detail": "B"}, 3),
+    ]
+    scored = []
+    for code, target, row_number in targets:
+        score = score_candidate(source, target, config)
+        scored.append((score.display_score, code, target, score.to_dict(), row_number))
+    row = _row_result(source, 1, 2, scored, config)
+
+    assert row.first_score == 100.0
+    assert row.second_score == 90.0
+    assert row.score_gap == 10.0
+    assert row.status == "REVIEW"
