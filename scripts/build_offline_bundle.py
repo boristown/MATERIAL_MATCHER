@@ -88,10 +88,13 @@ def _paths_overlap(first: Path, second: Path) -> bool:
 def _load_release_manifest(release_dir: Path) -> dict[str, object]:
     path = release_dir / RELEASE_MANIFEST_NAME
     if not path.is_file():
-        raise ValueError(f"release 缺少 {RELEASE_MANIFEST_NAME}，请先使用 scripts/build_release.py 构建")
+        raise ValueError(f"release 缺少 {RELEASE_MANIFEST_NAME}，请先使用 scripts/build_native_source_bundle.py 构建")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("format_version") != 1 or payload.get("product") != "MATERIAL_MATCHER_RELEASE":
         raise ValueError("release manifest 产品或格式版本不正确")
+    release_version = str(payload.get("release_version") or "")
+    if not RELEASE_VERSION_RE.fullmatch(release_version):
+        raise ValueError("release manifest 中的版本不合法")
     return payload
 
 
@@ -101,13 +104,11 @@ def build_bundle(
     model_dir: Path,
     wheelhouse_dir: Path,
     output_dir: Path,
-    release_version: str,
     target_arch: str,
     model_id: str,
+    release_version: str | None = None,
     force: bool = False,
 ) -> Path:
-    if not RELEASE_VERSION_RE.fullmatch(release_version):
-        raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
     if target_arch not in SUPPORTED_ARCHES:
         raise ValueError(f"不支持的目标 CPU 架构：{target_arch}")
     model_path = _safe_relative(model_id, "model_id")
@@ -119,10 +120,14 @@ def build_bundle(
     repo_root = Path(__file__).resolve().parents[1]
 
     release_manifest = _load_release_manifest(release_dir)
-    if str(release_manifest.get("release_version") or "") != release_version:
-        raise ValueError(
-            f"release 版本 {release_manifest.get('release_version')} 与离线包版本 {release_version} 不一致"
-        )
+    effective_version = str(release_manifest["release_version"])
+    if release_version is not None:
+        if not RELEASE_VERSION_RE.fullmatch(release_version):
+            raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
+        if release_version != effective_version:
+            raise ValueError(
+                f"release 版本 {effective_version} 与离线包版本 {release_version} 不一致"
+            )
     if str(release_manifest.get("target_arch") or "") != target_arch:
         raise ValueError(
             f"release 架构 {release_manifest.get('target_arch')} 与离线包目标架构 {target_arch} 不一致"
@@ -143,15 +148,26 @@ def build_bundle(
     _copy_tree(model_dir, model_target)
     _copy_tree(wheelhouse_dir, output_dir / "wheelhouse")
 
-    shutil.copy2(repo_root / "installer" / "install.sh", output_dir / "install.sh")
-    shutil.copy2(repo_root / "installer" / "verify_offline_bundle.py", output_dir / "verify_offline_bundle.py")
-    (output_dir / "install.sh").chmod(0o755)
+    installer_files = {
+        "install.sh": "install.sh",
+        "verify_offline_bundle.py": "verify_offline_bundle.py",
+        "install_wizard.sh": "install_wizard.sh",
+        "启动安装.sh": "启动安装.sh",
+        "安装物料集团码智能匹配平台.desktop": "安装物料集团码智能匹配平台.desktop",
+    }
+    for source_name, target_name in installer_files.items():
+        source_path = repo_root / "installer" / source_name
+        if not source_path.is_file():
+            raise ValueError(f"安装器源码缺失：installer/{source_name}")
+        shutil.copy2(source_path, output_dir / target_name)
+    for executable in ("install.sh", "install_wizard.sh", "启动安装.sh", "安装物料集团码智能匹配平台.desktop"):
+        (output_dir / executable).chmod(0o755)
 
     files = [_entry(relative, path, kind) for relative, path, kind in _iter_entries(output_dir)]
     manifest = {
         "format_version": FORMAT_VERSION,
         "product": PRODUCT,
-        "release_version": release_version,
+        "release_version": effective_version,
         "target_arch": target_arch,
         "model_id": model_path.as_posix(),
         "release_manifest_sha256": _sha256(output_dir / "release" / RELEASE_MANIFEST_NAME),
@@ -169,12 +185,12 @@ def build_bundle(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="组装 MATERIAL_MATCHER 正式离线发布目录，不下载任何公网依赖")
-    parser.add_argument("--release-dir", type=Path, required=True, help="scripts/build_release.py 生成的自包含 release 目录")
-    parser.add_argument("--model-dir", type=Path, required=True, help="目标 Embedding 模型目录，需包含 tokenizer.json 和 ONNX")
+    parser = argparse.ArgumentParser(description="组装 MATERIAL_MATCHER 离线介质目录源码；不下载任何公网依赖")
+    parser.add_argument("--release-dir", type=Path, required=True, help="源码可见 release 目录")
+    parser.add_argument("--model-dir", type=Path, required=True, help="目标 Embedding 模型目录")
     parser.add_argument("--wheelhouse-dir", type=Path, required=True, help="离线 Python wheelhouse")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--release-version", help="可选一致性检查；默认读取 release-manifest.json")
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), required=True)
     parser.add_argument("--model-id", default="BAAI/bge-base-zh-v1.5")
     parser.add_argument("--force", action="store_true")
