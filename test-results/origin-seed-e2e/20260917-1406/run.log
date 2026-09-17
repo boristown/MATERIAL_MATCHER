@@ -1,0 +1,66 @@
+14:06:28 derived acceptance truth: 1000 rows (Y->MATCH, N->NO_MATCH, lossless)
+14:07:36 admin session ok role=admin
+14:07:36 source uploaded rows=1000 cols=24
+14:07:36 target uploaded rows=67 cols=21
+14:07:36 truth uploaded rows=1000 cols=3
+14:07:36 catalog READY rows=None
+14:07:39 draft+rules+dry-run ok
+14:07:39 task bd8823b4df48487ca1e79bd4cc51678e started by admin
+14:07:39 RUNNING phase=RETRIEVE mode=scan rows=0/0
+14:07:42 RUNNING phase=RERANK mode=scan rows=179/1000
+14:07:45 RUNNING phase=RERANK mode=scan rows=345/1000
+14:07:48 RUNNING phase=RERANK mode=scan rows=516/1000
+14:07:51 RUNNING phase=RERANK mode=scan rows=682/1000
+14:07:55 RUNNING phase=RERANK mode=scan rows=846/1000
+14:07:58 COMPLETED phase=DONE mode=scan rows=1000/1000
+14:07:58 task COMPLETED elapsed=0.3 min
+14:07:58 summary auto_matched=139 review=516 unmatched=345
+14:07:58 evaluation metrics: {"top1_accuracy": null, "final_accuracy": null, "automatic_accuracy": null, "review_rate": null, "unmatched_rate": null, "resolved_rate": null, "recall_at_top_n": null}
+14:11:24 admin session ok role=admin
+14:11:24 COMPLETED phase=DONE mode=scan rows=1000/1000
+14:11:24 task COMPLETED elapsed=3.8 min
+14:11:25 summary auto_matched=139 review=516 unmatched=345
+14:11:25 evaluation metrics: {"top1_accuracy": 1.0, "final_accuracy": 0.231, "automatic_accuracy": 1.0, "review_rate": 0.516, "unmatched_rate": 0.345, "resolved_rate": 0.231, "recall_at_top_n": null}
+14:11:25 candidates todo 1000
+14:11:36 candidates 200/1000
+14:11:49 candidates 400/1000
+14:12:02 candidates 600/1000
+14:12:13 candidates 800/1000
+14:12:25 candidates 1000/1000
+14:13:04 admin session ok role=admin
+14:13:04 COMPLETED phase=DONE mode=scan rows=1000/1000
+14:13:04 task COMPLETED elapsed=5.4 min
+14:13:04 summary auto_matched=139 review=516 unmatched=345
+14:13:04 evaluation metrics: {"top1_accuracy": 1.0, "final_accuracy": 0.231, "automatic_accuracy": 1.0, "review_rate": 0.516, "unmatched_rate": 0.345, "resolved_rate": 0.231, "recall_at_top_n": null}
+14:13:04 candidates todo 0
+14:13:04 AUTO-STAGE METRICS:
+{
+ "总行数": 1000,
+ "真值Y": 900,
+ "真值N": 100,
+ "自动匹配数": 139,
+ "自动匹配率": 0.139,
+ "自动匹配正确数": 139,
+ "自动误匹配数": 0,
+ "自动匹配精确率": 1.0,
+ "Y样本Top1正确数": 900,
+ "Y样本Top1准确率": 1.0,
+ "Y样本Top5召回数": 900,
+ "Y样本Top5召回率": 1.0,
+ "Y正确目标未进Top5": 0,
+ "待人工核对REVIEW数": 516,
+ "自动判定未匹配数": 345,
+ "N样本被自动错误匹配数": 0,
+ "REVIEW中Y样本": 508,
+ "REVIEW中N样本": 8,
+ "UNMATCHED中Y样本(漏匹配)": 253,
+ "UNMATCHED中N样本(正确未匹配)": 92,
+ "evaluation_api": {
+  "top1_accuracy": 1.0,
+  "final_accuracy": 0.231,
+  "automatic_accuracy": 1.0,
+  "review_rate": 0.516,
+  "recall_at_top_n": null
+ }
+}
+14:13:04 Evidence at /oracle/codex/work/MATERIAL/test-results/origin-seed-e2e/20260917-1406  task=bd8823b4df48487ca1e79bd4cc51678e  停止在人工核对,交管理员/用户处理 REVIEW=516
