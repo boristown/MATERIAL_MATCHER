@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=维护物料集团码智能匹配平台
+Comment=查看状态、日志、备份恢复（需要管理员权限）
+Exec=bash -c 'cd "$(dirname "%k")" && ./维护工具.sh'
+Icon=application-x-executable
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

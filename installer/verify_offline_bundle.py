@@ -149,6 +149,8 @@ def _verify_release_manifest(root: Path, manifest: dict[str, object], release_ve
         raise ValueError("release manifest 产品或格式版本不正确")
     if str(release_manifest.get("release_version") or "") != release_version:
         raise ValueError("release manifest 版本与离线包版本不一致")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(release_manifest.get("git_commit") or "")):
+        raise ValueError("release manifest 缺少 40 位 Git commit，禁止不可追溯的正式交付")
     if _normalize_arch(str(release_manifest.get("target_arch") or "")) != target_arch:
         raise ValueError("release manifest 架构与离线包目标架构不一致")
     expected_sha = str(manifest.get("release_manifest_sha256") or "").lower()
@@ -242,20 +244,66 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     model_prefix = f"models/{model_id}/"
     required_exact = {
         "install.sh",
+        "install_wizard.sh",
+        "mmctl",
         "verify_offline_bundle.py",
+        "启动安装.sh",
+        "维护工具.sh",
+        "安装物料集团码智能匹配平台.desktop",
+        "维护物料集团码智能匹配平台.desktop",
+        "README-安装前必读.txt",
+        "BUILD_INFO.txt",
+        "SHA256SUMS",
+        "docs/安装手册.md",
+        "docs/维护手册.md",
+        "docs/故障处理.md",
+        "bootstrap/python/bin/python3",
+        "smoke/smoke-待匹配数据.xlsx",
+        "smoke/smoke-集团标准数据.xlsx",
+        "tools/installer_smoke.py",
         "release/release-manifest.json",
         "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
         "release/app/material_matcher/__init__.py",
+        "release/source/pyproject.toml",
+        "release/source/web/package.json",
+        "release/source/installer/install.sh",
         "release/web/dist/index.html",
         f"models/{model_id}/tokenizer.json",
     }
     missing_required = sorted(required_exact - set(expected))
     if missing_required:
         raise ValueError(f"离线包缺少必需组件：{', '.join(missing_required)}")
-    for executable in ("install.sh", "release/runtime/bin/python3", "release/runtime/bin/material-matcher"):
+    for executable in (
+        "install.sh",
+        "install_wizard.sh",
+        "mmctl",
+        "启动安装.sh",
+        "维护工具.sh",
+        "bootstrap/python/bin/python3",
+        "release/runtime/bin/python3",
+        "release/runtime/bin/material-matcher",
+        "tools/installer_smoke.py",
+    ):
         _require_executable(actual, executable)
+
+    build_info = actual["BUILD_INFO.txt"].read_text(encoding="utf-8")
+    if release_version not in build_info:
+        raise ValueError("BUILD_INFO.txt 版本与 offline manifest 不一致")
+    if target_arch not in build_info:
+        raise ValueError("BUILD_INFO.txt 架构与 offline manifest 不一致")
+
+    for sha_line in actual["SHA256SUMS"].read_text(encoding="utf-8").splitlines():
+        if not sha_line.strip():
+            continue
+        parts = sha_line.split("  ", 1)
+        if len(parts) != 2 or not re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+            raise ValueError("SHA256SUMS 行格式不正确")
+        digest, relative = parts
+        entry = expected.get(relative)
+        if entry is None or str(entry.get("sha256") or "").lower() != digest:
+            raise ValueError(f"SHA256SUMS 与离线 manifest 不一致：{relative}")
 
     release_manifest = _verify_release_manifest(root, manifest, release_version, target_arch)
 

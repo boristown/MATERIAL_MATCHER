@@ -69,6 +69,7 @@ def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
                 "release_version": version,
                 "target_arch": "x86_64",
                 "python_version": "3.11.0",
+                "git_commit": "0123456789abcdef0123456789abcdef01234567",
                 "runtime_manifest_sha256": _sha256(runtime_manifest_path),
                 "source_tree_sha256": _tree_sha256(source),
                 "web_tree_sha256": _tree_sha256(web),
@@ -80,7 +81,17 @@ def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
     _write(model / "model_int8.onnx", b"fake-onnx-model")
     _write(wheelhouse / "onnxruntime-1.20.0-cp311-cp311-manylinux_x86_64.whl", b"fake-wheel")
     _write(wheelhouse / "tokenizers-0.20.0-cp311-cp311-manylinux_x86_64.whl", b"fake-wheel")
+    _write(source.parent / "source" / "pyproject.toml", b"[project]\nname = 'x'\n")
+    _write(source.parent / "source" / "web" / "package.json", b"{}\n")
+    _write(source.parent / "source" / "installer" / "install.sh", b"#!/bin/sh\nexit 0\n")
     return release, model, wheelhouse
+
+
+def _bootstrap(tmp_path: Path) -> Path:
+    bootstrap = tmp_path / "bootstrap-stage"
+    _write(bootstrap / "bin/python3", b"#!/bin/sh\nexit 0\n", executable=True)
+    _write(bootstrap / "lib/readme.txt", b"fake bootstrap runtime\n")
+    return bootstrap
 
 
 def _build(repo_root: Path, tmp_path: Path) -> Path:
@@ -93,6 +104,8 @@ def _build(repo_root: Path, tmp_path: Path) -> Path:
             "--release-dir", str(release),
             "--model-dir", str(model),
             "--wheelhouse-dir", str(wheelhouse),
+            "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
+            "--git-commit", "0123456789abcdef0123456789abcdef01234567",
             "--output-dir", str(output),
             "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
@@ -169,6 +182,7 @@ def test_offline_bundle_rejects_release_version_mismatch(tmp_path: Path) -> None
             "--release-dir", str(release),
             "--model-dir", str(model),
             "--wheelhouse-dir", str(wheelhouse),
+            "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "bundle"),
             "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
@@ -193,6 +207,7 @@ def test_offline_bundle_rejects_runtime_manifest_tampering(tmp_path: Path) -> No
             "--release-dir", str(release),
             "--model-dir", str(model),
             "--wheelhouse-dir", str(wheelhouse),
+            "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "tampered-runtime"),
             "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
@@ -215,6 +230,7 @@ def test_offline_bundle_rejects_release_tree_tampering(tmp_path: Path) -> None:
             "--release-dir", str(release),
             "--model-dir", str(model),
             "--wheelhouse-dir", str(wheelhouse),
+            "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "tampered-release"),
             "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
@@ -236,6 +252,7 @@ def test_offline_bundle_rejects_unsafe_model_id_and_arch_wheel(tmp_path: Path) -
             "--release-dir", str(release),
             "--model-dir", str(model),
             "--wheelhouse-dir", str(wheelhouse),
+            "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "unsafe"),
             "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
@@ -256,6 +273,7 @@ def test_offline_bundle_rejects_unsafe_model_id_and_arch_wheel(tmp_path: Path) -
             "--release-dir", str(release),
             "--model-dir", str(model),
             "--wheelhouse-dir", str(wheelhouse),
+            "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "wrong-arch"),
             "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
