@@ -26,6 +26,7 @@ _ORIGINAL_REVIEWER_MUTATION_ALLOWED = _legacy_app._reviewer_mutation_allowed
 class ReDecideRequest(BaseModel):
     success_threshold: float = Field(ge=0, le=100)
     review_threshold: float = Field(ge=0, le=100)
+    single_threshold: bool = False
     mode: Literal["preview", "apply"] = "apply"
 
 
@@ -306,6 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             payload.review_threshold,
             payload.mode,
             operator=str(getattr(request.state, "username", "system")),
+            single_threshold=payload.single_threshold,
         )
         result["summary"] = _legacy_summary(result)
         return result
