@@ -41,6 +41,8 @@ const AGENT3_ACTION: Record<ReviewBatchAction, string> = {
   restore_original: 'RESTORE_ALGORITHM',
 }
 
+export const STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR = 0
+
 const versionCache = new Map<string, string>()
 
 function versionKey(taskId: string, sourceRowId: string): string {
@@ -233,6 +235,17 @@ export async function previewReDecision(taskId: string, successThreshold: number
     review_threshold: reviewThreshold,
     mode,
   })).data ?? {}
+}
+
+/**
+ * STEP3 business UI intentionally exposes one threshold only. The legacy
+ * re-decide API still requires review_threshold, so the adapter pins it to 0:
+ * positive-score rows below the automatic threshold stay in REVIEW while
+ * zero-score/no-usable-candidate rows may remain UNMATCHED. Historical dual-
+ * threshold callers keep using previewReDecision unchanged.
+ */
+export async function reDecideSingleThreshold(taskId: string, successThreshold: number, mode: 'preview' | 'apply'): Promise<any> {
+  return previewReDecision(taskId, successThreshold, STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR, mode)
 }
 
 export function downloadManualWorkbook(taskId: string): void {
