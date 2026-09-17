@@ -39,9 +39,10 @@ type DictionaryVersion = {
   version_no: number
   sha256: string
   document: { mapping: Record<string, string>; case_sensitive: boolean }
+  created_by?: string
   created_at: string
 }
-type MappingEditorRow = { source: string; target: string }
+type MappingRow = { source: string; target: string }
 type TagType = '' | 'success' | 'warning' | 'info' | 'danger'
 
 const currentRole = ref('')
@@ -57,15 +58,45 @@ const technicalLoading = ref(false)
 const technicalLoaded = ref(false)
 const advancedSections = ref<string[]>([])
 
-const dictionaryDialogVisible = ref(false)
-const dictionaryHistoryVisible = ref(false)
-const selectedDictionary = ref<DictionaryRow | null>(null)
-const dictionaryName = ref('')
-const dictionaryCaseSensitive = ref(true)
-const dictionaryRows = ref<MappingEditorRow[]>([])
-const dictionaryVersions = ref<DictionaryVersion[]>([])
-const dictionarySaving = ref(false)
+const selectedId = ref('')
+const selectedName = ref('')
+const currentVersion = ref(0)
+const currentUpdated = ref('')
+const creatingNew = ref(false)
+const newName = ref('')
+const rows = ref<MappingRow[]>([])
+const baseRows = ref<string>('')
+const baseVersion = ref(0)
+const caseSensitive = ref(true)
+const baseCaseSensitive = ref(true)
+const searchKeyword = ref('')
+const saving = ref(false)
+const historyVisible = ref(false)
+const historyVersions = ref<DictionaryVersion[]>([])
 
+const selected = computed(() => dictionaries.value.find(item => item.dictionary_id === selectedId.value) ?? null)
+const dirty = computed(() => serializeRows() !== baseRows.value || caseSensitive.value !== baseCaseSensitive.value || creatingNew.value)
+const hasChanges = computed(() => serializeRows() !== baseRows.value || caseSensitive.value !== baseCaseSensitive.value)
+const mappingCount = computed(() => Object.keys(mappingFromRows()).length)
+const visibleRows = computed(() => {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  return rows.value
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => !keyword || row.source.toLowerCase().includes(keyword) || row.target.toLowerCase().includes(keyword))
+})
+
+function serializeRows(): string {
+  return JSON.stringify(rows.value.map(row => [row.source.trim(), row.target.trim()]))
+}
+function mappingFromRows(): Record<string, string> {
+  const mapping: Record<string, string> = {}
+  for (const row of rows.value) {
+    const source = row.source.trim()
+    if (!source) continue
+    mapping[source] = row.target.trim()
+  }
+  return mapping
+}
 function humanBytes(value: number): string {
   const bytes = Number(value || 0)
   if (bytes < 1024) return `${bytes} B`
@@ -122,11 +153,124 @@ async function loadBusiness(): Promise<void> {
   loading.value = true
   try {
     dictionaries.value = (await api.get('/dictionaries')).data ?? []
+    if (!selectedId.value && dictionaries.value.length) await openForEdit(dictionaries.value[0])
   } catch (error) {
     ElMessage.error((error as Error).message)
   } finally {
     loading.value = false
   }
+}
+async function openForEdit(row: DictionaryRow): Promise<void> {
+  try {
+    const detail = (await api.get(`/dictionaries/${row.dictionary_id}`)).data
+    const document = detail.latest?.document ?? {}
+    creatingNew.value = false
+    selectedId.value = row.dictionary_id
+    selectedName.value = row.name
+    currentVersion.value = Number(detail.latest?.version_no ?? row.latest_version ?? 0)
+    currentUpdated.value = row.updated_at
+    baseVersion.value = currentVersion.value
+    caseSensitive.value = Boolean(document.case_sensitive ?? true)
+    baseCaseSensitive.value = caseSensitive.value
+    rows.value = Object.entries((document.mapping ?? {}) as Record<string, string>).map(([source, target]) => ({ source, target: String(target) }))
+    baseRows.value = serializeRows()
+    searchKeyword.value = ''
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+function switchDictionary(dictionaryId: string): void {
+  const row = dictionaries.value.find(item => item.dictionary_id === dictionaryId)
+  if (row) void openForEdit(row)
+}
+function startCreate(): void {
+  if (!canMaintain.value) return
+  creatingNew.value = true
+  selectedId.value = ''
+  selectedName.value = ''
+  currentVersion.value = 0
+  currentUpdated.value = ''
+  baseVersion.value = 0
+  newName.value = ''
+  caseSensitive.value = true
+  baseCaseSensitive.value = true
+  rows.value = [{ source: '', target: '' }]
+  baseRows.value = '[]'
+  searchKeyword.value = ''
+}
+function addMappingRow(): void {
+  searchKeyword.value = ''
+  rows.value.push({ source: '', target: '' })
+}
+function removeMappingRow(index: number): void {
+  rows.value.splice(index, 1)
+  if (!rows.value.length) rows.value.push({ source: '', target: '' })
+}
+function revertChanges(): void {
+  if (creatingNew.value) {
+    if (dictionaries.value.length) void openForEdit(dictionaries.value[0])
+    else startCreate()
+    return
+  }
+  if (selected.value) void openForEdit(selected.value)
+}
+async function saveSynonyms(): Promise<void> {
+  const mapping = mappingFromRows()
+  if (!canMaintain.value || !Object.keys(mapping).length) return
+  if (creatingNew.value && !newName.value.trim()) {
+    ElMessage.warning('请填写同义词表名称')
+    return
+  }
+  saving.value = true
+  try {
+    if (creatingNew.value) {
+      const created = (await api.post('/dictionaries', { name: newName.value.trim(), mapping, case_sensitive: caseSensitive.value })).data
+      ElMessage.success(`已保存为第 ${created.latest?.version_no ?? 1} 版`)
+      await loadBusiness()
+      const createdRow = dictionaries.value.find(item => item.dictionary_id === created.dictionary_id)
+      if (createdRow) await openForEdit(createdRow)
+    } else {
+      const result = (await api.post(`/dictionaries/${selectedId.value}/versions`, {
+        mapping,
+        case_sensitive: caseSensitive.value,
+        base_version_no: baseVersion.value,
+      })).data
+      ElMessage.success(`已保存为第 ${result.version_no} 版`)
+      currentVersion.value = Number(result.version_no)
+      baseVersion.value = currentVersion.value
+      await loadBusiness()
+      const refreshed = dictionaries.value.find(item => item.dictionary_id === selectedId.value)
+      if (refreshed) {
+        currentUpdated.value = refreshed.updated_at
+        baseRows.value = serializeRows()
+        baseCaseSensitive.value = caseSensitive.value
+      }
+    }
+  } catch (error: any) {
+    const code = String(error?.response?.data?.error?.code ?? error?.code ?? '')
+    if (code === 'DICTIONARY_VERSION_CONFLICT') {
+      ElMessage.warning(String(error?.response?.data?.error?.message ?? '同义词已被其他人更新，请刷新后基于最新版本重新编辑'))
+      await loadBusiness()
+      if (selected.value) await openForEdit(selected.value)
+    } else {
+      ElMessage.error((error as Error).message)
+    }
+  } finally {
+    saving.value = false
+  }
+}
+async function showHistory(): Promise<void> {
+  if (!selectedId.value) return
+  try {
+    historyVersions.value = (await api.get(`/dictionaries/${selectedId.value}/versions`)).data ?? []
+    historyVisible.value = true
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+async function refresh(): Promise<void> {
+  await loadBusiness()
+  if (technicalLoaded.value) await loadAdvanced(true)
 }
 async function loadAdvanced(force = false): Promise<void> {
   if (!isAdmin.value || (technicalLoaded.value && !force)) return
@@ -147,86 +291,15 @@ async function loadAdvanced(force = false): Promise<void> {
     technicalLoading.value = false
   }
 }
-async function refresh(): Promise<void> {
-  await loadBusiness()
-  if (technicalLoaded.value) await loadAdvanced(true)
-}
 async function handleAdvancedChange(names: string | string[]): Promise<void> {
   const values = Array.isArray(names) ? names : [names]
   if (values.includes('technical')) await loadAdvanced()
 }
 
-function mappingFromRows(): Record<string, string> {
-  const mapping: Record<string, string> = {}
-  for (const row of dictionaryRows.value) {
-    const source = row.source.trim()
-    if (!source) continue
-    mapping[source] = row.target.trim()
-  }
-  return mapping
-}
-function newDictionary(): void {
-  if (!canMaintain.value) return
-  selectedDictionary.value = null
-  dictionaryName.value = ''
-  dictionaryCaseSensitive.value = true
-  dictionaryRows.value = [{ source: '', target: '' }]
-  dictionaryDialogVisible.value = true
-}
-async function newDictionaryVersion(row: DictionaryRow): Promise<void> {
-  if (!canMaintain.value) return
-  try {
-    const detail = (await api.get(`/dictionaries/${row.dictionary_id}`)).data
-    selectedDictionary.value = row
-    dictionaryName.value = row.name
-    dictionaryCaseSensitive.value = detail.latest?.document?.case_sensitive ?? true
-    dictionaryRows.value = Object.entries(detail.latest?.document?.mapping ?? {}).map(([source, target]) => ({ source, target: String(target) }))
-    if (!dictionaryRows.value.length) dictionaryRows.value = [{ source: '', target: '' }]
-    dictionaryDialogVisible.value = true
-  } catch (error) {
-    ElMessage.error((error as Error).message)
-  }
-}
-async function saveDictionary(): Promise<void> {
-  const mapping = mappingFromRows()
-  if (!canMaintain.value || !Object.keys(mapping).length || (!selectedDictionary.value && !dictionaryName.value.trim())) return
-  dictionarySaving.value = true
-  try {
-    if (selectedDictionary.value) {
-      const result = (await api.post(`/dictionaries/${selectedDictionary.value.dictionary_id}/versions`, {
-        mapping,
-        case_sensitive: dictionaryCaseSensitive.value,
-      })).data
-      ElMessage.success(`业务字典第 ${result.version_no} 版已创建`)
-    } else {
-      await api.post('/dictionaries', {
-        name: dictionaryName.value.trim(),
-        mapping,
-        case_sensitive: dictionaryCaseSensitive.value,
-      })
-      ElMessage.success('业务字典已创建')
-    }
-    dictionaryDialogVisible.value = false
-    await loadBusiness()
-  } catch (error) {
-    ElMessage.error((error as Error).message)
-  } finally {
-    dictionarySaving.value = false
-  }
-}
-async function showDictionaryHistory(row: DictionaryRow): Promise<void> {
-  try {
-    selectedDictionary.value = row
-    dictionaryVersions.value = (await api.get(`/dictionaries/${row.dictionary_id}/versions`)).data ?? []
-    dictionaryHistoryVisible.value = true
-  } catch (error) {
-    ElMessage.error((error as Error).message)
-  }
-}
-
 onMounted(async () => {
   await loadCurrentRole()
   await loadBusiness()
+  if (!dictionaries.value.length && canMaintain.value) startCreate()
 })
 </script>
 
@@ -235,48 +308,94 @@ onMounted(async () => {
     <div class="toolbar data-view__header">
       <div>
         <span class="data-view__eyebrow">业务维护</span>
-        <h2>业务字典</h2>
-        <p>日常匹配任务无需预先维护集团码目录。源 Excel 与目标集团码 Excel 请直接在“第一步 · 数据上传”中选择，平台会自动管理文件与索引。</p>
+        <h2>同义词配置</h2>
+        <p>用于统一物料名称、厂家、规格等内容的不同写法。修改保存后自动形成新版本，不影响历史任务。</p>
       </div>
       <el-button @click="refresh" :loading="loading || technicalLoading">刷新</el-button>
     </div>
 
-    <section class="dictionary-guide" aria-label="业务字典说明">
+    <section class="dictionary-guide" aria-label="同义词说明">
       <div>
-        <strong>什么时候需要业务字典？</strong>
-        <p>当同一种材质、规格或业务术语存在简称、同义词或不同写法时，可在这里统一成标准表达。</p>
+        <strong>什么时候需要同义词？</strong>
+        <p>当同一种物料、厂家或规格存在简称、同义词或不同写法时，在这里统一成标准表达，匹配会更准。</p>
       </div>
       <div>
         <strong>不会影响历史结果</strong>
-        <p>每次修改都会形成新版本；已经运行的任务仍保留当时使用的规则，便于追溯。</p>
+        <p>保存后系统自动生成新的同义词版本；已经运行的任务仍使用当时的版本，便于追溯。</p>
       </div>
-      <em>{{ dictionaries.length }} 个字典</em>
+      <em>{{ dictionaries.length }} 张同义词表</em>
     </section>
 
-    <div class="panel data-business-panel">
+    <div class="panel data-business-panel" v-loading="loading">
       <div class="data-business-panel__heading">
         <div>
-          <h3>同义词与规范值</h3>
-          <p>字典只有在任务规则明确引用时才生效，不会自动改变所有匹配任务。</p>
+          <h3>当前同义词配置</h3>
+          <p>直接在列表中维护；同义词只有在任务规则明确引用时才生效，不会自动改变所有匹配任务。</p>
         </div>
         <div class="heading-actions">
           <el-tag v-if="!canMaintain" type="info" effect="plain">只读查看</el-tag>
-          <el-button v-if="canMaintain" type="primary" @click="newDictionary">新建业务字典</el-button>
+          <el-tag v-else-if="dirty" type="warning" effect="light">有未保存的修改</el-tag>
+          <el-button v-if="canMaintain && !creatingNew" plain @click="startCreate">新建同义词表</el-button>
         </div>
       </div>
 
-      <el-table :data="dictionaries" v-loading="loading" empty-text="还没有业务字典。只有存在同义词、简称或规范值需求时才需要建立。">
-        <el-table-column prop="name" label="字典名称" min-width="220" />
-        <el-table-column label="当前版本" width="120"><template #default="scope">第 {{ scope.row.latest_version }} 版</template></el-table-column>
-        <el-table-column prop="entry_count" label="映射规则" width="120"><template #default="scope">{{ scope.row.entry_count }} 条</template></el-table-column>
-        <el-table-column label="最近更新" min-width="170"><template #default="scope">{{ formatDateTime(scope.row.updated_at) }}</template></el-table-column>
-        <el-table-column label="操作" :width="canMaintain ? 220 : 100" fixed="right">
-          <template #default="scope">
-            <el-button v-if="canMaintain" link type="primary" @click="newDictionaryVersion(scope.row)">创建新版本</el-button>
-            <el-button link @click="showDictionaryHistory(scope.row)">查看历史</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-radio-group v-if="dictionaries.length > 1 && !creatingNew" class="syn-switch" :model-value="selectedId" @change="(value: unknown) => switchDictionary(String(value))">
+        <el-radio-button v-for="item in dictionaries" :key="item.dictionary_id" :value="item.dictionary_id">{{ item.name }}</el-radio-button>
+      </el-radio-group>
+
+      <div class="syn-meta">
+        <span v-if="creatingNew">同义词表：<b>新建</b></span>
+        <span v-else-if="selectedId">
+          同义词表：<b>{{ selectedName }}</b>
+          · 当前版本：<b>第 {{ currentVersion }} 版</b>
+          · 共 {{ mappingCount }} 条
+          · 最近更新：{{ formatDateTime(currentUpdated) }}
+        </span>
+        <el-button v-if="selectedId && !creatingNew" link type="primary" @click="showHistory">查看历史</el-button>
+      </div>
+
+      <div v-if="creatingNew" class="syn-name">
+        <span>同义词表名称</span>
+        <el-input v-model="newName" maxlength="120" placeholder="例如：物料名称同义词" class="syn-name__input" :disabled="!canMaintain" />
+      </div>
+
+      <div class="syn-settings">
+        <span class="syn-settings__title">匹配设置</span>
+        <label class="syn-settings__item">
+          <span>区分大小写</span>
+          <el-switch v-model="caseSensitive" :disabled="!canMaintain" />
+          <em>关闭后，ABC 与 abc 按相同写法处理。</em>
+        </label>
+      </div>
+
+      <div class="syn-toolbar">
+        <el-input v-model="searchKeyword" clearable placeholder="搜索同义词（原始写法或统一写法）" class="syn-search" />
+        <div class="syn-toolbar__actions">
+          <el-button v-if="canMaintain" :disabled="!dirty" @click="revertChanges">放弃修改</el-button>
+          <el-button v-if="canMaintain" type="primary" plain @click="addMappingRow">+ 添加一条</el-button>
+          <el-button v-if="canMaintain" type="primary" :loading="saving" :disabled="!mappingCount || !dirty" @click="saveSynonyms">保存修改</el-button>
+        </div>
+      </div>
+
+      <div class="syn-grid" :class="{ 'is-readonly': !canMaintain }">
+        <div class="syn-grid__head">
+          <span>原始写法</span>
+          <span class="syn-arrow" aria-hidden="true"></span>
+          <span>统一写法</span>
+          <span class="syn-actions-head">操作</span>
+        </div>
+        <div v-for="{ row, index } in visibleRows" :key="index" class="syn-grid__row">
+          <el-input v-model="row.source" placeholder="例如：三极管" :disabled="!canMaintain" />
+          <span class="syn-arrow" aria-hidden="true">→</span>
+          <el-input v-model="row.target" placeholder="例如：晶体管" :disabled="!canMaintain" />
+          <span class="syn-actions">
+            <el-button v-if="canMaintain" link type="danger" @click="removeMappingRow(index)">删除</el-button>
+          </span>
+        </div>
+        <p v-if="!visibleRows.length && rows.length" class="syn-empty">没有匹配“{{ searchKeyword }}”的同义词。</p>
+        <p v-if="!rows.length" class="syn-empty">还没有同义词，点击“+ 添加一条”开始维护。</p>
+      </div>
+      <p class="syn-save-note">保存后将形成新的同义词版本，历史任务不会受到影响。</p>
     </div>
 
     <section v-if="isAdmin" class="technical-zone">
@@ -329,35 +448,23 @@ onMounted(async () => {
       </el-collapse>
     </section>
 
-    <el-dialog v-model="dictionaryDialogVisible" :title="selectedDictionary ? `创建新版本：${selectedDictionary.name}` : '新建业务字典'" width="760px">
-      <div class="dialog-explain">一条映射表示“左侧业务写法 → 右侧规范写法”。保存后会形成独立版本，不会改写已经运行的历史任务。</div>
-      <el-form label-width="110px" class="dictionary-form">
-        <el-form-item label="字典名称"><el-input v-model="dictionaryName" :disabled="Boolean(selectedDictionary)" placeholder="例如：材质简称规范化" /></el-form-item>
-        <el-form-item label="区分大小写"><el-switch v-model="dictionaryCaseSensitive" /><span class="field-help">关闭后，ABC 与 abc 会按相同写法处理。</span></el-form-item>
-        <el-form-item label="映射规则">
-          <div class="mapping-editor">
-            <div v-for="(row, index) in dictionaryRows" :key="index" class="mapping-row">
-              <el-input v-model="row.source" placeholder="原写法 / 同义词" />
-              <span>→</span>
-              <el-input v-model="row.target" placeholder="规范写法" />
-              <el-button link type="danger" @click="dictionaryRows.splice(index, 1)">删除</el-button>
+    <el-dialog v-model="historyVisible" :title="`同义词版本历史：${selectedName}`" width="820px">
+      <p class="history-explain">历史版本仅供查看，不可修改；已运行的任务始终使用当时的版本。</p>
+      <el-table :data="historyVersions" empty-text="暂无历史版本">
+        <el-table-column type="expand">
+          <template #default="scope">
+            <div class="history-detail">
+              <div class="history-detail__head"><span>原始写法</span><span>→</span><span>统一写法</span></div>
+              <div v-for="(value, key) in scope.row.document?.mapping ?? {}" :key="key" class="history-detail__row">
+                <span>{{ key }}</span><span>→</span><span>{{ value }}</span>
+              </div>
             </div>
-            <el-button link type="primary" @click="dictionaryRows.push({ source: '', target: '' })">+ 添加一条映射</el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dictionaryDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="dictionarySaving" :disabled="!Object.keys(mappingFromRows()).length || (!selectedDictionary && !dictionaryName.trim())" @click="saveDictionary">{{ selectedDictionary ? '创建新版本' : '创建字典' }}</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="dictionaryHistoryVisible" :title="selectedDictionary ? `版本历史：${selectedDictionary.name}` : '字典版本历史'" width="720px">
-      <p class="history-explain">历史版本用于追溯已有任务，不会因新增版本而被覆盖。</p>
-      <el-table :data="dictionaryVersions" empty-text="暂无历史版本">
+          </template>
+        </el-table-column>
         <el-table-column label="版本" width="110"><template #default="scope">第 {{ scope.row.version_no }} 版</template></el-table-column>
-        <el-table-column label="映射规则" width="120"><template #default="scope">{{ Object.keys(scope.row.document?.mapping ?? {}).length }} 条</template></el-table-column>
+        <el-table-column label="映射条数" width="110"><template #default="scope">{{ Object.keys(scope.row.document?.mapping ?? {}).length }} 条</template></el-table-column>
         <el-table-column label="大小写规则" width="130"><template #default="scope">{{ scope.row.document?.case_sensitive ? '区分大小写' : '不区分大小写' }}</template></el-table-column>
+        <el-table-column label="创建账号" min-width="120"><template #default="scope">{{ scope.row.created_by || '-' }}</template></el-table-column>
         <el-table-column label="创建时间" min-width="170"><template #default="scope">{{ formatDateTime(scope.row.created_at) }}</template></el-table-column>
       </el-table>
     </el-dialog>

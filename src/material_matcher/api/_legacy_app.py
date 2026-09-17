@@ -108,6 +108,7 @@ class DictionaryCreate(BaseModel):
 class DictionaryVersionCreate(BaseModel):
     mapping: dict[str, str] = Field(min_length=1)
     case_sensitive: bool = True
+    base_version_no: int | None = Field(default=None, ge=1)
 
 
 class ProfileCreate(BaseModel):
@@ -397,13 +398,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/dictionaries")
     def list_dictionaries() -> list[dict[str, object]]: return dictionaries.list()
     @app.post("/api/dictionaries")
-    def create_dictionary(payload: DictionaryCreate) -> dict[str, object]: return dictionaries.create(payload.name, {"mapping": payload.mapping, "case_sensitive": payload.case_sensitive})
+    def create_dictionary(payload: DictionaryCreate, request: Request) -> dict[str, object]:
+        return dictionaries.create(
+            payload.name,
+            {"mapping": payload.mapping, "case_sensitive": payload.case_sensitive},
+            operator=str(getattr(request.state, "username", "system")),
+        )
     @app.get("/api/dictionaries/{dictionary_id}")
     def get_dictionary(dictionary_id: str) -> dict[str, object]: return dictionaries.get(dictionary_id)
     @app.get("/api/dictionaries/{dictionary_id}/versions")
     def dictionary_versions(dictionary_id: str) -> list[dict[str, object]]: return dictionaries.versions(dictionary_id)
     @app.post("/api/dictionaries/{dictionary_id}/versions")
-    def create_dictionary_version(dictionary_id: str, payload: DictionaryVersionCreate) -> dict[str, object]: return dictionaries.add_version(dictionary_id, {"mapping": payload.mapping, "case_sensitive": payload.case_sensitive})
+    def create_dictionary_version(dictionary_id: str, payload: DictionaryVersionCreate, request: Request) -> dict[str, object]:
+        return dictionaries.add_version(
+            dictionary_id,
+            {"mapping": payload.mapping, "case_sensitive": payload.case_sensitive},
+            operator=str(getattr(request.state, "username", "system")),
+            base_version_no=payload.base_version_no,
+        )
     @app.get("/api/profiles")
     def list_profiles() -> list[dict[str, object]]: return profiles.list()
     @app.post("/api/profiles")

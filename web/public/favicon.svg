@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 340 340" role="img" aria-label="小罡 AI">
+  <rect x="28" y="28" width="284" height="284" rx="68" fill="#F3F3F3" stroke="#DFDFDF" stroke-width="5"/>
+  <path transform="translate(27.2 27.2) scale(.84)" fill="#BF2D2B" d="M205.01 21.76C277.37 114.16 126.85 160.8 103.94 239.52C7.77 157.08 172.37 93.36 205.01 21.76Z"/>
+  <path transform="translate(27.2 27.2) scale(.84)" fill="#1C2B7E" d="M233.52 92.66C337.04 175.54 161.32 240.64 132.46 317.06C57.19 221.08 208.33 172.91 233.52 92.66Z"/>
+</svg>
