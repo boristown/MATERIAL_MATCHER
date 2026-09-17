@@ -3,6 +3,7 @@ import LoginView from './views/LoginView.vue'
 import DataView from './views/DataView.vue'
 import ProfilesView from './views/ProfilesView.vue'
 import SystemView from './views/SystemView.vue'
+import AboutView from './views/AboutView.vue'
 import TasksView from './views/TasksView.vue'
 import ReviewView from './views/ReviewView.vue'
 import ResultsView from './views/ResultsView.vue'
@@ -24,5 +25,6 @@ export const router = createRouter({
     { path: '/tasks/:taskId', component: TaskWorkspace, meta: { navStep: 2, workspace: true } },
     { path: '/data', component: DataView },
     { path: '/system', component: SystemView },
+    { path: '/system/about', component: AboutView },
   ],
 })
