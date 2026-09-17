@@ -165,14 +165,18 @@ def _verify_release_manifest(root: Path, manifest: dict[str, object], release_ve
         or not re.fullmatch(r"[0-9a-f]{64}", runtime_manifest_sha)
     ):
         raise ValueError("release manifest 缺少 Python 版本或 Runtime/源码/前端摘要")
-    source_root = root / "release/app"
-    web_root = root / "release/web/dist"
+    source_root = root / "release/source"
+    web_root = root / "release/web-dist"
     if not source_root.is_dir() or not web_root.is_dir():
-        raise ValueError("release 缺少 app 源码或 web/dist")
+        raise ValueError("release 缺少 source 源码或 web-dist")
     if _tree_sha256(source_root) != source_sha:
         raise ValueError("Release 源码与 release manifest 摘要不一致")
     if _tree_sha256(web_root) != web_sha:
         raise ValueError("Release 前端与 release manifest 摘要不一致")
+    if str(release_manifest.get("source_path") or "") != "source/src":
+        raise ValueError("release manifest source_path 必须为 source/src")
+    if str(release_manifest.get("web_dist_path") or "") != "web-dist":
+        raise ValueError("release manifest web_dist_path 必须为 web-dist")
     _verify_runtime_manifest(root, release_manifest, target_arch)
     return release_manifest
 
@@ -242,19 +246,34 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     model_prefix = f"models/{model_id}/"
     required_exact = {
         "install.sh",
+        "install_wizard.sh",
+        "启动安装.sh",
+        "安装物料集团码智能匹配平台.desktop",
         "verify_offline_bundle.py",
         "release/release-manifest.json",
         "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
-        "release/app/material_matcher/__init__.py",
-        "release/web/dist/index.html",
+        "release/source/pyproject.toml",
+        "release/source/src/material_matcher/__init__.py",
+        "release/source/web/package.json",
+        "release/source/scripts/build_release.py",
+        "release/source/installer/install.sh",
+        "release/web-dist/index.html",
+        "release/web-dist/build-info.json",
         f"models/{model_id}/tokenizer.json",
     }
     missing_required = sorted(required_exact - set(expected))
     if missing_required:
         raise ValueError(f"离线包缺少必需组件：{', '.join(missing_required)}")
-    for executable in ("install.sh", "release/runtime/bin/python3", "release/runtime/bin/material-matcher"):
+    for executable in (
+        "install.sh",
+        "install_wizard.sh",
+        "启动安装.sh",
+        "安装物料集团码智能匹配平台.desktop",
+        "release/runtime/bin/python3",
+        "release/runtime/bin/material-matcher",
+    ):
         _require_executable(actual, executable)
 
     release_manifest = _verify_release_manifest(root, manifest, release_version, target_arch)
@@ -272,6 +291,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "target_arch": target_arch,
         "model_id": model_id,
         "python_version": release_manifest["python_version"],
+        "deployment_mode": release_manifest.get("deployment_mode", "native-source"),
         "file_count": len(expected),
     }
 
