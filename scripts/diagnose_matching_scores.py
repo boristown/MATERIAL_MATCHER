@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 from collections import defaultdict
+from pathlib import Path
 
 from evaluate_matching_quality import (
     SOURCE_PATH,
@@ -52,7 +54,7 @@ def _sample(row: RowResult, truth: dict[str, str]) -> dict[str, object]:
     }
 
 
-def main() -> int:
+def run() -> dict[str, object]:
     truth = _truth()
     rows = match_rows(
         SOURCE_PATH,
@@ -86,7 +88,7 @@ def main() -> int:
             if values
         }
 
-    report = {
+    return {
         "lowest_correct_top1": [
             _sample(row, truth[row.source_id])
             for row in sorted(matchable, key=lambda item: item.first_score)[:12]
@@ -98,7 +100,18 @@ def main() -> int:
         "field_score_means": aggregates,
         "note": "These are calibrated scan scores. The samples diagnose absolute-score calibration; they are not vector-retrieval evidence.",
     }
-    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Print field-level scan score diagnostics for the realistic fixture")
+    parser.add_argument("--output", type=Path, help="optional JSON output path")
+    args = parser.parse_args()
+    report = run()
+    encoded = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+    print(encoded)
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(encoded + "\n", encoding="utf-8")
     return 0
 
 
