@@ -205,6 +205,67 @@
   line-height: 1.6;
 }
 
+.syn-mode-tag {
+  vertical-align: 3px;
+}
+
+.syn-example {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px dashed #c9d8f0;
+  border-radius: 9px;
+  background: #f6f9ff;
+  font-size: 12.5px;
+  color: #5b6676;
+}
+
+.syn-example strong {
+  color: #2563eb;
+  font-size: 12px;
+}
+
+.syn-example__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.syn-example__pair code {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #e4e8ef;
+  color: #1f2d3d;
+  font-size: 12.5px;
+}
+
+.syn-example__pair i {
+  color: #9aa5b4;
+  font-style: normal;
+}
+
+.syn-example em {
+  color: #8a94a4;
+  font-style: normal;
+}
+
+.syn-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.syn-groups__label {
+  color: #8b95a5;
+  font-size: 12px;
+}
+
 .syn-switch {
   margin: 2px 0 12px;
 }

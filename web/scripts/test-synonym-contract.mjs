@@ -14,11 +14,11 @@ const html = read('index.html')
 const favicon = read('public', 'favicon.svg')
 
 const requiredView = [
-  '<h2>同义词配置</h2>',
+  '<h2>同义词配置',
   '当前同义词配置',
   '保存修改',
   '+ 添加一条',
-  '搜索同义词（原始写法或统一写法）',
+  '搜索同义词（其他写法或标准写法）',
   '查看历史',
   '有未保存的修改',
   '已保存为第',
@@ -29,8 +29,13 @@ const requiredView = [
   'DICTIONARY_VERSION_CONFLICT',
   'syn-grid__head',
   'syn-grid__row',
-  '原始写法',
-  '统一写法',
+  '其他写法',
+  '标准写法',
+  '写法归一化',
+  '将物料中的不同写法统一为标准写法后再参与匹配',
+  '源数据和集团码标准数据都会使用同一套归一化规则',
+  '匹配时两边都会先转换成标准写法',
+  'canonicalGroups',
   '删除',
   '同义词版本历史',
   'created_by',
@@ -39,12 +44,15 @@ for (const token of requiredView) {
   if (!view.includes(token)) throw new Error(`Synonym view contract missing: ${token}`)
 }
 
-const bannedView = ['创建新版本', '业务字典', '数据字典', '字典管理', 'dictionaryDialogVisible', 'mapping-editor']
+const bannedView = ['创建新版本', '业务字典', '数据字典', '字典管理', 'dictionaryDialogVisible', 'mapping-editor', '原始写法', '统一写法', '↔']
 for (const token of bannedView) {
   if (view.includes(token)) throw new Error(`Synonym view must not contain: ${token}`)
 }
 
 if (!app.includes("['同义词配置', '/data']")) throw new Error('Side menu must show 同义词配置')
+for (const token of ['归一化配置', '标准化配置', '术语归一化', '数据清洗']) {
+  if (app.includes(token)) throw new Error(`Side menu must stay 同义词配置, found ${token}`)
+}
 for (const token of ['业务字典', '数据字典', '字典管理']) {
   if (app.includes(token)) throw new Error(`Side menu must not contain ${token}`)
   if (system.includes(token)) throw new Error(`System page must not contain ${token}`)
