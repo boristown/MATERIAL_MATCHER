@@ -1,0 +1,12 @@
+{
+ "run_id": "6f31f565982241b685505b3bdff266ff",
+ "truth_rows": 1000,
+ "truth_coverage": 1.0,
+ "top1_accuracy": 0.691111,
+ "candidate_recall_at_5": 1.0,
+ "automatic_match_precision": 0.930435,
+ "final_accuracy": 0.135,
+ "review_rate": 0.841,
+ "current_review_rate": 0.714,
+ "no_match_false_positive_rate": 0.08
+}
