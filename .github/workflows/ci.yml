@@ -13,6 +13,8 @@ jobs:
           python-version: '3.11'
       - run: pip install -e '.[dev]'
       - run: pytest -q
+      - name: Real-world matching quality (scan baseline)
+        run: python scripts/evaluate_matching_quality.py
       - run: python -m compileall -q src
       - run: bash -n installer/install.sh
       - run: python scripts/check_repo_files.py
