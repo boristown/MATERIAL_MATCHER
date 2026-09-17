@@ -207,12 +207,15 @@ class AcceptanceService:
         if recall5 is None and recall_at.get("5") is not None:
             recall5 = float(recall_at["5"])
         automatic_precision = self._metric(metrics, "automatic_match_precision", "automatic_accuracy")
+        review_rate = self._metric(metrics, "current_review_rate", "review_rate")
         no_match_fpr = self._metric(metrics, "no_match_false_positive_rate")
         missing_evidence: list[str] = []
         if recall5 is None:
             missing_evidence.append("candidate_recall_at_5")
         if automatic_precision is None:
             missing_evidence.append("automatic_match_precision")
+        if review_rate is None:
+            missing_evidence.append("review_rate")
         if no_match_fpr is None:
             missing_evidence.append("no_match_false_positive_rate")
         if missing_evidence:
@@ -229,7 +232,7 @@ class AcceptanceService:
             "candidate_recall_at_5": recall5 >= float(thresholds["min_candidate_recall_at_5"]),
             "automatic_match_precision": automatic_precision >= float(thresholds["min_automatic_precision"]),
             "final_accuracy": float(metrics.get("final_accuracy") or 0.0) >= float(thresholds["min_final_accuracy"]),
-            "review_rate": float(metrics.get("review_rate") or 0.0) <= float(thresholds["max_review_rate"]),
+            "review_rate": review_rate <= float(thresholds["max_review_rate"]),
             "no_match_false_positive_rate": no_match_fpr <= float(thresholds["max_no_match_false_positive_rate"]),
         }
         passed = all(checks.values())
@@ -237,7 +240,7 @@ class AcceptanceService:
             "business_gold_evaluation",
             "PASS" if passed else "FAIL",
             "真实业务金标指标达到项目验收阈值" if passed else "真实业务金标指标低于项目验收阈值",
-            {"latest_evaluation": evaluation, "thresholds": thresholds, "checks": checks},
+            {"latest_evaluation": evaluation, "thresholds": thresholds, "checks": checks, "effective_review_rate": review_rate},
         )
 
     def _million_scale_gate(self, policy_ready: bool) -> dict[str, Any]:
