@@ -101,26 +101,26 @@ ui_entry() {  # $1 标题 $2 提示 $3 默认值
   case "$GUI" in
     zenity)  zenity --entry --title="$1" --text="$2" --entry-text="$3" --width=600 ;;
     kdialog) kdialog --title "$1" --inputbox "$2" "$3" ;;
-    *)       local v; printf '%s [%s]：' "$2" "$3"; read -r v; printf '%s' "${v:-$3}" ;;
+    *)       local v; printf '%s [%s]：' "$2" "$3" >&2; read -r v; printf '%s' "${v:-$3}" ;;
   esac
 }
 
 ui_password() {  # stdout 密码；空表示放弃手工输入
   case "$GUI" in
     zenity)  zenity --password --title="$1" ;;
-    kdialog) kdialog --title "$1" --password "管理员密码（至少 8 位）" ;;
+    kdialog) kdialog --title "$1" --password "管理员密码（至少 10 位）" ;;
     *)
       local p1 p2
-      printf '%s（至少 8 位，输入不回显；直接回车改用自动生成）：' "$1"
-      IFS= read -rs p1; echo
+      printf '%s（至少 10 位，输入不回显；直接回车改用自动生成）：' "$1" >&2
+      IFS= read -rs p1; echo >&2
       [[ -z "$p1" ]] && return 0
-      while [[ ${#p1} -lt 8 ]]; do
-        printf '密码太短（至少 8 位），重新输入（回车改用自动生成）：'; IFS= read -rs p1; echo
+      while [[ ${#p1} -lt 10 ]]; do
+        printf '密码太短（至少 10 位），重新输入（回车改用自动生成）：' >&2; IFS= read -rs p1; echo >&2
         [[ -z "$p1" ]] && { printf ''; return 0; }
       done
-      printf '再次输入确认：'; IFS= read -rs p2; echo
+      printf '再次输入确认：' >&2; IFS= read -rs p2; echo >&2
       while [[ "$p1" != "$p2" ]]; do
-        printf '两次不一致，重新确认：'; IFS= read -rs p2; echo
+        printf '两次不一致，重新确认：' >&2; IFS= read -rs p2; echo >&2
       done
       printf '%s' "$p1"
       ;;
@@ -191,7 +191,11 @@ run_env_checks() {
     CHECK_LINES+=("ℹ️ 未检测到已安装版本：本次为首次安装")
   fi
 
-  if port_busy "$PORT_DEFAULT"; then
+  own_service=0
+  if [[ "$IS_UPGRADE_DETECTED" == "1" ]] && systemctl is-active --quiet material_matcher.service 2>/dev/null; then
+    own_service=1  # 占用者就是本产品自身：升级会短暂停服再复用同一端口，不算冲突
+  fi
+  if [[ "$own_service" == "0" ]] && port_busy "$PORT_DEFAULT"; then
     PORT_SUGGESTED="$("$PY" - "$PORT_DEFAULT" <<'PY'
 import socket, sys
 start = int(sys.argv[1]) + 1
@@ -255,10 +259,21 @@ exec_install_with_progress() {
     echo
     MM_PROGRESS_ON=1 MM_PORT_USER_CHOICE=1 MM_INSTALL_PORT="$CHOSEN_PORT" \
       MM_INSTALL_PREFIX="$INSTALL_PREFIX" \
-      env "${args[@]}" bash "$INSTALL_SH" 2>&1 | tee "$TMP_OUT"
+      env "${args[@]}" bash "$INSTALL_SH" 2>&1 | _relay_terminal
     INSTALL_RC=${PIPESTATUS[0]}
   fi
   cat "$TMP_OUT" >>"$WIZARD_LOG" 2>/dev/null || true
+}
+
+_relay_terminal() {
+  # 显示给人看：隐藏 @@协议行@@；完整原始输出保留在 TMP_OUT 供解析。
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >>"$TMP_OUT"
+    case "$line" in
+      "@@STEP@@|"*|"@@RESULT@@|"*) : ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done
 }
 
 _forward_steps() {
@@ -334,8 +349,8 @@ main() {
       while :; do
         pw="$(ui_password "设置管理员密码")" || { echo "已取消安装。"; exit 0; }
         if [[ -z "$pw" ]]; then PW_MODE="generated"; MM_ADMIN_PASSWORD_SET="$(generate_password)"; break; fi
-        if (( ${#pw} >= 8 )); then PW_MODE="user"; MM_ADMIN_PASSWORD_SET="$pw"; break; fi
-        ui_error "密码太短" "密码至少 8 位，请重新输入（或取消改用自动生成）。"
+        if (( ${#pw} >= 10 )); then PW_MODE="user"; MM_ADMIN_PASSWORD_SET="$pw"; break; fi
+        ui_error "密码太短" "密码至少 10 位，请重新输入（或取消改用自动生成）。"
       done
     else
       PW_MODE="generated"; MM_ADMIN_PASSWORD_SET="$(generate_password)"
@@ -407,7 +422,7 @@ PY
   fi
   local success_text="【安装成功】物料集团码智能匹配平台 ${BUNDLE_VERSION}\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
   [[ -n "$addrs" ]] && success_text="$success_text\n· 局域网访问地址：\n$addrs"
-  success_text="$success_text\n· 管理员账号：admin$pw_line\n· 安装报告：${report:-$WIZARD_LOG}\n\n请在浏览器打开上述地址，用 admin 登录，进入“系统设置 · 关于”核对版本。\n\n后续维护（状态/日志/备份/恢复/前端重建）：\n· 图形：双击介质中的 维护物料集团码智能匹配平台.desktop\n· 命令行：以 root 运行 维护工具.sh 或 mmctl"
+  success_text="$success_text\n· 管理员账号：admin$pw_line\n· 安装报告：${report:-$WIZARD_LOG}\n\n请在浏览器打开上述地址，用 admin 登录；出于安全，系统会要求首次登录时设置新的登录密码。\n登录后可在“系统设置 · 关于”核对版本号 ${BUNDLE_VERSION}。\n\n后续维护（状态/日志/备份/恢复/前端重建）：\n· 图形：双击介质中的 维护物料集团码智能匹配平台.desktop\n· 命令行：以 root 运行 维护工具.sh 或 mmctl"
   [[ -n "$fw" ]] && success_text="$success_text\n\n注意：$fw"
 
   if [[ "$GUI" == "zenity" ]]; then

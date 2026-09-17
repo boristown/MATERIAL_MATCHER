@@ -32,7 +32,7 @@
 
 ## 现场修改
 
-- 修改 Python 代码：编辑 `/opt/material_matcher/current/app/material_matcher/` 下源码（或 `source/src/`，两者一致），保存后执行 `mmctl restart` 生效。
+- 修改 Python 代码：编辑 `/opt/material_matcher/current/app/material_matcher/` 下源码（`source/src/` 为同一份工程源码），保存后执行 `mmctl restart` 生效。
 - 修改页面：编辑 `source/web/` 源码后执行 `mmctl rebuild-frontend`，再 `mmctl restart`。需要介质中的离线 Node 资源已安装（安装向导会自动放置到 `/opt/material_matcher/tools/node-offline`）。
 
 ## 升级

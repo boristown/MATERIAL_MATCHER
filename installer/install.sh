@@ -130,8 +130,9 @@ if [[ -L "$OPT/current" ]]; then IS_UPGRADE=1; fi
 find_data_mount() {
   findmnt -rn -o TARGET,FSTYPE,OPTIONS | while read -r target fs opts; do
     case "$fs" in ext2|ext3|ext4|xfs|btrfs) ;; *) continue ;; esac
+    [[ -d "$target" ]] || continue
     [[ "$target" == /boot* ]] && continue
-    [[ "$target" == /media/* || "$target" == /run/media/* ]] && continue
+    [[ "$target" == /etc/* || "$target" == /media/* || "$target" == /run/media/* ]] && continue
     grep -qw ro <<<"${opts//,/ }" && continue
     [[ -w "$target" ]] || continue
     avail=$(df -Pk "$target" | awk 'NR==2 {print $4}')
@@ -184,7 +185,13 @@ pick_port() {
     if [[ -n "$current" ]]; then echo "$current"; return 0; fi
   fi
   local port="${MM_INSTALL_PORT:-$DEFAULT_PORT}"
-  if port_free "$port"; then echo "$port"; return 0; fi
+  # 本产品旧服务正在监听该端口：升级会先停服再复用同一端口，不算冲突。
+  if port_free "$port"; then
+    echo "$port"; return 0
+  elif systemctl is-active --quiet material_matcher.service 2>/dev/null \
+    && grep -qx "MATERIAL_MATCHER_PORT=$port" "$SERVER_ENV" 2>/dev/null; then
+    echo "$port"; return 0
+  fi
   local next
   next="$(suggest_port "$((port + 1))" || true)"
   if [[ -z "${MM_PORT_AUTO_SWITCH:-}" || -z "$next" ]]; then
@@ -379,7 +386,7 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
 
   # 安装器 bootstrap runtime 落到程序目录，供维护工具在无系统 Python 时使用。
   if [[ -x "$BUNDLE_ROOT/bootstrap/python/bin/python3" ]]; then
-    step 30 "正在安装维护工具运行环境……"
+    step 44 "正在安装维护工具运行环境……"
     if [[ ! -x "$BOOTSTRAP_DEST/python/bin/python3" ]]; then
       mkdir -p "$BOOTSTRAP_DEST"
       cp -a "$BUNDLE_ROOT/bootstrap" "$BOOTSTRAP_DEST/python.tmp" 2>/dev/null || true
@@ -389,7 +396,7 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
   fi
 
   # 维护工具入口。
-  step 32 "正在安装维护工具……"
+  step 45 "正在安装维护工具……"
   mkdir -p "$OPT/bin"
   [[ -f "$BUNDLE_ROOT/mmctl" ]] && cp -f "$BUNDLE_ROOT/mmctl" "$OPT/bin/mmctl"
   [[ -f "$BUNDLE_ROOT/docs/维护手册.md" ]] && mkdir -p "$OPT/docs" && cp -f "$BUNDLE_ROOT/docs/维护手册.md" "$OPT/docs/维护手册.md"
@@ -403,7 +410,7 @@ if [[ -n "$BUNDLE_ROOT" ]]; then
   if [[ -n "$NODE_OFFLINE_DIR" && -d "$NODE_OFFLINE_DIR" ]]; then
     mkdir -p "$OPT/tools"
     if [[ ! -d "$OPT/tools/node-offline" ]]; then
-      step 34 "正在安装前端离线重建资源（体积较大，仅需一次）……"
+      step 46 "正在安装前端离线重建资源（体积较大，仅需一次）……"
       cp -a "$NODE_OFFLINE_DIR" "$OPT/tools/node-offline.tmp" 2>/dev/null || true
       rm -rf "$OPT/tools/node-offline"
       mv "$OPT/tools/node-offline.tmp" "$OPT/tools/node-offline" 2>/dev/null || true

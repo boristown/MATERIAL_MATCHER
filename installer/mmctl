@@ -187,7 +187,8 @@ cmd_rebuild_frontend() {
   mkdir -p "$src/node_modules"
   [[ -d "$src/node_modules/.installed" ]] || tar -xf "$tools/node_modules.tar" -C "$src/"
   ( cd "$src" && npm run build --offline --no-audit --no-fund ) || die "前端构建失败，请查看输出。"
-  echo "重建完成：$src/dist。运行 restart 命令生效。"
+  cp -a "$src/dist/." "$OPT/current/web/dist/" || die "构建产物复制到运行目录失败。"
+  echo "重建完成并已同步到 $OPT/current/web/dist。运行 mmctl restart 生效。"
 }
 
 usage() {
