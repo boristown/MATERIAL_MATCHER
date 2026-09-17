@@ -39,7 +39,7 @@ def _dictionary_map(before: object, options: dict[str, object]) -> object:
     if not isinstance(mapping_raw, Mapping):
         raise DomainError(
             "DICTIONARY_NOT_MATERIALIZED",
-            "业务字典尚未解析为运行时映射，请检查字典版本配置",
+            "同义词尚未解析为运行时映射，请检查版本配置",
             status_code=409,
         )
     mapping = {str(key): str(value) for key, value in mapping_raw.items()}

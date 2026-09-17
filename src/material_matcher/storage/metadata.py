@@ -225,6 +225,7 @@ class MetadataRepository:
             self._ensure_column(connection, "match_candidates", "target_row_number", "INTEGER")
             self._ensure_column(connection, "evaluation_runs", "expected_result_column", "TEXT")
             self._ensure_column(connection, "evaluation_items", "expected_result", "TEXT NOT NULL DEFAULT 'MATCH'")
+            self._ensure_column(connection, "dictionary_versions", "created_by", "TEXT NOT NULL DEFAULT ''")
             connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")
             connection.execute("UPDATE task_runtime SET current_phase='RECOVERING', updated_at=datetime('now') WHERE task_id IN (SELECT task_id FROM tasks WHERE status='RECOVERING')")
 

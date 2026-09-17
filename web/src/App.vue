@@ -14,7 +14,7 @@ const steps = [
   { n: 4, title: '第四步 · 输出结果', desc: '查看结果摘要并下载 Excel', path: '/results' },
 ] as const
 const support = [
-  ['业务字典', '/data'],
+  ['同义词配置', '/data'],
   ['系统设置', '/system'],
 ] as const
 const roleLabels: Record<string, string> = { admin: '管理员', operator: '操作员', reviewer: '复核员', viewer: '只读' }

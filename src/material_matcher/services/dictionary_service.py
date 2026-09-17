@@ -45,13 +45,13 @@ class DictionaryService:
     def validate_document(document: dict[str, Any]) -> dict[str, object]:
         mapping = document.get("mapping")
         if not isinstance(mapping, dict) or not mapping:
-            raise DomainError("INVALID_DICTIONARY", "业务字典至少需要一条映射", status_code=422)
+            raise DomainError("INVALID_DICTIONARY", "同义词规则至少需要一条", status_code=422)
         normalized: dict[str, str] = {}
         for raw_key, raw_value in mapping.items():
             key = str(raw_key)
             value = str(raw_value)
             if not key:
-                raise DomainError("INVALID_DICTIONARY", "业务字典映射键不能为空", status_code=422)
+                raise DomainError("INVALID_DICTIONARY", "同义词的原始写法不能为空", status_code=422)
             normalized[key] = value
         return {
             "mapping": normalized,
@@ -62,13 +62,13 @@ class DictionaryService:
         with self.meta.connect() as connection:
             row = connection.execute("SELECT * FROM dictionaries WHERE dictionary_id=?", (dictionary_id,)).fetchone()
         if row is None:
-            raise DomainError("DICTIONARY_NOT_FOUND", "业务字典不存在", status_code=404)
+            raise DomainError("DICTIONARY_NOT_FOUND", "同义词表不存在", status_code=404)
         return dict(row)
 
-    def create(self, name: str, document: dict[str, Any]) -> dict[str, object]:
+    def create(self, name: str, document: dict[str, Any], operator: str = "") -> dict[str, object]:
         name = name.strip()
         if not name:
-            raise DomainError("INVALID_DICTIONARY_NAME", "业务字典名称不能为空", status_code=422)
+            raise DomainError("INVALID_DICTIONARY_NAME", "同义词表名称不能为空", status_code=422)
         normalized = self.validate_document(document)
         dictionary_id = uuid.uuid4().hex
         created_at = _now()
@@ -76,8 +76,8 @@ class DictionaryService:
         with self.meta.connect() as connection:
             connection.execute("INSERT INTO dictionaries VALUES(?,?,?)", (dictionary_id, name, created_at))
             connection.execute(
-                "INSERT INTO dictionary_versions(dictionary_id,version_no,document,sha256,created_at) VALUES(?,?,?,?,?)",
-                (dictionary_id, 1, _canonical(normalized), digest, created_at),
+                "INSERT INTO dictionary_versions(dictionary_id,version_no,document,sha256,created_at,created_by) VALUES(?,?,?,?,?,?)",
+                (dictionary_id, 1, _canonical(normalized), digest, created_at, operator or "system"),
             )
             connection.execute(
                 "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
@@ -133,12 +133,18 @@ class DictionaryService:
                 (dictionary_id, int(version_no)),
             ).fetchone()
         if row is None:
-            raise DomainError("DICTIONARY_VERSION_NOT_FOUND", "业务字典版本不存在", status_code=404)
+            raise DomainError("DICTIONARY_VERSION_NOT_FOUND", "同义词版本不存在", status_code=404)
         item = dict(row)
         item["document"] = json.loads(str(item["document"]))
         return item
 
-    def add_version(self, dictionary_id: str, document: dict[str, Any]) -> dict[str, object]:
+    def add_version(
+        self,
+        dictionary_id: str,
+        document: dict[str, Any],
+        operator: str = "",
+        base_version_no: int | None = None,
+    ) -> dict[str, object]:
         self._dictionary(dictionary_id)
         normalized = self.validate_document(document)
         created_at = _now()
@@ -148,10 +154,18 @@ class DictionaryService:
                 "SELECT COALESCE(MAX(version_no),0) AS version_no FROM dictionary_versions WHERE dictionary_id=?",
                 (dictionary_id,),
             ).fetchone()
-            version_no = int(row["version_no"]) + 1
+            current_version_no = int(row["version_no"])
+            if base_version_no is not None and int(base_version_no) != current_version_no:
+                raise DomainError(
+                    "DICTIONARY_VERSION_CONFLICT",
+                    "同义词已被其他人更新，请刷新页面并基于最新版本重新编辑后再保存",
+                    status_code=409,
+                    details={"current_version_no": current_version_no, "base_version_no": int(base_version_no)},
+                )
+            version_no = current_version_no + 1
             connection.execute(
-                "INSERT INTO dictionary_versions(dictionary_id,version_no,document,sha256,created_at) VALUES(?,?,?,?,?)",
-                (dictionary_id, version_no, _canonical(normalized), digest, created_at),
+                "INSERT INTO dictionary_versions(dictionary_id,version_no,document,sha256,created_at,created_by) VALUES(?,?,?,?,?,?)",
+                (dictionary_id, version_no, _canonical(normalized), digest, created_at, operator or "system"),
             )
             connection.execute(
                 "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
@@ -193,7 +207,7 @@ class DictionaryService:
                 expected_sha = str(version["sha256"])
                 frozen_sha = options.get("dictionary_sha256")
                 if frozen_sha and str(frozen_sha) != expected_sha:
-                    raise DomainError("DICTIONARY_VERSION_CHANGED", "业务字典版本摘要与任务冻结值不一致，请检查数据完整性", status_code=409)
+                    raise DomainError("DICTIONARY_VERSION_CHANGED", "同义词版本摘要与任务冻结值不一致，请检查数据完整性", status_code=409)
                 options["dictionary_id"] = str(dictionary_id)
                 options["version_no"] = int(version_no)
                 options["dictionary_sha256"] = expected_sha
@@ -202,7 +216,7 @@ class DictionaryService:
                 if materialize:
                     payload = version["document"]
                     if not isinstance(payload, dict):
-                        raise DomainError("INVALID_DICTIONARY", "业务字典版本内容损坏", status_code=409)
+                        raise DomainError("INVALID_DICTIONARY", "同义词版本内容损坏", status_code=409)
                     options["mapping"] = dict(payload.get("mapping") or {})
                     options["case_sensitive"] = bool(payload.get("case_sensitive", True))
         return resolved
