@@ -16,6 +16,9 @@ def _settings(tmp_path: Path, *, with_policy: bool = False) -> Settings:
         'acceptance_min_top1_accuracy': 0.85,
         'acceptance_min_final_accuracy': 0.95,
         'acceptance_max_review_rate': 0.20,
+        'acceptance_min_candidate_recall_at_5': 0.95,
+        'acceptance_min_automatic_precision': 0.98,
+        'acceptance_max_no_match_false_positive_rate': 0.02,
         'acceptance_max_scale_hours': 2.0,
     } if with_policy else {}
     settings = Settings(
@@ -55,13 +58,28 @@ def _insert_evaluation_evidence(meta: MetadataRepository, run_id: str, metrics: 
         )
 
 
+def _quality_metrics(**overrides: object) -> dict[str, object]:
+    metrics: dict[str, object] = {
+        'truth_rows': 500,
+        'truth_coverage': 0.99,
+        'top1_accuracy': 0.90,
+        'candidate_recall_at_5': 0.97,
+        'automatic_match_precision': 0.99,
+        'final_accuracy': 0.98,
+        'review_rate': 0.12,
+        'no_match_false_positive_rate': 0.01,
+    }
+    metrics.update(overrides)
+    return metrics
+
+
 def test_acceptance_distinguishes_code_ready_from_external_production_evidence(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     meta = MetadataRepository(settings.data_dir / 'meta' / 'material_matcher.db')
     _bootstrap(meta, settings)
 
     report = AcceptanceService(meta, settings).report()
-    assert report['schema_version'] == 2
+    assert report['schema_version'] == 3
     assert report['code_ready'] is True
     assert report['production_ready'] is False
     status = {gate['name']: gate['status'] for gate in report['gates']}
@@ -72,6 +90,10 @@ def test_acceptance_distinguishes_code_ready_from_external_production_evidence(t
     assert status['business_gold_evaluation'] == 'BLOCKED'
     assert status['million_scale_end_to_end'] == 'BLOCKED'
     assert status['kylin_v10_host'] in {'PASS', 'BLOCKED'}
+    policy = next(item for item in report['gates'] if item['name'] == 'acceptance_policy')
+    assert 'min_candidate_recall_at_5' in policy['evidence']['missing']
+    assert 'min_automatic_precision' in policy['evidence']['missing']
+    assert 'max_no_match_false_positive_rate' in policy['evidence']['missing']
 
 
 def test_acceptance_detects_real_scale_only_from_completed_task_and_real_index_rows(tmp_path: Path) -> None:
@@ -105,19 +127,15 @@ def test_acceptance_fails_when_real_gold_metrics_are_below_explicit_policy(tmp_p
     settings = _settings(tmp_path, with_policy=True)
     meta = MetadataRepository(settings.data_dir / 'meta' / 'material_matcher.db')
     _bootstrap(meta, settings)
-    metrics = {
-        'truth_rows': 200,
-        'truth_coverage': 1.0,
-        'top1_accuracy': 0.80,
-        'final_accuracy': 0.96,
-        'review_rate': 0.10,
-    }
+    metrics = _quality_metrics(top1_accuracy=0.80, automatic_match_precision=0.95, no_match_false_positive_rate=0.05)
     _insert_evaluation_evidence(meta, 'eval-low', metrics)
 
     report = AcceptanceService(meta, settings).report()
     gate = next(item for item in report['gates'] if item['name'] == 'business_gold_evaluation')
     assert gate['status'] == 'FAIL'
     assert gate['evidence']['checks']['top1_accuracy'] is False
+    assert gate['evidence']['checks']['automatic_match_precision'] is False
+    assert gate['evidence']['checks']['no_match_false_positive_rate'] is False
     assert report['code_ready'] is False
 
 
@@ -125,16 +143,23 @@ def test_acceptance_passes_business_gate_only_when_all_explicit_metrics_pass(tmp
     settings = _settings(tmp_path, with_policy=True)
     meta = MetadataRepository(settings.data_dir / 'meta' / 'material_matcher.db')
     _bootstrap(meta, settings)
-    metrics = {
-        'truth_rows': 500,
-        'truth_coverage': 0.99,
-        'top1_accuracy': 0.90,
-        'final_accuracy': 0.98,
-        'review_rate': 0.12,
-    }
-    _insert_evaluation_evidence(meta, 'eval-pass', metrics)
+    _insert_evaluation_evidence(meta, 'eval-pass', _quality_metrics())
 
     report = AcceptanceService(meta, settings).report()
     gate = next(item for item in report['gates'] if item['name'] == 'business_gold_evaluation')
     assert gate['status'] == 'PASS'
     assert all(gate['evidence']['checks'].values())
+
+
+def test_acceptance_blocks_when_latest_gold_has_no_explicit_no_match_evidence(tmp_path: Path) -> None:
+    settings = _settings(tmp_path, with_policy=True)
+    meta = MetadataRepository(settings.data_dir / 'meta' / 'material_matcher.db')
+    _bootstrap(meta, settings)
+    metrics = _quality_metrics()
+    metrics['no_match_false_positive_rate'] = None
+    _insert_evaluation_evidence(meta, 'eval-legacy', metrics)
+
+    report = AcceptanceService(meta, settings).report()
+    gate = next(item for item in report['gates'] if item['name'] == 'business_gold_evaluation')
+    assert gate['status'] == 'BLOCKED'
+    assert 'no_match_false_positive_rate' in gate['evidence']['missing_metrics']
