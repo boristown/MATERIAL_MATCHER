@@ -88,7 +88,7 @@ class TaskInputAssetService:
             "original_name": str(record.get("original_name") or ""),
             "role": str(record.get("role") or ""),
             "size_bytes": int(record.get("size_bytes") or 0),
-            "created_at": str(record.get("created_at") or ""),
+            "uploaded_at": str(record.get("created_at") or ""),
         }
         if catalog_version_id:
             snapshot["catalog_version_id"] = catalog_version_id
