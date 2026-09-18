@@ -213,7 +213,7 @@ activate_link() {
 
 lan_ipv4s() {
   # 只报告真实局域网 IPv4：排除回环与 docker 网桥/虚拟接口（docker0、br-*、veth*、virbr*）
-  ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}' | grep -Ev '^(docker[0-9]*|br-|veth|virbr|tailscale|kube|flannel|cni|nerdctl|lo)' | awk '{print $2}' | cut -d/ -f1
+  ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}' | grep -Ev '^(docker[0-9]*|br-|veth|virbr|tailscale|kube|flannel|cni|nerdctl|lo)' | awk '{print $2}' | cut -d/ -f1 || true
 }
 
 mkdir -p "$OPT/releases" "$ETC/secret" "$ETC/profiles" "$ETC/catalogs" \
