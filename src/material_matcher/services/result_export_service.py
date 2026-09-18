@@ -436,7 +436,6 @@ class ResultExportService:
         summary["A1"] = "匹配结果摘要"
         summary["A1"].font = Font(size=16, bold=True, color="1F4E78")
         summary.merge_cells("A1:D1")
-        created_by = self._task_actor(task_id, task, "created")
         started_by = self._task_actor(task_id, task, "started")
         scheme_name = resolve_task_scheme_name(self.meta, dict(task))
         business_digits = "".join(ch for ch in str(generated_at) if ch.isdigit())[:14]
