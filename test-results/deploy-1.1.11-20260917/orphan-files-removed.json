@@ -1,0 +1,158 @@
+[
+ {
+  "file_id": "a9a9915b16fd45e8a5397b94bee7a336",
+  "role": "supplement",
+  "name": "truth.csv",
+  "bytes": 135
+ },
+ {
+  "file_id": "257ab9b880cf4d10b7354f45a8644ca3",
+  "role": "result",
+  "name": "material_matcher_da2a06f6fd2847e8b18c8691b9c8bd47.xlsx",
+  "bytes": 12051
+ },
+ {
+  "file_id": "7fea7fe6c87b4c86b5997340d8383423",
+  "role": "supplement",
+  "name": "truth.csv",
+  "bytes": 135
+ },
+ {
+  "file_id": "65cf72715a6a4fedbda40ff10fc99647",
+  "role": "result",
+  "name": "material_matcher_950360b36bf241438910cb12cc8e6b4e.xlsx",
+  "bytes": 12051
+ },
+ {
+  "file_id": "c136d8b22e924e818789c8cbd264deb4",
+  "role": "supplement",
+  "name": "truth.csv",
+  "bytes": 135
+ },
+ {
+  "file_id": "463269f330e440c08aac718a5ca0881c",
+  "role": "result",
+  "name": "material_matcher_e8851db1cdac4d8b982a9c2a708fc5e5.xlsx",
+  "bytes": 12051
+ },
+ {
+  "file_id": "64ae4e2bcce0496b99f9562a737cee8b",
+  "role": "supplement",
+  "name": "truth.csv",
+  "bytes": 135
+ },
+ {
+  "file_id": "e2f64540ebd940ffb7d8c274037abfd9",
+  "role": "result",
+  "name": "material_matcher_b167248ff0ff47cebad86763c40e46a7.xlsx",
+  "bytes": 12052
+ },
+ {
+  "file_id": "64a2b530014847a1a150702aaece76f9",
+  "role": "supplement",
+  "name": "truth.csv",
+  "bytes": 135
+ },
+ {
+  "file_id": "f2aaa2075226445ab1bebe5f99a1b095",
+  "role": "result",
+  "name": "material_matcher_7a80dc5b921e4d84b320b1f5ff4992d2.xlsx",
+  "bytes": 12051
+ },
+ {
+  "file_id": "873bfcb21aff471c82794a346a68356c",
+  "role": "supplement",
+  "name": "truth_gold.csv",
+  "bytes": 2955033
+ },
+ {
+  "file_id": "34c660570e694a6cbf578776144fa960",
+  "role": "supplement",
+  "name": "truth_gold.csv",
+  "bytes": 2850033
+ },
+ {
+  "file_id": "4d4f8b0e9b794f9e97dc83e0a06063c6",
+  "role": "result",
+  "name": "material_matcher_357fe868b7b94b46b3727fcfc354268d.xlsx",
+  "bytes": 15686460
+ },
+ {
+  "file_id": "25886cd86b32423c93baa58b2c2317b4",
+  "role": "supplement",
+  "name": "truth_gold.csv",
+  "bytes": 2850033
+ },
+ {
+  "file_id": "0780774becc04f8e82f41a6d243bc5e4",
+  "role": "result",
+  "name": "material_matcher_9db34e75db3f4dea8ebc18945212ddb7.xlsx",
+  "bytes": 16200097
+ },
+ {
+  "file_id": "94aa4588af984a21a752d2943f44f4ab",
+  "role": "supplement",
+  "name": "truth_gold.csv",
+  "bytes": 2850033
+ },
+ {
+  "file_id": "29399d230d214a7c917ad76fa8ae1247",
+  "role": "source",
+  "name": "A001（公开）.XLSX",
+  "bytes": 15132
+ },
+ {
+  "file_id": "3ab25de0ae144b92b607a224e9bb4b21",
+  "role": "source",
+  "name": "A002（公开）.XLSX",
+  "bytes": 10390
+ },
+ {
+  "file_id": "be4b82c183ed4626ac6556cb5901f523",
+  "role": "source",
+  "name": "A003（公开）.XLSX",
+  "bytes": 10616
+ },
+ {
+  "file_id": "198198f9f91e4aa3bee3ccb5815b63f4",
+  "role": "source",
+  "name": "A005（公开）.XLSX",
+  "bytes": 14673
+ },
+ {
+  "file_id": "18dbc4d143ec46529ae7481c17b9fee6",
+  "role": "supplement",
+  "name": "acceptance_truth_from_ground_truth.csv",
+  "bytes": 47695
+ },
+ {
+  "file_id": "be25169ff14e4560b6f8f9515653123c",
+  "role": "result",
+  "name": "物料集团码匹配结果_SMOKE-1.1.5.xlsx",
+  "bytes": 1585692
+ },
+ {
+  "file_id": "e392913dc268401b9ff6978e31099f1c",
+  "role": "supplement",
+  "name": "smoke_ground_truth.csv",
+  "bytes": 469692
+ },
+ {
+  "file_id": "26b0a8ae1b794231ae439f6c814f2602",
+  "role": "supplement",
+  "name": "smoke_ground_truth.csv",
+  "bytes": 469692
+ },
+ {
+  "file_id": "0833bbece66b4dd1a444af70d570baeb",
+  "role": "supplement",
+  "name": "smoke_truth.xlsx",
+  "bytes": 21568
+ },
+ {
+  "file_id": "4d46c52c38e44bdabb685b8861008d98",
+  "role": "supplement",
+  "name": "smoke_truth2.xlsx",
+  "bytes": 21683
+ }
+]

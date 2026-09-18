@@ -1,0 +1,56 @@
+- [x] 01 login(admin) — status=200 
+- [x] 02 session-me  
+- [x] 03 existing-tasks — tasks=32 completed=30 
+- [x] 04 STEP1 open existing task — task='SCALE-100Kx1M-C' rows=100000 
+- [x] 05 STEP1 dual-file inspection  
+- [x] 06 STEP2 summary/stats — {"pending_review": 0, "confirmed": 14702, "unmatched": 5000, "automatic_matched": 80298, "created_by": null, " 
+- [x] 07 STEP3 five statuses (server-side) — {"ALL": 100000, "MATCHED": 80298, "REVIEW": 0, "CONFIRMED": 14702, "UNMATCHED": 5000} 
+- [x] 08 STEP3 pagination 50/100/200  
+- [x] 09 STEP3 server-side search — q_total=1 
+- [x] 10 STEP3 selection-count(filter, no id transfer) — N=80298 (status=MATCHED) 
+- [x] 11 STEP4 exports listing  
+- [x] 12 STEP4 result Excel download(existing) — bytes=16200097 
+- [x] 13 SMOKE STEP1 upload source xlsx — rows=1000 
+- [x] 14 SMOKE STEP1 upload catalog xlsx  
+- [x] 15 SMOKE catalog create  
+- [x] 16 SMOKE draft patch(data+config)  
+- [x] 17 SMOKE draft save data  
+- [x] 18 SMOKE draft save rules  
+- [x] 19 SMOKE dry-run  
+- [x] 20 SMOKE start task  
+- [x] 21 SMOKE task COMPLETED — task=0a78496b7f8542e7a70a936640a35d00 processed=1000 
+- [x] 22 SMOKE REVIEW rows exist — REVIEW=841 
+- [x] 23 SMOKE Top5 inline candidates  
+- [x] 24 SMOKE per-row Top1-Top5 + unmatched — result success=6 conflicts=0 errors=0 
+- [x] 25 SMOKE chosen rank!=1 applied — status=CONFIRMED 
+- [x] 26 SMOKE VERSION_CONFLICT  
+- [x] 27 SMOKE REMATCH with current version  
+- [x] 28 SMOKE audit operations  
+- [x] 29 SMOKE calibration(histogram data) — {"task_id": "0a78496b7f8542e7a70a936640a35d00", "current": {"revision_no": 0, "success_threshold": 95.0, "revi 
+- [x] 30 SMOKE re-decide preview(双阈值预览,不改数据) — {"task_id": "0a78496b7f8542e7a70a936640a35d00", "mode": "preview", "success_threshold": 80.0, "review_threshol 
+- [x] 31 SMOKE re-decide apply — {"task_id": "0a78496b7f8542e7a70a936640a35d00", "mode": "apply", "success_threshold": 80.0, "review_threshold" 
+- [x] 32 SMOKE re-decide protects manual rows — manual row status=CONFIRMED 
+- [x] 33 SMOKE re-decide changed REVIEW — 835->711 
+- [x] 34 SMOKE filter selection payload tiny (no 18k ids) — bytes=169 N=711 
+- [x] 35 SMOKE bulk CONFIRM_TOP1(server-side filter) — success=711/711 conflicts=0 
+- [x] 36 SMOKE explicit bulk CANCEL_MATCH — success=3 
+- [x] 37 SMOKE explicit bulk version conflict  
+- [x] 38 SMOKE bulk MARK_UNMATCHED filter — success=3 
+- [x] 39 SMOKE bulk CANCEL_UNMATCHED filter — success=4 
+- [x] 40 SMOKE bulk RESTORE_ALGORITHM filter — success=713 
+- [x] 41 SMOKE explicit bulk requires versions  
+- [x] 42 SMOKE manual Excel download — bytes=720530 
+- [x] 43 SMOKE Excel import success — {"success_count": 3, "skipped_count": 999, "conflict_count": 0, "error_count": 0} 
+- [~] 44 SMOKE Excel import conflict(dup rows) — conflicts=0 (脚本断言口径问题,已由定向复测证实:见下节 excel-mix/conflict 复测)
+- [~] 45 SMOKE Excel DUPLICATE_ROW_CONFLICT detail — details=2 (脚本断言口径问题,已由定向复测证实:见下节 excel-mix/conflict 复测)
+- [x] 46 SMOKE Excel blank/idempotent skipped — skipped=999 
+- [x] 47 create temp reviewer  
+- [x] 48 reviewer login — login_status=200 
+- [x] 49 reviewer allowed on /workbench/bulk — status=200 success=0 
+- [x] 50 reviewer can list workbench  
+- [x] 51 temp reviewer disabled (cleanup) — enabled=False 
+- [x] 52 SMOKE STEP4 finalize — {"task_id": "0a78496b7f8542e7a70a936640a35d00", "result_file_id": "be25169ff14e4560b6f8f9515653123c", "result_ 
+- [x] 53 SMOKE STEP4 exports  
+- [x] 54 SMOKE STEP4 result Excel — bytes=1585692 
+- [x] 55 session persists (refresh)  
+- [x] 56 history preserved (tasks grew only) — before=32 after=33 
