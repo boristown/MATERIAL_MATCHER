@@ -38,7 +38,7 @@
 ## 安装失败时
 
 - 页面会给出中文原因和处理建议（例如端口占用、介质不完整、磁盘不足）；
-- 技术细节在日志：安装向导结束时会显示日志路径（默认 `/var/tmp/material_matcher_wizard-*.log`）；
+- 安装报告保存在 `/var/log/material_matcher/install-reports/`；向导技术日志在 `/var/tmp/material_matcher_wizard-*.log`（root 可读）；
 - 将「维护工具 → 导出诊断包」生成的文件发给原厂，无需自行猜测修复。
 
 ## 安全说明

@@ -50,7 +50,8 @@
 
 ## 安装失败时
 
-- 向导会用中文告诉你原因（端口占用 / 介质不完整 / 磁盘不足 / 已有不兼容 Docker 等）并给出处理建议；
+- 向导会用中文告诉你原因（端口占用 / 介质不完整 / 磁盘不足 / 已有不兼容 Docker 等）并给出处理建议；终端各选择屏：y=第一项、n=第二项、其它键=安全退出（不做任何修改）；
+- 安装报告保存在 `/var/log/material_matcher/install-reports/`；向导技术日志在 `/var/tmp/material_matcher_docker_wizard-*.log`（root 可读）；
 - 技术细节保存在 `/var/tmp/material_matcher_docker_wizard-*.log`（root 可读）；
 - 安装器只会创建/启动 material_matcher 自己的容器，不会删除、清理或修改你已有的任何容器、镜像、网络和数据卷。
 

@@ -357,8 +357,7 @@ fi
 
 # ---- 报告与结果 ----------------------------------------------------------------------
 step 96 "正在生成安装报告……"
-MAP_ADDRESSES="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -Ev '^$|^127\.' || true)"
-[[ -n "$MAP_ADDRESSES" ]] || MAP_ADDRESSES="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)"
+MAP_ADDRESSES="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}' | grep -Ev '^(docker[0-9]*|br-|veth|virbr|tailscale|kube|flannel|cni|nerdctl|lo)' | awk '{print $2}' | cut -d/ -f1 || true)"
 MODE_TEXT="首次安装"; [[ "$IS_UPGRADE" == "1" ]] && MODE_TEXT="升级安装"
 FIREWALL_HINT=""
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
