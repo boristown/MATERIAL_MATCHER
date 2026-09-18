@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 import time
+from typing import get_type_hints
 
 from fastapi.responses import FileResponse
 from fastapi.testclient import TestClient
@@ -167,7 +168,7 @@ def test_new_task_freezes_both_original_inputs_and_downloads_exact_bytes(authed:
         for route in authed.app.routes
         if getattr(route, "path", "") == "/api/tasks/{task_id}/input-files/{asset_role}"
     )
-    assert route.endpoint.__annotations__["return"] is FileResponse
+    assert get_type_hints(route.endpoint)["return"] is FileResponse
 
 
 def test_old_task_stays_on_old_target_and_same_name_source_after_new_uploads(authed: TestClient) -> None:
