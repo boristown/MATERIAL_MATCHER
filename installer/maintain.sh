@@ -5,10 +5,13 @@ MMCTL="/opt/material_matcher/bin/mmctl"
 [[ -x "$MMCTL" ]] || MMCTL="$(command -v mmctl || true)"
 [[ -n "$MMCTL" ]] || { echo "未找到维护工具：系统可能尚未安装。请先运行 启动安装.sh 完成安装。" >&2; exit 1; }
 if [[ $EUID -ne 0 ]]; then
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo bash "$0" "$@"
+  fi
   if command -v pkexec >/dev/null 2>&1; then
     exec pkexec env DISPLAY="${DISPLAY:-}" XAUTHORITY="${XAUTHORITY:-}" bash "$0" "$@"
   fi
-  exec sudo bash "$0" "$@"
+  echo "需要 root/sudo 权限运行维护工具。" >&2; exit 44
 fi
 
 GUI=""

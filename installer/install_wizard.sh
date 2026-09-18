@@ -23,12 +23,12 @@ IS_TTY=0; [[ -t 1 ]] && IS_TTY=1   # main 会被管道化，此处提前判定�
 
 # ---- 提权（.desktop / 启动安装.sh 已可能以 root 进入；此处兜底） ------------------
 if [[ $EUID -ne 0 ]]; then
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo env DISPLAY="${DISPLAY:-}" MM_MEDIA_ROOT="$MEDIA_ROOT" bash "$MEDIA_ROOT/install_wizard.sh" "$@"
+  fi
   if command -v pkexec >/dev/null 2>&1; then
     exec pkexec env DISPLAY="${DISPLAY:-}" XAUTHORITY="${XAUTHORITY:-}" \
       MM_MEDIA_ROOT="$MEDIA_ROOT" bash "$MEDIA_ROOT/install_wizard.sh" "$@"
-  fi
-  if command -v sudo >/dev/null 2>&1; then
-    exec sudo env DISPLAY="${DISPLAY:-}" MM_MEDIA_ROOT="$MEDIA_ROOT" bash "$MEDIA_ROOT/install_wizard.sh" "$@"
   fi
   echo "当前账号没有安装权限：请使用具备系统管理员权限的账号重新运行安装程序。" >&2
   exit 44
@@ -408,6 +408,7 @@ main() {
       45) hint="\n处理建议：为避免数据丢失安装已停止，系统未被改动。请导出诊断包并联系原厂确认唯一数据目录。" ;;
       46) hint="\n处理建议：未发生版本切换，旧版本仍在线。请导出诊断包联系原厂。" ;;
       47|48) hint="\n处理建议：安装程序已自动回滚，旧系统已恢复。请导出诊断包联系原厂。" ;;
+      49) hint="\n处理建议：默认业务配置（6 个正式方案/同义词表）导入失败。请重新复制介质后重试；已导入过的系统再次运行不会重复生成。" ;;
     esac
     ui_error "安装失败" "安装失败：$install_err\n$hint\n技术细节已保存：$WIZARD_LOG"
     exit "$INSTALL_RC"
@@ -447,7 +448,9 @@ PY
     pw_line="\n· 管理员密码：保持原有密码不变"
   fi
   local success_text="【安装成功】物料集团码智能匹配平台 ${BUNDLE_VERSION}\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
-  if [[ -n "$addrs" ]]; then success_text="$success_text\n· 局域网访问地址：\n$addrs"; else success_text="$success_text\n· 未检测到局域网 IPv4 地址：当前仅本机可访问，请确认服务器网络已连接后由维护工具复查"; fi
+  [[ -n "$addrs" ]] && success_text="$success_text\n· 局域网访问地址：\n$addrs" || success_text="$success_text\n· 未检测到局域网 IPv4 地址：当前仅本机可访问，请确认服务器网络已连接后由维护工具复查"
+  SEED_LINE="$(grep -o '"seed_summary": *"[^"]*"' "$TMP_OUT" 2>/dev/null | head -1 | sed 's/.*: *"//; s/"$//' || true)"
+  [[ -n "$SEED_LINE" ]] && success_text="$success_text\n· 默认业务数据：$SEED_LINE（6 个正式方案 + 同义词表，登录后可在“匹配方案/数据上传”查看）"
   success_text="$success_text\n· 管理员账号：admin$pw_line\n· 安装报告：${report:-$WIZARD_LOG}\n\n请在浏览器打开上述地址，用 admin 登录；出于安全，系统会要求首次登录时设置新的登录密码。\n登录后可在“系统设置 · 关于”核对版本号 ${BUNDLE_VERSION}。\n\n后续维护（状态/日志/备份/恢复/前端重建）：\n· 图形：双击介质中的 维护物料集团码智能匹配平台.desktop\n· 命令行：以 root 运行 维护工具.sh 或 mmctl"
   [[ -n "$fw" ]] && success_text="$success_text\n\n注意：$fw"
 

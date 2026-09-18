@@ -220,6 +220,10 @@ def build_release(
         if (repo_root / name).is_file():
             shutil.copy2(repo_root / name, source_dir / name)
 
+    # 默认业务 seed（6 个正式方案 + 同义词表）：随 release 交付，首装幂等导入。
+    if (repo_root / "seed/business").is_dir():
+        shutil.copytree(repo_root / "seed/business", output_dir / "seed/business", symlinks=False)
+
     python = output_dir / "runtime/bin/python3"
     launcher = output_dir / "runtime/bin/material-matcher"
     if not python.is_file() or not os.access(python, os.X_OK):

@@ -55,6 +55,9 @@ def main() -> None:
     acceptance = subparsers.add_parser("acceptance", help="生成证据驱动的生产验收门禁报告")
     acceptance.add_argument("--require-production-ready", action="store_true", help="存在BLOCKED门禁时也返回非零退出码")
 
+    seed_import = subparsers.add_parser("seed-import", help="幂等导入默认业务 seed（6 个正式方案与同义词表）；已存在则跳过，绝不覆盖")
+    seed_import.add_argument("--seed-dir", required=True)
+
     benchmark = subparsers.add_parser("benchmark", help="运行可重复性能基准")
     benchmark_sub = benchmark.add_subparsers(dest="benchmark_kind", required=True)
     embedding = benchmark_sub.add_parser("embedding", help="使用已安装的正式 Embedding Provider 测吞吐")
@@ -83,6 +86,19 @@ def main() -> None:
         _print(result)
         if not result["ok"]:
             raise SystemExit(2)
+        return
+
+    if args.command == "seed-import":
+        from pathlib import Path
+
+        from material_matcher.services.business_seed import BusinessSeedService
+
+        settings, metadata = _services()
+        try:
+            _print(BusinessSeedService(metadata).import_seed(Path(args.seed_dir)))
+        except DomainError as exc:
+            _print({"error": {"code": exc.code, "message": exc.message, "details": exc.details}})
+            raise SystemExit(2) from exc
         return
 
     if args.command == "acceptance":

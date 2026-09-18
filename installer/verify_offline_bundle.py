@@ -269,12 +269,25 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "release/source/pyproject.toml",
         "release/source/web/package.json",
         "release/source/installer/install.sh",
+        "release/seed/business/manifest.json",
+        "release/seed/business/profiles.json",
+        "release/seed/business/dictionaries.json",
         "release/web/dist/index.html",
         f"models/{model_id}/tokenizer.json",
     }
     missing_required = sorted(required_exact - set(expected))
     if missing_required:
         raise ValueError(f"离线包缺少必需组件：{', '.join(missing_required)}")
+    seed_manifest = json.loads(actual["release/seed/business/manifest.json"].read_text(encoding="utf-8"))
+    seed_profiles = seed_manifest.get("profiles") or []
+    if len(seed_profiles) != 6:
+        raise ValueError(f"业务 seed 应包含 6 个默认匹配方案，实际 {len(seed_profiles)}")
+    seed_names = {str(item.get("name") or "") for item in seed_profiles}
+    for required_name in ("A001", "A002", "A003", "A005", "A006", "A007"):
+        if not any(name.startswith(required_name) for name in seed_names):
+            raise ValueError(f"业务 seed 缺少默认方案 {required_name}")
+    if not (seed_manifest.get("dictionaries") or []):
+        raise ValueError("业务 seed 缺少默认同义词表")
     for executable in (
         "install.sh",
         "install_wizard.sh",

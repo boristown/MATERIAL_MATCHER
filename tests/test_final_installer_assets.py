@@ -89,3 +89,29 @@ def test_builder_plan_covers_manual_layout() -> None:
         assert target in text
     # 根目录不出现开发仓库噪音：builder 只复制计划内文件。
     assert "git clone" not in text
+
+
+def test_business_seed_ships_and_installs() -> None:
+    assert (REPO / "seed/business/manifest.json").is_file()
+    assert (REPO / "seed/business/profiles.json").is_file()
+    assert (REPO / "seed/business/dictionaries.json").is_file()
+    release_text = read(REPO / "scripts/build_release.py")
+    assert "seed/business" in release_text
+    install_text = read(INSTALLER / "install.sh")
+    assert "seed-import" in install_text and "EXIT_SEED=49" in install_text
+    verify_text = read(INSTALLER / "verify_offline_bundle.py")
+    assert "release/seed/business/manifest.json" in verify_text and "A001" in verify_text
+
+
+def test_cli_first_privilege_order_sudo_before_pkexec() -> None:
+    for name in ("launch_install.sh", "install_wizard.sh", "maintain.sh"):
+        text = read(INSTALLER / name)
+        i_sudo, i_pkexec = text.find("command -v sudo"), text.find("command -v pkexec")
+        if i_pkexec != -1:
+            assert 0 <= i_sudo < i_pkexec, name
+
+
+def test_manual_promises_default_business_content() -> None:
+    manual = read(INSTALLER / "docs/install-manual.md")
+    for label in ("A001 元器件", "A002 标准紧固件", "A003 金属材料", "A005 非金属材料", "A006 复合材料", "A007", "同义词配置"):
+        assert label in manual, label
