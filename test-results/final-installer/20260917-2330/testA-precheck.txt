@@ -1,0 +1,5 @@
+a7903eee
+0
+degraded
+0
+SNAPSHOT0-OK

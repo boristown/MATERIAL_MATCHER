@@ -1,0 +1,6 @@
+✓ built in 4.69s
+重建完成并已同步到 /opt/material_matcher/current/web/dist。运行 mmctl restart 生效。
+{"status":"ok","version":"1.1.22"}
+0
+0
+import { createApp } from 'vue'

@@ -1,0 +1,34 @@
+=== HEALTHCHECK START 2026-09-17 23:52:39 ===
+--- /api/health (curl 代浏览器, 环境无GUI) ---
+{"status":"ok","version":"1.1.17"}
+--- /api/health/ready ---
+{"status":"ready","checks":{"admin_account":true,"database":true,"data_dir":true,"tmp_dir":true}}
+=== SMOKE START 2026-09-17 23:52:39 ===
+PASS health :: {"status": "ok", "version": "1.1.17"}
+PASS health/ready :: {"status": "ready", "checks": {"admin_account": true, "database": true, "data_dir": true, "tmp_dir": true}}
+PASS STEP0 admin 登录
+PASS STEP0 首次登录修改密码 :: status=200
+PASS STEP0 新密码重新登录 :: status=200
+PASS 前端页面可达
+PASS STEP1 上传待匹配数据 :: status=200
+PASS STEP1 上传集团标准数据 :: status=200
+PASS STEP1 建立标准数据目录 :: status=200
+PASS STEP1 创建任务草稿 :: status=200
+PASS STEP1 启动匹配 :: status=200
+PASS STEP2 匹配完成 :: status=COMPLETED 用时=1s
+PASS STEP3 打开结果明细 :: status=200
+PASS STEP2/3 进度与结果可见
+PASS STEP4 生成结果 :: status=200
+PASS STEP4 导出清单 :: {"final_result": {"file_id": "c0a01a06c02a492c8e2c3cfc64defe3c", "download_url": "/api/tasks/a52d291af47940fa83a1b1608b6
+PASS STEP4 下载结果 Excel :: bytes=14872
+SMOKE 17/17 passed in 1s
+=== SMOKE EXIT code=0 2026-09-17 23:52:40 ===
+=== §5.5 RESTART 2026-09-17 23:53:17 ===
+mm-cr-a
+restarted, waiting 60s (手册§5.5 约1分钟)…
+--- after restart /api/health ---
+{"status":"ok","version":"1.1.17"}
+--- systemd 服务状态 ---
+active
+enabled
+=== RESTART DONE 2026-09-17 23:54:18 ===

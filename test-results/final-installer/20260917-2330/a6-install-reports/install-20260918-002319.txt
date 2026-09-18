@@ -1,0 +1,16 @@
+物料集团码智能匹配平台 安装报告
+====================================
+模式：首次安装
+版本：1.1.22
+Git commit：c4e974e72d39161a0f5678b3e4f4a23f9b4fa04f
+安装时间：2026-09-18 00:23:19
+程序目录：/opt/material_matcher
+配置目录：/etc/material_matcher
+数据目录：/var/lib/material_matcher
+日志目录：/var/log/material_matcher
+服务端口：18080
+服务状态：active
+开机自启：enabled
+本机访问：http://127.0.0.1:18080
+管理员账号：admin
+管理员密码：（出于安全，本报告不包含明文密码；见 /etc/material_matcher/secret/admin_password.env 或安装完成界面）

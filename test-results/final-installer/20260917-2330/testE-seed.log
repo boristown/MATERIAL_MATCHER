@@ -1,0 +1,6 @@
+PASS STEP3 打开结果明细 :: status=200
+PASS STEP2/3 进度与结果可见
+PASS STEP4 生成结果 :: status=200
+PASS STEP4 导出清单 :: {"final_result": {"file_id": "36c703d8fffe400e800075804c618c52", "download_url": "/api/tasks/d4a3149876f94eedacb60db1d29
+PASS STEP4 下载结果 Excel :: bytes=14869
+SMOKE 17/17 passed in 1s

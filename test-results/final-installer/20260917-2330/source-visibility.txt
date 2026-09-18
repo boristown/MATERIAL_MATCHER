@@ -1,0 +1,32 @@
+app
+release-manifest.json
+runtime
+source
+web
+---
+README.md
+installer
+pyproject.toml
+scripts
+src
+web
+App.vue
+App.vue.js
+api.js
+__init__.py
+__pycache__
+api
+cli.py
+domain
+---
+-rw------- /var/tmp/material_matcher_wizard-20260918-002253.log
+-rw------- /var/tmp/material_matcher_wizard-20260918-002313.log
+ 
+/var/log/material_matcher/install-reports/: /var/log/material_matcher/install-reports/:
+total 4
+drwxr-xr-x .
+drwxr-xr-x ..
+-rw------- install-20260918-002319.txt
+---
+2
+/usr/bin/python3
