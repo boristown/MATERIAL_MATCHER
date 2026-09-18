@@ -37,6 +37,12 @@ const requiredView = [
   '匹配时两边都会先转换成标准写法',
   'canonicalGroups',
   '删除',
+  '删除已选',
+  'removeCheckedRows',
+  'togglePageAll',
+  'ElMessageBox.confirm',
+  '本页全选或取消全选',
+  'checkedCount',
   '同义词版本历史',
   'created_by',
 ]
@@ -70,7 +76,7 @@ if (exists('public', 'favicon.png') || exists('public', 'logo.png')) throw new E
 
 const requiredCss = [
   'position: sticky',
-  'grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr) 72px',
+  'grid-template-columns: 32px minmax(0, 1fr) 44px minmax(0, 1fr) 72px',
   '.syn-grid__head',
   '.syn-grid__row',
   '.syn-actions',

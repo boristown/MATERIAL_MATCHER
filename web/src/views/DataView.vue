@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 
 type CatalogRow = {
@@ -42,7 +42,7 @@ type DictionaryVersion = {
   created_by?: string
   created_at: string
 }
-type MappingRow = { source: string; target: string }
+type MappingRow = { source: string; target: string; checked?: boolean }
 type TagType = '' | 'success' | 'warning' | 'info' | 'danger'
 
 const currentRole = ref('')
@@ -97,6 +97,30 @@ const visibleRows = computed(() => {
     .map((row, index) => ({ row, index }))
     .filter(({ row }) => !keyword || row.source.toLowerCase().includes(keyword) || row.target.toLowerCase().includes(keyword))
 })
+const checkedCount = computed(() => rows.value.filter(row => row.checked).length)
+const pageAllChecked = computed(() => visibleRows.value.length > 0 && visibleRows.value.every(({ row }) => Boolean(row.checked)))
+const pageSomeChecked = computed(() => !pageAllChecked.value && visibleRows.value.some(({ row }) => Boolean(row.checked)))
+function togglePageAll(checked: boolean): void {
+  for (const { row } of visibleRows.value) row.checked = checked
+}
+async function removeCheckedRows(): Promise<void> {
+  const count = checkedCount.value
+  if (!count) {
+    ElMessage.warning('请先勾选要删除的同义词规则')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将删除已勾选的 ${count} 条同义词规则。点击“确认删除”后请在“保存修改”生成新的不可变版本；历史任务仍使用当时版本，不会被改变。`,
+      `批量删除 ${count} 条`,
+      { type: 'warning', confirmButtonText: `确认删除 ${count} 条`, cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  rows.value = rows.value.filter(row => !row.checked)
+  if (!rows.value.length) rows.value.push({ source: '', target: '' })
+}
 
 function serializeRows(): string {
   return JSON.stringify(rows.value.map(row => [row.source.trim(), row.target.trim()]))
@@ -391,6 +415,7 @@ onMounted(async () => {
       <div class="syn-toolbar">
         <el-input v-model="searchKeyword" clearable placeholder="搜索同义词（其他写法或标准写法）" class="syn-search" />
         <div class="syn-toolbar__actions">
+          <el-button v-if="canMaintain" type="danger" plain :disabled="!checkedCount" @click="removeCheckedRows">删除已选 {{ checkedCount }} 条</el-button>
           <el-button v-if="canMaintain" :disabled="!dirty" @click="revertChanges">放弃修改</el-button>
           <el-button v-if="canMaintain" type="primary" plain @click="addMappingRow">+ 添加一条</el-button>
           <el-button v-if="canMaintain" type="primary" :loading="saving" :disabled="!mappingCount || !dirty" @click="saveSynonyms">保存修改</el-button>
@@ -399,12 +424,25 @@ onMounted(async () => {
 
       <div class="syn-grid" :class="{ 'is-readonly': !canMaintain }">
         <div class="syn-grid__head">
+          <span class="syn-check-head">
+            <el-checkbox
+              v-if="canMaintain"
+              :model-value="pageAllChecked"
+              :indeterminate="pageSomeChecked"
+              :disabled="!visibleRows.length"
+              aria-label="本页全选或取消全选"
+              @change="(value: boolean) => togglePageAll(Boolean(value))"
+            />
+          </span>
           <span>其他写法</span>
           <span class="syn-arrow" aria-hidden="true"></span>
           <span>标准写法</span>
           <span class="syn-actions-head">操作</span>
         </div>
         <div v-for="{ row, index } in visibleRows" :key="index" class="syn-grid__row">
+          <span class="syn-check">
+            <el-checkbox v-if="canMaintain" v-model="row.checked" :aria-label="`选择同义词 ${row.source || '(新行)'}`" />
+          </span>
           <el-input v-model="row.source" placeholder="例如：光耦" :disabled="!canMaintain" />
           <span class="syn-arrow" aria-hidden="true">→</span>
           <el-input v-model="row.target" placeholder="例如：光电耦合器" :disabled="!canMaintain" />
