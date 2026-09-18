@@ -52,11 +52,10 @@ BROWSER_README = """客户端浏览器工具包（Windows 7 终端专用）
   - 官方 archive.mozilla.org 发布，SHA256 已对官方 SHA256SUMS 校验；
   - 支持 Windows 7 SP1 x64，随 ESR 系列获得维护更新。
 
-备用说明：Chrome 109（Win7 最后支持版本）
-  - 截至本介质构建时，Google 官方渠道已不再公开提供 109.0.5414.120 的离线安装包
-    （详见 LICENSES-AND-SOURCES.txt 的记录与处理方式）；
-  - 如贵方通过 Chrome 企业官方渠道取得 109 离线包，可自行放入本目录使用，
-    本交付介质不打包非官方来源的 Chrome 二进制。
+Chrome 109（Win7 备用内核）——客户已确认豁免（2026-09-18）：
+  - Google 官方已停止公开分发 109 离线安装包（见 LICENSES-AND-SOURCES.txt 核查记录）；
+  - 客户确认 Win7 终端统一使用本目录 Firefox ESR；如未来经 Google 企业渠道
+    自取 109 原版，可放入本目录（验真指引见《客户工作单》第四节）。
 
 安装 Firefox 后若仍打不开页面：请先执行《安装手册》中的“检查服务器地址/防火墙”，
 再联系系统维护人员。
@@ -76,9 +75,10 @@ Chrome 109.0.5414.120（Win7 兼容备用）
   状态：截至本介质构建时，Google 官方公开渠道（dl.google.com / Chrome for Testing 自 113 起）
   均已不再提供 109 版本离线安装包；为遵守“只使用官方来源、禁止第三方下载站”的交付合规要求，
   本介质【不打包 Chrome 109】，并如实记录于此。
-  解决路径：如客户需要 Chrome 备用浏览器，请由客户通过 Google 企业官方授权渠道（Chrome Enterprise
+  解决路径：如未来需要 Chrome 备用浏览器，请由客户通过 Google 企业官方授权渠道（Chrome Enterprise
   软件再分发计划）自行获取原版离线 MSI 放入本目录；原厂不对非官方来源二进制负责。
-  本替代方案对功能的影响：Firefox ESR 已完整通过 STEP1～STEP4 验收，Chrome 仅为备用。
+  客户决议（2026-09-18）：确认豁免 Chrome 109，Win7 终端统一使用 Firefox ESR 115.41.0esr
+  （该版本已通过原厂全套 STEP1~STEP4 功能验收，Chrome 仅为备用，功能不受影响）。
 """
 
 
