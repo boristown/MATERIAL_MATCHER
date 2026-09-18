@@ -1,0 +1,5 @@
+{"status":"ok","version":"1.2.5"}
+{"error":{"code":"AUTH_REQUIRED","message":"登录已失效，请重新登录","details":{},"request_id":"f998f5cff257"}
+enabled
+material_matcher-app Up 14 seconds
+{"status":"ok","version":"1.2.5"} restart-verify 00:27:54
