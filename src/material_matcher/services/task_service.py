@@ -107,7 +107,12 @@ def task_time_fields(
 
     compute_duration_ms = _duration_ms(compute_started_at, compute_completed_at)
     compute_elapsed_ms = compute_duration_ms
-    if compute_elapsed_ms is None and compute_started_at and not compute_completed_at:
+    if (
+        compute_elapsed_ms is None
+        and compute_started_at
+        and not compute_completed_at
+        and str(task.get("status") or "") in {"PREPARING", "RUNNING", "RECOVERING"}
+    ):
         started = _parse_timestamp(compute_started_at)
         current = now or datetime.now().astimezone()
         if started is not None:
