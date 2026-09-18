@@ -84,6 +84,16 @@ def _staging(tmp_path: Path, repo_root: Path) -> tuple[Path, Path, Path]:
     _write(source.parent / "source" / "pyproject.toml", b"[project]\nname = 'x'\n")
     _write(source.parent / "source" / "web" / "package.json", b"{}\n")
     _write(source.parent / "source" / "installer" / "install.sh", b"#!/bin/sh\nexit 0\n")
+    seed = source.parent / "seed/business"
+    names = ["A001 元器件", "A002 标准紧固件", "A003 金属材料", "A005 非金属材料", "A006 复合材料", "A007 物资类其他(跨类目)"]
+    _write(seed / "manifest.json", json.dumps({
+        "format_version": 1, "product": "MATERIAL_MATCHER_BUSINESS_SEED",
+        "exported_at": "2026-01-01T00:00:00+00:00", "source": "test", "source_db_sha256": "0" * 64,
+        "profiles": [{"profile_id": f"{i:032x}", "name": n, "published_versions": [1], "latest_document_sha256": "1" * 64} for i, n in enumerate(names)],
+        "dictionaries": [{"dictionary_id": "d" * 32, "name": "syn", "versions": [1], "rule_counts": {"1": 1}}],
+    }, ensure_ascii=False).encode())
+    _write(seed / "profiles.json", json.dumps({"format_version": 1, "profiles": []}).encode())
+    _write(seed / "dictionaries.json", json.dumps({"format_version": 1, "dictionaries": []}).encode())
     return release, model, wheelhouse
 
 

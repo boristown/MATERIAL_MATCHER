@@ -143,6 +143,43 @@ def main() -> int:
     status, page = api.json("GET", "/")
     check("前端页面可达", status == 200, "")
 
+    expected_profiles = ["A001 元器件", "A002 标准紧固件", "A003 金属材料", "A005 非金属材料", "A006 复合材料", "A007 物资类其他(跨类目)"]
+    status, profiles = api.json("GET", "/api/profiles")
+    profile_rows = profiles if isinstance(profiles, list) else []
+    names = sorted(str(p.get("name", "")) for p in profile_rows)
+    check("默认 6 个正式匹配方案已预置", status == 200 and names == sorted(expected_profiles), f"names={len(names)}")
+    opened = 0
+    for row in profile_rows:
+        code, detail = api.json("GET", f"/api/profiles/{row.get('profile_id')}")
+        if code == 200 and detail.get("latest_published"):
+            opened += 1
+    check("全部方案可正常打开", opened == len(expected_profiles), f"opened={opened}")
+
+    status, dictionaries = api.json("GET", "/api/dictionaries")
+    dict_rows = dictionaries if isinstance(dictionaries, list) else []
+    dictionary_id = str(dict_rows[0]["dictionary_id"]) if dict_rows else ""
+    status, dict_versions = api.json("GET", f"/api/dictionaries/{dictionary_id}/versions") if dictionary_id else (0, {})
+    versions = dict_versions if isinstance(dict_versions, list) else []
+    head = versions[0] if versions else {}
+    rules = len(((head.get("document") or {}).get("mapping") or {})) if isinstance(head, dict) else 0
+    check("默认同义词配置存在（规则+版本）", bool(versions) and rules >= 20, f"versions={len(versions)} rules={rules}")
+
+    if dictionary_id and isinstance(head, dict):
+        mapping = dict((head.get("document") or {}).get("mapping") or {})
+        case_sensitive = bool((head.get("document") or {}).get("case_sensitive", True))
+        base_no = int(head.get("version_no") or 0)
+        dropped_key = next(iter(mapping))
+        trimmed = {k: v for k, v in mapping.items() if k != dropped_key}
+        code_removed, removed = api.json("POST", f"/api/dictionaries/{dictionary_id}/versions", {"mapping": trimmed, "case_sensitive": case_sensitive, "base_version_no": base_no})
+        removed_no = int((removed or {}).get("version_no") or 0)
+        code_restored, restored = api.json("POST", f"/api/dictionaries/{dictionary_id}/versions", {"mapping": mapping, "case_sensitive": case_sensitive, "base_version_no": removed_no})
+        restored_mapping = ((restored or {}).get("document") or {}).get("mapping") or {}
+        code_head, versions_after = api.json("GET", f"/api/dictionaries/{dictionary_id}/versions")
+        same_rules = restored_mapping == mapping
+        grew = isinstance(versions_after, list) and len(versions_after) == len(versions) + 2
+        check("同义词批量删除模拟→新不可变版本→恢复", code_removed == 200 and code_restored == 200 and same_rules and grew,
+              f"removed={code_removed} restored={code_restored} versions {len(versions)}→{len(versions_after) if isinstance(versions_after, list) else '?'}")
+
     status, source_up = api.upload("/api/files/upload", "source", source_xlsx)
     check("STEP1 上传待匹配数据", status == 200 and "file" in source_up, f"status={status}")
     status, target_up = api.upload("/api/files/upload", "target", target_xlsx)
@@ -163,7 +200,7 @@ def main() -> int:
         return _finish(args, started)
     catalog_version_id = str(catalog["version_id"])
 
-    config = {
+    fallback_config = {
         "source_id_column": "物料编码",
         "scope_mode": "GLOBAL",
         "rules": [
@@ -197,29 +234,52 @@ def main() -> int:
         return _finish(args, started)
     draft_id = str(draft["draft_id"])
     api.json("PUT", f"/api/task-drafts/{draft_id}/data", {"source_file_id": source_file_id, "catalog_version_id": catalog_version_id})
-    api.json("PUT", f"/api/task-drafts/{draft_id}/rules", config)
-    status, started_run = api.json("POST", f"/api/task-drafts/{draft_id}/start")
-    check("STEP1 启动匹配", status in (200, 202) and "task_id" in started_run, f"status={status}")
-    if "task_id" not in started_run:
-        return _finish(args, started)
-    task_id = str(started_run["task_id"])
 
-    deadline = time.time() + 300
-    task: dict = {}
-    progress_seen = False
-    while time.time() < deadline:
-        status, task = api.json("GET", f"/api/tasks/{task_id}")
-        if task.get("status") in {"RUNNING", "QUEUED"}:
-            progress_seen = True
-        if task.get("status") in {"COMPLETED", "FAILED"}:
-            break
-        time.sleep(1)
+    def run_task_with(config: dict, label: str) -> tuple[bool, str, dict]:
+        code, _ = api.json("PUT", f"/api/task-drafts/{draft_id}/rules", config)
+        if code != 200:
+            return False, "", {}
+        code, started_run = api.json("POST", f"/api/task-drafts/{draft_id}/start")
+        if code not in (200, 202) or "task_id" not in started_run:
+            return False, "", {}
+        task_id = str(started_run["task_id"])
+        deadline = time.time() + 300
+        task: dict = {}
+        while time.time() < deadline:
+            _, task = api.json("GET", f"/api/tasks/{task_id}")
+            if task.get("status") in {"COMPLETED", "FAILED"}:
+                break
+            time.sleep(1)
+        return task.get("status") == "COMPLETED", task_id, task
+
+    import copy as _copy
+
+    profile_task_ok = False
+    task_id, task = "", {}
+    a007 = next((p for p in profile_rows if str(p.get("name", "")).startswith("A007")), None)
+    if a007 is not None:
+        code, a007_detail = api.json("GET", f"/api/profiles/{a007['profile_id']}")
+        published = (a007_detail or {}).get("latest_published") or {}
+        profile_document = published.get("document")
+        if code == 200 and isinstance(profile_document, dict) and profile_document.get("rules"):
+            profile_config = _copy.deepcopy(profile_document)
+            profile_config["source_id_column"] = "物料编码"
+            advanced = dict(profile_config.get("advanced") or {})
+            advanced["workspace_target"] = {"file_id": target_file_id, "group_code_column": "集团码"}
+            profile_config["advanced"] = advanced
+            profile_task_ok, task_id, task = run_task_with(profile_config, "A007")
+    check("使用默认方案 A007 完成任务", profile_task_ok, "" if profile_task_ok else "主路径未通过，改用内置最小配置验证")
+    if not profile_task_ok:
+        ok, task_id, task = run_task_with(fallback_config, "fallback")
+        check("STEP1/2 内置配置任务完成", ok, f"status={task.get('status')}")
+        if not ok:
+            return _finish(args, started)
+    check("STEP1 启动匹配", bool(task_id), f"task={task_id[:8]}")
     check("STEP2 匹配完成", task.get("status") == "COMPLETED", f"status={task.get('status')} 用时={int(time.time() - started)}s")
 
     status, items = api.json("GET", f"/api/tasks/{task_id}/workbench/items?limit=5")
     check("STEP3 打开结果明细", status == 200, f"status={status}")
-    matched = any(True for _ in (items.get("items") or [])) if isinstance(items, dict) else True
-    check("STEP2/3 进度与结果可见", bool(progress_seen or matched), "")
+    check("STEP2/3 进度与结果可见", task.get("status") == "COMPLETED" and status == 200, "")
 
     status, fin = api.json("POST", f"/api/tasks/{task_id}/finalize", {"allow_unresolved_review": True})
     check("STEP4 生成结果", status == 200, f"status={status}")

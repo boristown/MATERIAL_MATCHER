@@ -12,11 +12,11 @@ fi
 if [[ $EUID -eq 0 ]]; then
   exec bash install_wizard.sh "$@"
 fi
-if command -v pkexec >/dev/null 2>&1; then
-  exec pkexec env DISPLAY="${DISPLAY:-}" XAUTHORITY="${XAUTHORITY:-}" MM_MEDIA_ROOT="$PWD" bash "$PWD/install_wizard.sh" "$@"
-fi
 if command -v sudo >/dev/null 2>&1; then
   exec sudo env MM_MEDIA_ROOT="$PWD" bash "$PWD/install_wizard.sh" "$@"
+fi
+if command -v pkexec >/dev/null 2>&1; then
+  exec pkexec env DISPLAY="${DISPLAY:-}" XAUTHORITY="${XAUTHORITY:-}" MM_MEDIA_ROOT="$PWD" bash "$PWD/install_wizard.sh" "$@"
 fi
 echo "当前账号没有系统管理员权限，无法安装。请联系管理员，使用具备 sudo/root 权限的账号重新运行。" >&2
 exit 44

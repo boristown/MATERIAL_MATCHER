@@ -33,6 +33,7 @@ EXIT_DB=45
 EXIT_DOCTOR=46
 EXIT_START=47
 EXIT_READY=48
+EXIT_SEED=49
 
 PROGRESS_ON=0
 step() {
@@ -552,6 +553,34 @@ PY
   fi
 fi
 
+# ---- 默认业务 seed：6 个正式方案 + 同义词表（幂等；升级/重装绝不覆盖已有配置）----
+SEED_SUMMARY="未导入"
+if [[ -x "$OPT/current/$RUNTIME_DIR_NAME/bin/material-matcher" && -d "$OPT/current/seed/business" ]]; then
+  step 92 "正在导入默认业务配置（6 个正式匹配方案与同义词表，重复运行自动跳过）……"
+  SEED_JSON=""
+  if command -v runuser >/dev/null 2>&1; then
+    SEED_JSON="$(runuser -u "$APP_USER" -- env "MATERIAL_MATCHER_DATA_DIR=$DATA_DIR" "MATERIAL_MATCHER_CONFIG_DIR=$ETC" "MATERIAL_MATCHER_LOG_DIR=$LOG" \
+      "$OPT/current/$RUNTIME_DIR_NAME/bin/material-matcher" seed-import --seed-dir "$OPT/current/seed/business" 2>&1)" || true
+  else
+    SEED_JSON="$(env "MATERIAL_MATCHER_DATA_DIR=$DATA_DIR" "MATERIAL_MATCHER_CONFIG_DIR=$ETC" "MATERIAL_MATCHER_LOG_DIR=$LOG" \
+      "$OPT/current/$RUNTIME_DIR_NAME/bin/material-matcher" seed-import --seed-dir "$OPT/current/seed/business" 2>&1)" || true
+  fi
+  if [[ -n "$PY" ]] && printf '%s' "$SEED_JSON" | "$PY" -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if d.get("ok") else 1)' 2>/dev/null; then
+    SEED_SUMMARY="$(MM_SEED_JSON="$SEED_JSON" "$PY" - <<'PYEOF'
+import json, os
+d = json.loads(os.environ["MM_SEED_JSON"])
+c = d["counts"]
+print(f"新增方案 {c['profiles_imported']} 个，跳过已有 {c['profiles_skipped']} 个；同义词表新增 {c['dictionaries_imported']} 张，跳过已有 {c['dictionaries_skipped']} 张")
+PYEOF
+)"
+  elif [[ "$IS_UPGRADE" == "0" ]]; then
+    die "$EXIT_SEED" "默认业务配置导入失败，系统缺少 6 个正式匹配方案，不能视为安装成功。请导出诊断包并联系维护人员（旧版本不受影响）。"
+  else
+    SEED_SUMMARY="导入失败（升级模式不阻断：已有业务配置不受影响，请稍后运行 mmctl 或联系维护人员重试）"
+    echo "警告：默认业务配置导入失败：$(printf '%s' "$SEED_JSON" | tail -2)" >&2
+  fi
+fi
+
 # ---- 成功汇总与安装报告 ------------------------------------------------------
 step 96 "正在生成安装报告……"
 set -a; source "$SERVER_ENV"; set +a; DATA_DIR="${MATERIAL_MATCHER_DATA_DIR:-$DATA_DIR}"
@@ -575,6 +604,7 @@ REPORT_FILE="$REPORT_DIR/install-$(date +%Y%m%d-%H%M%S).txt"
   echo "数据目录：$DATA_DIR"
   echo "日志目录：$LOG"
   echo "服务端口：${MATERIAL_MATCHER_PORT}"
+  echo "默认业务配置：${SEED_SUMMARY:-未导入}"
   echo "服务状态：$(systemctl is-active material_matcher.service 2>/dev/null || true)"
   echo "开机自启：$(systemctl is-enabled material_matcher.service 2>/dev/null || true)"
   echo "本机访问：http://127.0.0.1:${MATERIAL_MATCHER_PORT}"
@@ -592,6 +622,7 @@ if [[ -n "$PY" ]]; then
     MM_MODE="$MODE_TEXT" MM_VERSION="${RELEASE_VERSION:-}" MM_COMMIT="$GIT_COMMIT" \
     MM_PORT="${MATERIAL_MATCHER_PORT:-0}" MM_DATA_DIR="$DATA_DIR" MM_LOG_DIR="$LOG" \
     MM_PW_SOURCE="$PASSWORD_SOURCE" MM_PW_FILE="$PASSWORD_FILE" MM_ADDRS="$MAP_ADDRESSES" \
+    MM_SEED="$SEED_SUMMARY" \
     MM_ACTIVE="$(systemctl is-active material_matcher.service 2>/dev/null || true)" \
     MM_ENABLED="$(systemctl is-enabled material_matcher.service 2>/dev/null || true)" \
     MM_FIREWALL="$FIREWALL_HINT" MM_REPORT="$REPORT_FILE" \
@@ -608,6 +639,7 @@ print(json.dumps({
     "log_dir": e["MM_LOG_DIR"],
     "password_source": e["MM_PW_SOURCE"],
     "password_file": e["MM_PW_FILE"],
+    "seed_summary": e["MM_SEED"],
     "addresses": [a for a in e["MM_ADDRS"].split() if a],
     "service_active": e["MM_ACTIVE"],
     "service_enabled": e["MM_ENABLED"],

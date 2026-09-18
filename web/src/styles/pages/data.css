@@ -354,10 +354,17 @@
 .syn-grid__head,
 .syn-grid__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr) 72px;
+  grid-template-columns: 32px minmax(0, 1fr) 44px minmax(0, 1fr) 72px;
   gap: 8px;
   align-items: center;
   padding: 6px 14px;
+}
+
+.syn-check,
+.syn-check-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .syn-grid__head {
@@ -469,7 +476,7 @@
 
   .syn-grid__head,
   .syn-grid__row {
-    grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr) 44px;
+    grid-template-columns: 26px minmax(0, 1fr) 26px minmax(0, 1fr) 44px;
     gap: 6px;
     padding-left: 10px;
     padding-right: 10px;
