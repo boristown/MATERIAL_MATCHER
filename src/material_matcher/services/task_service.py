@@ -15,6 +15,7 @@ from material_matcher.storage.metadata import MetadataRepository
 
 UNNAMED_SCHEME = "未命名方案"
 SCHEME_SNAPSHOT_KEY = "scheme_display_name"
+INPUT_ASSET_SNAPSHOT_KEY = "input_assets"
 
 
 def _now() -> str:
@@ -313,7 +314,13 @@ class TaskService:
             )
         return self.get_draft(draft_id)
 
-    def start(self, draft_id: str, actor: str = "system") -> dict[str, object]:
+    def start(
+        self,
+        draft_id: str,
+        actor: str = "system",
+        *,
+        input_assets: dict[str, dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         draft = self.get_draft(draft_id)
         if not draft.get("source_file_id") or not draft.get("catalog_version_id"):
             raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据和集团码目录", status_code=422)
@@ -323,6 +330,18 @@ class TaskService:
             raise DomainError("INVALID_PROFILE", "至少配置一条字段对应关系后才能开始比对", status_code=422)
         snapshot = config.model_dump(mode="json")
         scheme_name = self._freeze_scheme_name(snapshot, draft)
+        if input_assets:
+            advanced = dict(snapshot.get("advanced") or {})
+            advanced[INPUT_ASSET_SNAPSHOT_KEY] = {
+                role: {
+                    key: asset.get(key)
+                    for key in ("file_id", "original_name", "uploaded_at", "catalog_version_id")
+                    if asset.get(key) is not None
+                }
+                for role, asset in input_assets.items()
+                if role in {"source", "target"}
+            }
+            snapshot["advanced"] = advanced
         encoded = _canonical(snapshot)
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         task_id = uuid.uuid4().hex
@@ -354,6 +373,25 @@ class TaskService:
                     None,
                 ),
             )
+            if input_assets:
+                for role in ("source", "target"):
+                    asset = input_assets.get(role)
+                    if not asset:
+                        continue
+                    connection.execute(
+                        """INSERT INTO task_input_assets(
+                               task_id,asset_role,file_id,original_name,uploaded_at,frozen_at,catalog_version_id
+                           ) VALUES(?,?,?,?,?,?,?)""",
+                        (
+                            task_id,
+                            role,
+                            str(asset["file_id"]),
+                            str(asset.get("original_name") or ""),
+                            str(asset.get("uploaded_at") or "") or None,
+                            created_at,
+                            str(asset.get("catalog_version_id") or "") or None,
+                        ),
+                    )
             connection.execute(
                 "INSERT INTO task_actors(task_id,created_by,started_by) VALUES(?,?,?)",
                 (task_id, actor_name, actor_name),
@@ -370,6 +408,7 @@ class TaskService:
                         "scheme_display_name": scheme_name,
                         "created_by": actor_name,
                         "started_by": actor_name,
+                        "input_assets_frozen": bool(input_assets),
                     }),
                     created_at,
                 ),
