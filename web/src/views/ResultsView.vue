@@ -569,7 +569,7 @@ onMounted(load)
             <div class="result-quality-alert-copy">
               <span class="result-quality-kicker">需要关注</span>
               <h4>本次匹配已完成，但当前没有形成有效匹配结果。</h4>
-              <p>建议回到第三步查看候选相似度和字段对比，再判断是否需要调整匹配条件或进行人工确认。</p>
+              <p>建议回到第三步查看候选相似度和字段对比，再判断是否需要调整匹配条件或进行人工匹配。</p>
             </div>
             <div class="result-quality-actions">
               <el-button type="warning" plain @click="openTask(latestResult)">进入第三步检查</el-button>
