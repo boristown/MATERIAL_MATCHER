@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 import time
@@ -152,6 +153,8 @@ def test_new_task_freezes_both_original_inputs_and_downloads_exact_bytes(authed:
     assert target_download.status_code == 200
     assert source_download.content == prepared["source_bytes"]
     assert target_download.content == prepared["target_bytes"]
+    assert sha256(source_download.content).hexdigest() == sha256(prepared["source_bytes"]).hexdigest()
+    assert sha256(target_download.content).hexdigest() == sha256(prepared["target_bytes"]).hexdigest()
     assert source_download.headers["content-type"].startswith(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
@@ -198,8 +201,10 @@ def test_old_task_stays_on_old_target_and_same_name_source_after_new_uploads(aut
     assert new_version.status_code == 200, new_version.text
     assert new_version.json()["version_id"] != prepared["catalog"]["version_id"]
 
-    assert authed.get(f"/api/tasks/{task_id}/input-files/source").content == prepared["source_bytes"]
-    assert authed.get(f"/api/tasks/{task_id}/input-files/target").content == prepared["target_bytes"]
+    old_source_download = authed.get(f"/api/tasks/{task_id}/input-files/source").content
+    old_target_download = authed.get(f"/api/tasks/{task_id}/input-files/target").content
+    assert sha256(old_source_download).hexdigest() == sha256(prepared["source_bytes"]).hexdigest()
+    assert sha256(old_target_download).hexdigest() == sha256(prepared["target_bytes"]).hexdigest()
 
     assets = authed.get(f"/api/tasks/{task_id}/input-assets").json()
     assert assets["source"]["original_name"] == "同名源数据.xlsx"
