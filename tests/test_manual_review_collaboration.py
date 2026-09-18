@@ -238,11 +238,36 @@ def test_task_start_records_logged_in_creator_and_starter(authed: TestClient) ->
         "decision": {"success_threshold": 90, "review_enabled": True, "review_threshold": 70, "top_n": 5},
         "advanced": {},
     }
+    source = authed.post(
+        "/api/files/upload",
+        data={"role": "source"},
+        files={"file": ("actor-source.csv", "物料号,物料名称\nS001,发起人测试物料\n".encode("utf-8"), "text/csv")},
+    ).json()["file"]
+    target = authed.post(
+        "/api/files/upload",
+        data={"role": "target"},
+        files={"file": ("actor-target.csv", "集团码,物料名称\nG001,发起人测试物料\n".encode("utf-8"), "text/csv")},
+    ).json()["file"]
+    catalog = authed.post(
+        "/api/catalogs",
+        json={"name": "发起人测试目录", "source_file_id": target["file_id"], "group_code_column": "集团码"},
+    ).json()
     now = "2026-09-16T15:20:08+08:00"
     with authed.app.state.meta.connect() as connection:
         connection.execute(
             "INSERT INTO task_drafts VALUES(?,?,?,?,?,?,?,?,?,?)",
-            ("actor-draft", "发起人测试", "missing-source", "missing-catalog", None, None, json.dumps(config, ensure_ascii=False), 2, now, now),
+            (
+                "actor-draft",
+                "发起人测试",
+                source["file_id"],
+                catalog["version_id"],
+                None,
+                None,
+                json.dumps(config, ensure_ascii=False),
+                2,
+                now,
+                now,
+            ),
         )
     response = authed.post("/api/task-drafts/actor-draft/start")
     assert response.status_code == 202
