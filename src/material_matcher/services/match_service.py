@@ -214,11 +214,11 @@ class MatchService:
 
             rows = self._run_rows(source=source, target=target, catalog=catalog, config=config, on_progress=progress, on_index_progress=index_progress, on_index_ready=index_ready if vector_mode else None, on_batch=persist_batch)
             self._set_runtime(task_id, execution_mode, "PERSIST")
-            now = _now()
             if persisted[0] < len(rows): self._persist_rows(task_id, rows[persisted[0]:])
             with self.meta.connect() as connection:
                 review_count = connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0]
                 stage = "REVIEW" if review_count else "RESULT"
+                now = _now()
                 connection.execute("UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?", (stage, len(rows), len(rows), now, task_id))
                 connection.execute(
                     "UPDATE task_compute_lifecycle SET compute_completed_at=? WHERE task_id=?",
