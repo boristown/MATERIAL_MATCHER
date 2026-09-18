@@ -102,12 +102,23 @@ def main() -> int:
     parser.add_argument("--report", default="")
     args = parser.parse_args()
 
-    password = args.password
-    if not password and args.password_file:
-        for line in pathlib.Path(args.password_file).read_text(encoding="utf-8").splitlines():
-            if line.startswith("MATERIAL_MATCHER_ADMIN_PASSWORD="):
-                password = line.split("=", 1)[1].strip()
-    if not password:
+    candidates: list[str] = []
+    if args.password:
+        candidates.append(args.password)
+    if args.password_file:
+        try:
+            for line in pathlib.Path(args.password_file).read_text(encoding="utf-8").splitlines():
+                if line.startswith("MATERIAL_MATCHER_ADMIN_PASSWORD="):
+                    candidates.append(line.split("=", 1)[1].strip())
+        except OSError:
+            pass
+    store = pathlib.Path("/var/tmp/mm-smoke-admin.pw")
+    try:
+        if store.is_file():
+            candidates.append(store.read_text(encoding="utf-8").strip())
+    except OSError:
+        pass
+    if not candidates:
         print("FAIL login :: 未提供密码（--password 或 --password-file）")
         return 2
 
@@ -126,19 +137,30 @@ def main() -> int:
     status, ready = api.json("GET", "/api/health/ready")
     check("health/ready", status == 200 and ready.get("status") == "ready", json.dumps(ready, ensure_ascii=False)[:160])
 
-    status, login = api.json("POST", "/api/auth/login", {"username": "admin", "password": password})
-    check("STEP0 admin 登录", status == 200 and login.get("ok") is True, "")
-    if status != 200:
+    login: dict = {}
+    password = ""
+    for candidate in candidates:
+        status, attempt = api.json("POST", "/api/auth/login", {"username": "admin", "password": candidate})
+        if status == 200 and attempt.get("ok") is True:
+            login, password = attempt, candidate
+            break
+    check("STEP0 admin 登录", bool(login), "")
+    if not login:
         return _finish(args, started)
 
     if (login.get("user") or {}).get("must_change_password"):
-        new_pw = "Smoke!" + generate_local_pw()
+        new_pw = "Smoke" + generate_local_pw()
         status, changed = api.json("POST", "/api/auth/change-password", {"current_password": password, "new_password": new_pw})
         check("STEP0 首次登录修改密码", status == 200, f"status={status}")
         status, login = api.json("POST", "/api/auth/login", {"username": "admin", "password": new_pw})
         check("STEP0 新密码重新登录", status == 200, f"status={status}")
         if status != 200:
             return _finish(args, started)
+        try:  # 记录本次验收密码（root 权限环境下的本地缓存，便于重复验收；不含在诊断包中）
+            store.write_text(new_pw, encoding="utf-8")
+            store.chmod(0o600)
+        except OSError:
+            pass
 
     status, page = api.json("GET", "/")
     check("前端页面可达", status == 200, "")

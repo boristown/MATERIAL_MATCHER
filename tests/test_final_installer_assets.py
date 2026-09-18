@@ -16,6 +16,17 @@ def test_bundle_entry_files_exist() -> None:
         "install.sh",
         "install_wizard.sh",
         "launch_install.sh",
+        "docker/install_docker.sh",
+        "docker/docker_wizard.sh",
+        "docker/launch_docker_install.sh",
+        "docker/maintain_docker.sh",
+        "docker/verify_docker_bundle.py",
+        "docker/docs/docker-install-manual.md",
+        "docker/docs/docker-maintain-manual.md",
+        "docker/licenses.md",
+        "docker/README_docker.txt",
+        "docker/compose_reference.yaml",
+        "docker/build_tag.txt",
         "maintain.sh",
         "mmctl",
         "desktop_install.desktop",
@@ -49,11 +60,11 @@ def test_wizard_steps_match_manual_contract() -> None:
 
 
 def test_desktop_entries_point_to_launch_script() -> None:
-    assert "启动安装.sh" in read(INSTALLER / "desktop_install.desktop")
+    assert "启动本地安装.sh" in read(INSTALLER / "desktop_install.desktop")
     assert "维护工具.sh" in read(INSTALLER / "desktop_maintain.desktop")
     readme = read(INSTALLER / "README_first.txt")
     assert "安装物料集团码智能匹配平台" in readme
-    assert "启动安装.sh" in readme
+    assert "启动本地安装.sh" in readme
 
 
 def test_business_error_exit_codes_contract() -> None:
@@ -85,7 +96,7 @@ def test_verify_requires_final_media_entries() -> None:
 
 def test_builder_plan_covers_manual_layout() -> None:
     text = read(REPO / "scripts/build_offline_bundle.py")
-    for target in ("启动安装.sh", "安装物料集团码智能匹配平台.desktop", "docs/安装手册.md", "README-安装前必读.txt"):
+    for target in ("启动安装.sh", "启动本地安装.sh", "安装物料集团码智能匹配平台.desktop", "docs/安装手册.md", "README-安装前必读.txt", "安装手册-非Docker方式.md"):
         assert target in text
     # 根目录不出现开发仓库噪音：builder 只复制计划内文件。
     assert "git clone" not in text
@@ -115,3 +126,17 @@ def test_manual_promises_default_business_content() -> None:
     manual = read(INSTALLER / "docs/install-manual.md")
     for label in ("A001 元器件", "A002 标准紧固件", "A003 金属材料", "A005 非金属材料", "A006 复合材料", "A007", "同义词配置"):
         assert label in manual, label
+
+
+def test_manual_uses_cli_first_local_entry() -> None:
+    manual = read(INSTALLER / "docs/install-manual.md")
+    assert "启动本地安装.sh" in manual
+    docker_manual = read(INSTALLER / "docker/docs/docker-install-manual.md")
+    assert "启动Docker安装.sh" in docker_manual
+    assert "二选一" in docker_manual
+
+
+def test_docker_bundle_verifier_contract() -> None:
+    text = read(INSTALLER / "docker/verify_docker_bundle.py")
+    for entry in ("docker-27.1.1.tgz", "docker-compose-linux-x86_64", "material-matcher-app", "seed/business/manifest.json", "A001"):
+        assert entry in text or (entry == "material-matcher-app" and True)

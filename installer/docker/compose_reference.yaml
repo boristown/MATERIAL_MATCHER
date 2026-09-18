@@ -1,0 +1,28 @@
+# 参考模板：安装时由 install_docker.sh 按实际端口/镜像生成 /opt/material_matcher/docker/compose.yaml
+name: material_matcher
+networks:
+  material_matcher-net:
+    name: material_matcher-net
+services:
+  app:
+    image: material-matcher-app:RELEASE_VERSION_PLACEHOLDER
+    container_name: material_matcher-app
+    restart: unless-stopped
+    networks: [material_matcher-net]
+    env_file:
+      - /etc/material_matcher/secret/admin_password.env
+    ports:
+      - "0.0.0.0:18080:18080"
+    volumes:
+      - /etc/material_matcher:/etc/material_matcher
+      - /var/lib/material_matcher:/var/lib/material_matcher
+      - /var/log/material_matcher:/var/log/material_matcher
+    environment:
+      MATERIAL_MATCHER_DATA_DIR: /var/lib/material_matcher
+      MATERIAL_MATCHER_CONFIG_DIR: /etc/material_matcher
+      MATERIAL_MATCHER_LOG_DIR: /var/log/material_matcher
+      MATERIAL_MATCHER_MODEL_ROOT: /opt/material_matcher/model
+      MATERIAL_MATCHER_WEB_DIST_DIR: /opt/material_matcher/current/web/dist
+      MATERIAL_MATCHER_HOST: 0.0.0.0
+      MATERIAL_MATCHER_PORT: "18080"
+      MATERIAL_MATCHER_SESSION_TTL_SECONDS: "1209600"
