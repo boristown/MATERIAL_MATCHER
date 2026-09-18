@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { formatDurationMs } from '../taskTime'
+import { businessRateWidth, formatBusinessRate } from '../resultRates'
 import '../styles/pages/results.css'
 
 type TaskRow = Record<string, unknown> & {
@@ -317,10 +318,6 @@ function openTask(task: TaskRow): void {
   router.push(`/tasks/${task.id}`)
 }
 
-function evaluate(task: TaskRow): void {
-  router.push(`/tasks/${task.id}/evaluation`)
-}
-
 async function loadLatestDetails(task: TaskRow): Promise<void> {
   const [summaryResponse, previewResponse, exportResponse, inputAssetsResponse] = await Promise.all([
     api.get(`/tasks/${task.id}/workbench/summary`),
@@ -454,6 +451,20 @@ onMounted(load)
             <el-button type="primary" plain @click="openTask(latestResult)">查看匹配详情</el-button>
           </div>
 
+          <div class="result-task-info">
+            <div class="result-section-heading">
+              <b>任务资料</b>
+              <span>记录本次方案、启动信息与自动计算性能，不包含人工等待时间。</span>
+            </div>
+            <div class="result-lifecycle">
+              <div><span>方案名称</span><b>{{ latestResult.scheme_name }}</b></div>
+              <div><span>任务开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
+              <div><span>自动计算耗时</span><b>{{ formatDurationMs(latestResult.compute_duration_ms) }}</b></div>
+              <div><span>启动账号</span><b>{{ startedAccount }}</b></div>
+              <div><span>结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
+            </div>
+          </div>
+
           <div class="result-input-assets">
             <div class="result-input-assets-head">
               <div>
@@ -499,17 +510,59 @@ onMounted(load)
           </div>
           <div class="result-metrics">
             <div class="result-metric primary"><span>源数据总数</span><b>{{ formatCount(latestTotalRows) }}</b><small>源 Excel 参与匹配的记录</small></div>
-            <div class="result-metric"><span>自动匹配数</span><b>{{ formatCount(latestSummary.automatic_matched) }}</b><small>系统直接形成最终集团码</small></div>
-            <div class="result-metric"><span>人工匹配数</span><b>{{ formatCount(latestSummary.confirmed) }}</b><small>经人工选择后形成集团码</small></div>
-            <div class="result-metric"><span>未匹配数</span><b>{{ formatCount(latestSummary.unmatched) }}</b><small>最终未形成集团码</small></div>
-            <div class="result-metric"><span>待处理数</span><b>{{ formatCount(latestSummary.pending_review) }}</b><small>仍需要人工判断</small></div>
+            <div class="result-metric automatic"><span>自动匹配数</span><b>{{ formatCount(latestSummary.automatic_matched) }}</b><small>系统直接形成最终集团码</small></div>
+            <div class="result-metric manual"><span>人工匹配数</span><b>{{ formatCount(latestSummary.confirmed) }}</b><small>经人工选择后形成集团码</small></div>
+            <div class="result-metric unmatched"><span>未匹配数</span><b>{{ formatCount(latestSummary.unmatched) }}</b><small>最终未形成集团码</small></div>
+            <div class="result-metric pending"><span>待处理数</span><b>{{ formatCount(latestSummary.pending_review) }}</b><small>仍需要人工判断</small></div>
           </div>
 
-          <div class="result-lifecycle">
-            <div><span>启动账号</span><b>{{ startedAccount }}</b></div>
-            <div><span>任务开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
-            <div><span>自动计算耗时</span><b>{{ formatDurationMs(latestResult.compute_duration_ms) }}</b></div>
-            <div><span>结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
+          <div class="result-rates">
+            <div class="result-rate automatic">
+              <span>自动匹配率</span>
+              <b>{{ formatBusinessRate(latestSummary.automatic_matched, latestTotalRows) }}</b>
+              <small>系统自动形成匹配结果 / 总数据</small>
+            </div>
+            <div class="result-rate manual">
+              <span>人工匹配率</span>
+              <b>{{ formatBusinessRate(latestSummary.confirmed, latestTotalRows) }}</b>
+              <small>人工最终选择匹配结果 / 总数据</small>
+            </div>
+            <div class="result-rate unmatched">
+              <span>未匹配率</span>
+              <b>{{ formatBusinessRate(latestSummary.unmatched, latestTotalRows) }}</b>
+              <small>最终未形成集团码 / 总数据</small>
+            </div>
+            <div v-if="Number(latestSummary.pending_review || 0) > 0" class="result-rate pending">
+              <span>待处理率</span>
+              <b>{{ formatBusinessRate(latestSummary.pending_review, latestTotalRows) }}</b>
+              <small>仍需人工判断 / 总数据</small>
+            </div>
+          </div>
+          <div class="result-rate-note">以上比例表示不同处理结果在总数据中的占比，不代表匹配结果是否正确。</div>
+
+          <div class="result-composition">
+            <div class="result-composition-head">
+              <div>
+                <b>匹配结果构成</b>
+                <span>按总数据占比展示自动匹配、人工匹配、未匹配与待处理。</span>
+              </div>
+            </div>
+            <div
+              class="result-composition-bar"
+              role="img"
+              :aria-label="`匹配结果构成：自动匹配 ${formatBusinessRate(latestSummary.automatic_matched, latestTotalRows)}，人工匹配 ${formatBusinessRate(latestSummary.confirmed, latestTotalRows)}，未匹配 ${formatBusinessRate(latestSummary.unmatched, latestTotalRows)}，待处理 ${formatBusinessRate(latestSummary.pending_review, latestTotalRows)}`"
+            >
+              <span class="result-composition-segment automatic" :style="{ width: businessRateWidth(latestSummary.automatic_matched, latestTotalRows) }"></span>
+              <span class="result-composition-segment manual" :style="{ width: businessRateWidth(latestSummary.confirmed, latestTotalRows) }"></span>
+              <span class="result-composition-segment unmatched" :style="{ width: businessRateWidth(latestSummary.unmatched, latestTotalRows) }"></span>
+              <span class="result-composition-segment pending" :style="{ width: businessRateWidth(latestSummary.pending_review, latestTotalRows) }"></span>
+            </div>
+            <div class="result-composition-legend">
+              <span><i class="composition-dot automatic"></i><b>自动匹配</b>{{ formatBusinessRate(latestSummary.automatic_matched, latestTotalRows) }} · {{ formatCount(latestSummary.automatic_matched) }} 条</span>
+              <span><i class="composition-dot manual"></i><b>人工匹配</b>{{ formatBusinessRate(latestSummary.confirmed, latestTotalRows) }} · {{ formatCount(latestSummary.confirmed) }} 条</span>
+              <span><i class="composition-dot unmatched"></i><b>未匹配</b>{{ formatBusinessRate(latestSummary.unmatched, latestTotalRows) }} · {{ formatCount(latestSummary.unmatched) }} 条</span>
+              <span><i class="composition-dot pending"></i><b>待处理</b>{{ formatBusinessRate(latestSummary.pending_review, latestTotalRows) }} · {{ formatCount(latestSummary.pending_review) }} 条</span>
+            </div>
           </div>
 
           <div v-if="allUnmatched" class="result-quality-alert">
@@ -554,10 +607,20 @@ onMounted(load)
             <div class="result-downloads-head">
               <div><b>输出资料</b><span>最终匹配结果 Excel，可与上方两份原始输入一起完整复原本次任务</span></div>
             </div>
+            <div class="result-output-ready">
+              <span class="result-output-ready-dot"></span>
+              <div>
+                <b>最终 Excel 已生成</b>
+                <span>可直接下载正式结果；如仍需调整个别记录，可返回第三步继续人工匹配。</span>
+              </div>
+            </div>
             <div class="result-download-primary">
-              <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport" @click="downloadExport(finalExport, 'final', '该方案尚未生成可下载的最终匹配结果')">
-                下载最终匹配结果 Excel
-              </el-button>
+              <div class="result-download-actions">
+                <el-button size="large" @click="router.push('/review')">← 人工调整</el-button>
+                <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport" @click="downloadExport(finalExport, 'final', '该方案尚未生成可下载的最终匹配结果')">
+                  下载结果 Excel
+                </el-button>
+              </div>
               <span>包含“匹配摘要、最终匹配结果、Top5候选、人工操作记录、未匹配清单”五类内容，并保留源/目标业务字段。</span>
             </div>
             <div class="result-excel-hints">
@@ -621,10 +684,9 @@ onMounted(load)
         <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
         <el-table-column label="源数据总数" width="120"><template #default="scope">{{ scope.row.total_rows ? formatCount(scope.row.total_rows) : '—' }}</template></el-table-column>
         <el-table-column label="状态" width="105"><template #default="scope"><el-tag size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" min-width="250"><template #default="scope">
+        <el-table-column label="操作" min-width="190"><template #default="scope">
           <el-button link type="primary" @click="openTask(scope.row)">查看</el-button>
           <el-button link type="primary" :loading="downloadingTaskId===scope.row.id" @click="download(scope.row)">下载正式结果</el-button>
-          <el-button link type="success" @click="evaluate(scope.row)">准确率验收</el-button>
         </template></el-table-column>
       </el-table>
     </div>
