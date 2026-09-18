@@ -55,6 +55,48 @@
 .result-metric small { color: #94a3b8; font-size: 11px; line-height: 1.45; }
 .result-metric.primary { background: #eff6ff; border-color: #bfdbfe; }
 .result-metric.primary b { color: #1d4ed8; }
+.result-metric.automatic { background: #f0fdf4; border-color: #bbf7d0; }
+.result-metric.automatic b { color: #15803d; }
+.result-metric.manual { background: #eff6ff; border-color: #bfdbfe; }
+.result-metric.manual b { color: #1d4ed8; }
+.result-metric.unmatched { background: #f8fafc; border-color: #dbe4ee; }
+.result-metric.unmatched b { color: #475569; }
+.result-metric.pending { background: #fffbeb; border-color: #fde68a; }
+.result-metric.pending b { color: #b45309; }
+
+.result-task-info { margin-top: 18px; }
+.result-task-info .result-section-heading { margin-top: 0; }
+
+.result-rates { display: flex; flex-wrap: wrap; margin: 8px -5px 0; }
+.result-rate { flex: 1 1 190px; min-width: 172px; margin: 5px; padding: 12px 14px; border: 1px solid #e5eaf2; border-radius: 10px; background: #fff; }
+.result-rate span, .result-rate small { display: block; }
+.result-rate span { color: #64748b; font-size: 11.5px; font-weight: 600; }
+.result-rate b { display: block; margin: 4px 0 2px; color: #0f172a; font-size: 20px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.result-rate small { color: #94a3b8; font-size: 10.5px; line-height: 1.45; }
+.result-rate.automatic { border-color: #bbf7d0; background: #f7fff9; }
+.result-rate.automatic b { color: #15803d; }
+.result-rate.manual { border-color: #bfdbfe; background: #f8fbff; }
+.result-rate.manual b { color: #1d4ed8; }
+.result-rate.unmatched { border-color: #dbe4ee; background: #fbfcfe; }
+.result-rate.unmatched b { color: #475569; }
+.result-rate.pending { border-color: #fde68a; background: #fffdf5; }
+.result-rate.pending b { color: #b45309; }
+.result-rate-note { margin-top: 7px; color: #64748b; font-size: 11px; line-height: 1.55; }
+
+.result-composition { margin-top: 12px; padding: 14px; border: 1px solid #dbe4ee; border-radius: 11px; background: #fff; }
+.result-composition-head > div { display: flex; align-items: baseline; gap: 10px; }
+.result-composition-head b { color: #334155; font-size: 13px; }
+.result-composition-head span { color: var(--mm-muted); font-size: 11.5px; }
+.result-composition-bar { display: flex; width: 100%; height: 14px; margin-top: 12px; overflow: hidden; background: #eef2f7; border: 1px solid #e2e8f0; border-radius: 999px; }
+.result-composition-segment { display: block; height: 100%; flex: 0 0 auto; }
+.result-composition-segment.automatic, .composition-dot.automatic { background: #22c55e; }
+.result-composition-segment.manual, .composition-dot.manual { background: #3b82f6; }
+.result-composition-segment.unmatched, .composition-dot.unmatched { background: #94a3b8; }
+.result-composition-segment.pending, .composition-dot.pending { background: #f59e0b; }
+.result-composition-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; color: #64748b; font-size: 11.5px; }
+.result-composition-legend > span { display: inline-flex; align-items: center; min-width: 0; gap: 5px; }
+.result-composition-legend b { color: #334155; font-weight: 600; }
+.composition-dot { width: 9px; height: 9px; display: inline-block; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08); }
 
 .result-lifecycle { display: flex; flex-wrap: wrap; margin: 8px -5px 0; }
 .result-lifecycle > div { flex: 1 1 185px; min-width: 170px; margin: 5px; padding: 10px 12px; background: #fff; border: 1px solid #e5eaf2; border-radius: 9px; }
@@ -88,8 +130,14 @@
 .result-downloads-head > div { display: flex; align-items: baseline; gap: 10px; }
 .result-downloads-head b { color: #334155; font-size: 13px; }
 .result-downloads-head span { color: var(--mm-muted); font-size: 11.5px; }
-.result-download-primary { display: flex; align-items: center; gap: 14px; padding: 14px; background: #fff; border: 1px solid #d7e3f6; border-radius: 10px; }
-.result-download-primary .el-button { min-width: 230px; margin-left: 0; }
+.result-output-ready { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; padding: 10px 12px; color: #166534; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 9px; }
+.result-output-ready-dot { width: 8px; height: 8px; margin-top: 5px; flex: none; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; }
+.result-output-ready b, .result-output-ready span { display: block; }
+.result-output-ready b { font-size: 12.5px; }
+.result-output-ready span { margin-top: 2px; color: #4b7460; font-size: 11.5px; line-height: 1.5; }
+.result-download-primary { display: flex; align-items: center; gap: 14px; padding: 12px 14px; background: #fff; border: 1px solid #d7e3f6; border-radius: 10px; }
+.result-download-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+.result-download-actions .el-button { min-width: 142px; margin-left: 0; }
 .result-download-primary > span { color: #64748b; font-size: 12px; line-height: 1.55; }
 .result-excel-hints { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 12px; padding: 0 2px; color: #64748b; font-size: 11.5px; }
 .result-excel-hints span { display: inline-flex; align-items: center; gap: 6px; }
@@ -123,6 +171,8 @@
   .result-workbench-head { flex-direction: column; }
   .result-main-actions { width: 100%; justify-content: flex-start; }
   .result-download-primary { align-items: flex-start; flex-direction: column; }
+  .result-download-actions { width: 100%; }
+  .result-download-actions .el-button { flex: 1 1 150px; }
   .result-input-asset-row { align-items: flex-start; flex-wrap: wrap; }
   .result-input-asset-kind { width: 100%; }
   .result-input-asset-row .el-button { min-width: 0; }
@@ -134,6 +184,13 @@
   .result-workbench-body { padding: 18px; }
   .result-main-actions .el-button { flex: 1 1 130px; }
   .result-lifecycle > div { flex-basis: 100%; }
+  .result-rate { flex-basis: 100%; min-width: 0; }
+  .result-composition { padding: 12px; }
+  .result-composition-head > div { display: block; }
+  .result-composition-head span { display: block; margin-top: 3px; }
+  .result-composition-legend { gap: 7px 12px; }
+  .result-composition-legend > span { flex: 1 1 100%; }
+  .result-download-actions .el-button { flex-basis: 100%; width: 100%; }
   .result-state-panel { display: block; padding: 24px 18px; }
   .result-state-icon { margin: 0 0 16px; }
   .result-preview-head { align-items: flex-start; gap: 10px; }

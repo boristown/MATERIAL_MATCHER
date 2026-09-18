@@ -1192,16 +1192,15 @@ onBeforeUnmount(() => {
       </el-descriptions>
       <h3>本次匹配结果</h3>
       <div class="stats">
-        <span>总行数 {{ finalTotal }}</span><span>自动匹配 {{ reviewSummary.automatic_matched ?? 0 }}</span><span>人工确认 {{ reviewSummary.confirmed ?? 0 }}</span><span>未匹配 {{ reviewSummary.unmatched ?? 0 }}</span><span>仍待确认 {{ reviewSummary.pending_review ?? 0 }}</span>
+        <span>总行数 {{ finalTotal }}</span><span>自动匹配 {{ reviewSummary.automatic_matched ?? 0 }}</span><span>人工匹配 {{ reviewSummary.confirmed ?? 0 }}</span><span>未匹配 {{ reviewSummary.unmatched ?? 0 }}</span><span>仍待确认 {{ reviewSummary.pending_review ?? 0 }}</span>
       </div>
       <el-alert v-if="!finalized && (reviewSummary.pending_review ?? 0) > 0" type="warning" :closable="false" title="仍有待确认行:可返回人工调整,或继续生成(这些行集团码为空)。"/>
-      <el-alert v-if="finalized" type="success" :closable="false" title="最终 Excel 已生成:含「匹配摘要」「匹配结果(带状态色)」「TopN候选」「人工确认记录」四张表。"/>
+      <el-alert v-if="finalized" type="success" :closable="false" title="最终 Excel 已生成:含「匹配摘要」「匹配结果(带状态色)」「TopN候选」「人工操作记录」四张表。"/>
       <h3 style="margin-top:18px">输出资料</h3>
       <div class="actions">
         <el-button @click="stage=2">← 人工调整</el-button>
         <el-button v-if="!finalized" type="primary" @click="finalize">一键生成匹配结果</el-button>
         <el-button v-else type="primary" @click="downloadResult">下载结果 Excel</el-button>
-        <el-button v-if="task?.task_id" @click="router.push(`/tasks/${task.task_id}/evaluation`)">准确率验收</el-button>
       </div>
     </div>
 
