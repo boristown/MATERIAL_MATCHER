@@ -1118,6 +1118,7 @@ onBeforeUnmount(() => {
     <!-- 第四步:输出结果 -->
     <div v-else class="panel">
       <h3>输出结果</h3>
+      <div class="muted" style="margin-bottom:12px">任务开始时间 {{ formatTimePoint(task?.started_at) }} · 自动计算耗时 {{ formatDurationMs(task?.compute_duration_ms) }}</div>
       <div class="stats">
         <span>总行数 {{ finalTotal }}</span><span>自动匹配 {{ reviewSummary.automatic_matched ?? 0 }}</span><span>人工确认 {{ reviewSummary.confirmed ?? 0 }}</span><span>未匹配 {{ reviewSummary.unmatched ?? 0 }}</span><span>仍待确认 {{ reviewSummary.pending_review ?? 0 }}</span>
       </div>
