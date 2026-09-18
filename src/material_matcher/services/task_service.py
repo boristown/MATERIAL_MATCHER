@@ -35,6 +35,8 @@ def _duration_ms(started_at: object, completed_at: object) -> int | None:
     completed = _parse_timestamp(completed_at)
     if started is None or completed is None:
         return None
+    if (started.tzinfo is None) != (completed.tzinfo is None):
+        return None
     milliseconds = int(round((completed - started).total_seconds() * 1000))
     return milliseconds if milliseconds >= 0 else None
 
