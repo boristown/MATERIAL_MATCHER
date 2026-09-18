@@ -12,6 +12,7 @@ from openpyxl.utils import get_column_letter
 
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
+from material_matcher.services.task_input_asset_service import TaskInputAssetService
 from material_matcher.services.task_service import resolve_task_scheme_name, safe_business_filename
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -146,6 +147,7 @@ class ResultExportService:
         self.meta = metadata
         self.files = files
         self.settings = settings
+        self.task_input_assets = TaskInputAssetService(metadata, files)
 
     def _task_actor(self, task_id: str, task: Mapping[str, object], kind: str) -> str:
         direct_keys = (
@@ -406,17 +408,15 @@ class ResultExportService:
         rules = self._rules(task)
         generated_at = _now()
 
-        source_file_name = ""
-        target_file_name = ""
-        try:
-            source_file_name = str(self.files.get(str(task.get("source_file_id")))["original_name"])
-        except Exception:
-            pass
-        try:
-            if catalog is not None:
-                target_file_name = str(self.files.get(str(catalog["source_file_id"]))["original_name"])
-        except Exception:
-            pass
+        # Prefer the immutable task-level asset snapshot. For tasks created
+        # before that snapshot existed, TaskInputAssetService only falls back to
+        # exact source_file_id / catalog_version_id relationships; it never guesses
+        # by filename or follows the catalog's currently active version.
+        asset_summary = self.task_input_assets.describe(task_id)
+        source_asset = asset_summary.get("source") if isinstance(asset_summary.get("source"), dict) else {}
+        target_asset = asset_summary.get("target") if isinstance(asset_summary.get("target"), dict) else {}
+        source_file_name = str(source_asset.get("original_name") or "")
+        target_file_name = str(target_asset.get("original_name") or "")
 
         counts = {"MATCHED": 0, "CONFIRMED": 0, "REVIEW": 0, "UNMATCHED": 0}
         for item in items:
