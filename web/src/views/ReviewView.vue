@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import { formatDurationMs } from '../taskTime'
 import {
   downloadManualWorkbook,
   fetchCalibrationStatistics,
@@ -37,6 +38,7 @@ type ReviewHistoryRow = {
   created_at: string
   started_at: string | null
   finished_at: string | null
+  compute_duration_ms: number | null
   total: number
   matched: number
   review: number
@@ -64,6 +66,8 @@ type ProgressState = {
   processed_rows: number
   total_rows: number
   current_phase?: string | null
+  compute_duration_ms?: number | null
+  compute_elapsed_ms?: number | null
 }
 
 type FieldScore = {
@@ -270,6 +274,7 @@ function normalizeHistoryRow(row: any): ReviewHistoryRow {
     created_at: String(row.created_at ?? ''),
     started_at: row.started_at ? String(row.started_at) : null,
     finished_at: row.finished_at ? String(row.finished_at) : null,
+    compute_duration_ms: row.compute_duration_ms == null ? null : Number(row.compute_duration_ms),
     total: Number(row.total ?? 0),
     matched: Number(row.matched ?? 0),
     review: Number(row.review ?? 0),
@@ -998,8 +1003,8 @@ onBeforeUnmount(() => {
         <dl class="review-current-grid">
           <div><dt>方案名称</dt><dd :title="activeTask.scheme_name">{{ activeTask.scheme_name }}</dd></div>
           <div><dt>计算序号</dt><dd>{{ activeTask.sequence !== null ? `第 ${activeTask.sequence} 次计算${activeTask.sequence_total && activeTask.sequence_total > 1 ? `（该方案共 ${activeTask.sequence_total} 次）` : ''}` : '历史计算（无法确认序号）' }}</dd></div>
-          <div><dt>开始时间</dt><dd>{{ formatDate(activeTask.started_at ?? activeTask.created_at) }}</dd></div>
-          <div><dt>计算完成</dt><dd>{{ formatDate(activeTask.finished_at) }}</dd></div>
+          <div><dt>任务开始时间</dt><dd>{{ formatDate(activeTask.started_at) }}</dd></div>
+          <div><dt>自动计算耗时</dt><dd>{{ formatDurationMs(activeTask.compute_duration_ms) }}</dd></div>
           <div><dt>当前状态</dt><dd>{{ historyStatusLabel(activeTask) }}</dd></div>
           <div><dt>待人工</dt><dd><b>{{ formatNumber(activeTask.review) }}</b> 条</dd></div>
         </dl>
@@ -1019,8 +1024,8 @@ onBeforeUnmount(() => {
               <tr>
                 <th class="review-history-seq-col">序号</th>
                 <th class="review-history-scheme-col">方案名称</th>
-                <th class="review-history-time-col">开始时间</th>
-                <th class="review-history-time-col">完成时间</th>
+                <th class="review-history-time-col">任务开始时间</th>
+                <th class="review-history-time-col">自动计算耗时</th>
                 <th class="review-history-num-col">数据量</th>
                 <th class="review-history-num-col">自动匹配</th>
                 <th class="review-history-num-col">待人工</th>
@@ -1044,8 +1049,8 @@ onBeforeUnmount(() => {
                   <span :title="row.scheme_name">{{ row.scheme_name }}</span>
                   <em v-if="row.task_id === activeTaskId" class="review-history-active-tag">当前查看</em>
                 </td>
-                <td class="review-history-time-col">{{ formatListTime(row.started_at ?? row.created_at) }}</td>
-                <td class="review-history-time-col">{{ formatListTime(row.finished_at) }}</td>
+                <td class="review-history-time-col">{{ formatListTime(row.started_at) }}</td>
+                <td class="review-history-time-col">{{ formatDurationMs(row.compute_duration_ms) }}</td>
                 <td class="review-history-num-col">{{ formatNumber(row.total) }}</td>
                 <td class="review-history-num-col">{{ formatNumber(row.matched) }}</td>
                 <td class="review-history-num-col">{{ formatNumber(row.review) }}</td>
