@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS task_runtime(
   index_id TEXT, updated_at TEXT NOT NULL,
   FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );
+CREATE TABLE IF NOT EXISTS task_compute_lifecycle(
+  task_id TEXT PRIMARY KEY,
+  compute_started_at TEXT,
+  compute_completed_at TEXT,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+);
 CREATE TABLE IF NOT EXISTS match_items(
   task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, source_row_number INTEGER,
   source_id TEXT NOT NULL, source_payload TEXT NOT NULL,
@@ -230,8 +236,32 @@ class MetadataRepository:
 
     def initialize(self) -> None:
         with self.connect() as connection:
+            # Detect the one-time lifecycle migration before SCHEMA creates the
+            # table. Existing tasks used started_at=worker-claim time and
+            # finished_at=automatic matching completion time.
+            had_compute_lifecycle = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_compute_lifecycle'"
+            ).fetchone() is not None
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(SCHEMA)
+            if not had_compute_lifecycle:
+                # The pre-migration pair is reliable only for completed automatic
+                # runs. Preserve it as the immutable compute window, then restore
+                # started_at to its business meaning: the click-to-start time,
+                # which was historically stored in created_at.
+                connection.execute(
+                    """INSERT OR IGNORE INTO task_compute_lifecycle(
+                           task_id,compute_started_at,compute_completed_at
+                       )
+                       SELECT task_id,started_at,finished_at
+                       FROM tasks
+                       WHERE status='COMPLETED'
+                         AND started_at IS NOT NULL
+                         AND finished_at IS NOT NULL"""
+                )
+                connection.execute(
+                    "UPDATE tasks SET started_at=created_at WHERE created_at IS NOT NULL"
+                )
             # Forward-compatible migrations for deployments created before source /
             # target original-row traceability and calibration revisions existed.
             self._ensure_column(connection, "match_items", "source_row_number", "INTEGER")

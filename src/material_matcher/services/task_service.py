@@ -22,6 +22,116 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat()
 
 
+def _parse_timestamp(value: object) -> datetime | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _duration_ms(started_at: object, completed_at: object) -> int | None:
+    started = _parse_timestamp(started_at)
+    completed = _parse_timestamp(completed_at)
+    if started is None or completed is None:
+        return None
+    if (started.tzinfo is None) != (completed.tzinfo is None):
+        return None
+    milliseconds = int(round((completed - started).total_seconds() * 1000))
+    return milliseconds if milliseconds >= 0 else None
+
+
+def format_duration_ms(value: object) -> str:
+    if value is None:
+        return "暂无准确记录"
+    try:
+        milliseconds = float(value)
+    except (TypeError, ValueError):
+        return "暂无准确记录"
+    if milliseconds < 0:
+        return "暂无准确记录"
+    total_seconds = int(round(milliseconds / 1000.0))
+    if total_seconds < 60:
+        return f"{total_seconds} 秒"
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes < 60:
+        return f"{minutes} 分 {seconds} 秒"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} 小时 {minutes} 分 {seconds} 秒"
+
+
+def task_time_fields(
+    repo: MetadataRepository,
+    task: dict[str, object],
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return the single business timing contract consumed by every surface.
+
+    started_at is the user click-to-start time. compute_duration_ms is only the
+    recorded automatic matching window; human wait/review/export/re-decide time
+    is intentionally impossible to enter this calculation.
+    """
+    business_started_at = task.get("started_at") or task.get("created_at")
+    compute_started_at = task.get("compute_started_at")
+    compute_completed_at = task.get("compute_completed_at")
+    timing_source: str | None = None
+
+    if ("compute_started_at" not in task or "compute_completed_at" not in task) and task.get("task_id"):
+        with repo.connect() as connection:
+            row = connection.execute(
+                "SELECT compute_started_at,compute_completed_at FROM task_compute_lifecycle WHERE task_id=?",
+                (str(task["task_id"]),),
+            ).fetchone()
+        if row is not None:
+            compute_started_at = row["compute_started_at"]
+            compute_completed_at = row["compute_completed_at"]
+
+    if compute_started_at and compute_completed_at:
+        timing_source = "recorded"
+    elif (
+        not compute_started_at
+        and not compute_completed_at
+        and str(task.get("status") or "") == "COMPLETED"
+        and task.get("started_at")
+        and task.get("finished_at")
+        and task.get("created_at")
+        and str(task.get("started_at")) != str(task.get("created_at"))
+    ):
+        # Compatibility for a legacy row inserted after the migration has
+        # already run. Pre-migration code used started_at/finished_at exactly as
+        # the automatic compute window. Never use updated_at or result time.
+        compute_started_at = task.get("started_at")
+        compute_completed_at = task.get("finished_at")
+        timing_source = "legacy_started_finished"
+
+    compute_duration_ms = _duration_ms(compute_started_at, compute_completed_at)
+    compute_elapsed_ms = compute_duration_ms
+    if (
+        compute_elapsed_ms is None
+        and compute_started_at
+        and not compute_completed_at
+        and str(task.get("status") or "") in {"PREPARING", "RUNNING", "RECOVERING"}
+    ):
+        started = _parse_timestamp(compute_started_at)
+        current = now or datetime.now().astimezone()
+        if started is not None:
+            if started.tzinfo is None and current.tzinfo is not None:
+                current = current.replace(tzinfo=None)
+            elapsed = int(round((current - started).total_seconds() * 1000))
+            compute_elapsed_ms = elapsed if elapsed >= 0 else None
+
+    return {
+        "started_at": business_started_at,
+        "compute_started_at": compute_started_at,
+        "compute_completed_at": compute_completed_at,
+        "compute_duration_ms": compute_duration_ms,
+        "compute_elapsed_ms": compute_elapsed_ms,
+        "compute_timing_source": timing_source,
+    }
+
+
 def resolve_task_scheme_name(repo: MetadataRepository, task: dict[str, Any]) -> str:
     """Single business-name resolver for every screen, export and file name.
 
@@ -130,6 +240,10 @@ class TaskService:
         # created before this field existed, the linked profile is the best available
         # business source. Never fall back to task.name because it may be SMOKE-/test-/run-*.
         task["scheme_name"] = resolve_task_scheme_name(self.repo, task)
+        return task
+
+    def _with_time_fields(self, task: dict[str, object]) -> dict[str, object]:
+        task.update(task_time_fields(self.repo, task))
         return task
 
     def create_draft(
@@ -366,7 +480,7 @@ class TaskService:
                     0,
                     0,
                     created_at,
-                    None,
+                    created_at,
                     None,
                     None,
                     None,
@@ -423,7 +537,13 @@ class TaskService:
 
     def get_task(self, task_id: str) -> dict[str, object]:
         with self.repo.connect() as connection:
-            row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            row = connection.execute(
+                """SELECT t.*,l.compute_started_at,l.compute_completed_at
+                   FROM tasks t
+                   LEFT JOIN task_compute_lifecycle l ON l.task_id=t.task_id
+                   WHERE t.task_id=?""",
+                (task_id,),
+            ).fetchone()
             actor_row = connection.execute("SELECT created_by,started_by FROM task_actors WHERE task_id=?", (task_id,)).fetchone()
         if row is None:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
@@ -446,12 +566,13 @@ class TaskService:
                 ),
             ).fetchone()[0]
         task["run_number"] = int(run_count or 1)
-        return self._with_scheme_name(self._with_actor_fields(task, actor_row))
+        return self._with_scheme_name(self._with_actor_fields(self._with_time_fields(task), actor_row))
 
     def list_tasks(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
             rows = connection.execute(
                 """SELECT t.*, a.created_by AS actor_created_by, a.started_by AS actor_started_by,
+                          l.compute_started_at,l.compute_completed_at,
 (CASE WHEN t.profile_id IS NOT NULL THEN
                           (SELECT COUNT(*) FROM tasks t2
                             WHERE t2.profile_id=t.profile_id
@@ -462,7 +583,9 @@ class TaskService:
                               AND t2.catalog_version_id=t.catalog_version_id AND t2.config_sha256=t.config_sha256
                               AND (t2.created_at<t.created_at OR (t2.created_at=t.created_at AND t2.task_id<=t.task_id)))
                         END) AS run_number
-                   FROM tasks t LEFT JOIN task_actors a ON a.task_id=t.task_id
+                   FROM tasks t
+                   LEFT JOIN task_actors a ON a.task_id=t.task_id
+                   LEFT JOIN task_compute_lifecycle l ON l.task_id=t.task_id
                    ORDER BY t.created_at DESC"""
             ).fetchall()
         result: list[dict[str, object]] = []
@@ -471,7 +594,7 @@ class TaskService:
             item["created_by"] = item.pop("actor_created_by", None)
             item["started_by"] = item.pop("actor_started_by", None)
             item["run_number"] = int(item.get("run_number") or 1)
-            result.append(self._with_scheme_name(item))
+            result.append(self._with_scheme_name(self._with_time_fields(item)))
         return result
 
     def review_history(self) -> list[dict[str, object]]:
@@ -488,11 +611,13 @@ class TaskService:
             rows = connection.execute(
                 """SELECT t.task_id,t.config_snapshot,t.profile_id,t.stage,t.status,t.total_rows,
                           t.created_at,t.started_at,t.finished_at,t.result_file_id,
+                          l.compute_started_at,l.compute_completed_at,
                           COALESCE(SUM(CASE WHEN m.current_status='MATCHED' THEN 1 ELSE 0 END),0) AS matched_count,
                           COALESCE(SUM(CASE WHEN m.current_status='REVIEW' THEN 1 ELSE 0 END),0) AS review_count,
                           COALESCE(SUM(CASE WHEN m.current_status='CONFIRMED' THEN 1 ELSE 0 END),0) AS confirmed_count,
                           COALESCE(SUM(CASE WHEN m.current_status='UNMATCHED' THEN 1 ELSE 0 END),0) AS unmatched_count
                    FROM tasks t
+                   LEFT JOIN task_compute_lifecycle l ON l.task_id=t.task_id
                    LEFT JOIN match_items m ON m.task_id=t.task_id
                    WHERE t.status='COMPLETED' AND t.stage IN ('REVIEW','RESULT')
                    GROUP BY t.task_id
@@ -517,6 +642,8 @@ class TaskService:
                     "result_file_id": str(row["result_file_id"]) if row["result_file_id"] else None,
                     "started_at": str(row["started_at"]) if row["started_at"] else None,
                     "finished_at": str(row["finished_at"]) if row["finished_at"] else None,
+                    "compute_started_at": str(row["compute_started_at"]) if row["compute_started_at"] else None,
+                    "compute_completed_at": str(row["compute_completed_at"]) if row["compute_completed_at"] else None,
                     "created_at": str(row["created_at"]),
                     "total": int(row["total_rows"] or 0),
                     "matched": int(row["matched_count"] or 0),
@@ -525,6 +652,7 @@ class TaskService:
                     "unmatched": int(row["unmatched_count"] or 0),
                 }
             )
+            items[-1].update(task_time_fields(self.repo, items[-1]))
         profile_names: dict[str, str] = {}
         if missing_profile_ids:
             with self.repo.connect() as connection:

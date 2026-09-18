@@ -6,6 +6,7 @@ import { api } from '../api'
 import DualExcelUploadPanel from '../components/DualExcelUploadPanel.vue'
 import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
+import { formatDurationMs, formatTimePoint } from '../taskTime'
 
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
@@ -601,11 +602,6 @@ function fmtClock(iso: string | null | undefined): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '—' : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
-function elapsedSeconds(startedAt: string | null | undefined): number | null {
-  if (!startedAt) return null
-  const started = new Date(startedAt).getTime()
-  return Number.isNaN(started) ? null : Math.max(0, (Date.now() - started) / 1000)
-}
 const statusLabel = computed(() => ({ PENDING: '排队中', PREPARING: '准备中', RECOVERING: '重启恢复中', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败' }[String(task.value?.status ?? '')] ?? String(task.value?.status ?? '')))
 const phaseLabel = computed(() => ({ INDEX: '正在准备标准数据（首次处理可能稍慢，后续可直接复用）', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
 const isInterim = computed(() => Boolean(progress.value?.interim))
@@ -764,10 +760,6 @@ function downloadOriginalInput(asset: TaskInputAsset | null | undefined, role: '
   window.setTimeout(() => {
     if (downloadingOriginal.value === role) downloadingOriginal.value = ''
   }, 800)
-}
-function taskStartedAt(): string {
-  const value = String(task.value?.started_at || task.value?.created_at || '')
-  return value ? value.slice(0, 19).replace('T', ' ') : '—'
 }
 
 /* ---------- 恢复 ---------- */
@@ -1090,7 +1082,8 @@ onBeforeUnmount(() => {
           <div class="stat-card"><span>待人工确认</span><b>{{ Number(liveCounts.review ?? 0).toLocaleString() }}</b></div>
           <div class="stat-card"><span>未匹配</span><b>{{ Number(liveCounts.unmatched ?? 0).toLocaleString() }}</b></div>
           <div class="stat-card"><span>吞吐</span><b>{{ progress?.estimate?.rows_per_minute ? Number(progress.estimate.rows_per_minute).toFixed(0) : '—' }} <i>行/分钟</i></b></div>
-          <div class="stat-card"><span>已用时</span><b>{{ fmtDuration(elapsedSeconds(progress?.started_at ?? task?.started_at)) }}</b></div>
+          <div class="stat-card"><span>任务开始时间</span><b>{{ formatTimePoint(progress?.started_at ?? task?.started_at) }}</b></div>
+          <div class="stat-card"><span>自动计算已用时</span><b>{{ formatDurationMs(progress?.compute_elapsed_ms ?? progress?.compute_duration_ms ?? task?.compute_duration_ms, '准备中') }}</b></div>
           <div class="stat-card accent"><span>{{ progress?.current_phase === 'INDEX' ? '本阶段预计还需' : '预计剩余' }}</span><b>{{ progress?.current_phase === 'INDEX' ? fmtDuration(progress?.estimate?.phase_remaining_seconds) : fmtDuration(progress?.estimate?.eta_seconds) }}</b><i v-if="progress?.estimate?.eta_at">完成约 {{ fmtClock(progress.estimate.eta_at) }}</i></div>
         </div>
       </div>
@@ -1116,6 +1109,7 @@ onBeforeUnmount(() => {
         <h3 style="margin:0">人工调整(待确认 {{ reviewSummary.pending_review ?? 0 }})</h3>
         <el-input v-model="searchQ" placeholder="按物料编码/描述/集团码模糊搜索…" clearable style="width:320px" prefix-icon="Search"/>
       </div>
+      <div class="muted" style="margin-bottom:12px">任务开始时间 {{ formatTimePoint(task?.started_at) }} · 自动计算耗时 {{ formatDurationMs(task?.compute_duration_ms) }}</div>
       <div class="stats">
         <b>待确认 {{ reviewSummary.pending_review ?? 0 }}</b>
         <span>已确认 {{ reviewSummary.confirmed ?? 0 }}</span>
@@ -1156,9 +1150,10 @@ onBeforeUnmount(() => {
     <!-- 第四步:输出结果 -->
     <div v-else class="panel">
       <h3>任务资料</h3>
-      <el-descriptions :column="2" border size="small" style="margin-bottom:16px">
+      <el-descriptions :column="3" border size="small" style="margin-bottom:16px">
         <el-descriptions-item label="方案名称">{{ task?.scheme_name || '未命名方案' }}</el-descriptions-item>
-        <el-descriptions-item label="任务开始时间">{{ taskStartedAt() }}</el-descriptions-item>
+        <el-descriptions-item label="任务开始时间">{{ formatTimePoint(task?.started_at) }}</el-descriptions-item>
+        <el-descriptions-item label="自动计算耗时">{{ formatDurationMs(task?.compute_duration_ms) }}</el-descriptions-item>
       </el-descriptions>
       <h3>本次使用的原始文件</h3>
       <el-descriptions :column="1" border size="small" style="margin-bottom:18px">

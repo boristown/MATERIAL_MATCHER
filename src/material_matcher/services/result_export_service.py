@@ -13,7 +13,12 @@ from openpyxl.utils import get_column_letter
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
 from material_matcher.services.task_input_asset_service import TaskInputAssetService
-from material_matcher.services.task_service import resolve_task_scheme_name, safe_business_filename
+from material_matcher.services.task_service import (
+    format_duration_ms,
+    resolve_task_scheme_name,
+    safe_business_filename,
+    task_time_fields,
+)
 from material_matcher.storage.metadata import MetadataRepository
 
 
@@ -431,18 +436,18 @@ class ResultExportService:
         summary["A1"] = "匹配结果摘要"
         summary["A1"].font = Font(size=16, bold=True, color="1F4E78")
         summary.merge_cells("A1:D1")
-        created_by = self._task_actor(task_id, task, "created")
         started_by = self._task_actor(task_id, task, "started")
         scheme_name = resolve_task_scheme_name(self.meta, dict(task))
         business_digits = "".join(ch for ch in str(generated_at) if ch.isdigit())[:14]
         business_stamp = f"{business_digits[:8]}_{business_digits[8:14]}"
+        timing = task_time_fields(self.meta, dict(task))
         summary_rows = [
             ("方案名称", scheme_name, "源数据总数", len(items)),
             ("自动匹配数", counts["MATCHED"], "人工匹配数", counts["CONFIRMED"]),
             ("未匹配数", counts["UNMATCHED"], "待处理数", counts["REVIEW"]),
-            ("创建账号", created_by, "启动账号", started_by),
-            ("创建时间", task.get("created_at"), "启动时间", task.get("started_at")),
-            ("最终结果生成时间", generated_at, "源文件", source_file_name),
+            ("启动账号", started_by, "任务开始时间", timing.get("started_at")),
+            ("自动计算耗时", format_duration_ms(timing.get("compute_duration_ms")), "自动计算完成时间", timing.get("compute_completed_at")),
+            ("结果生成时间", generated_at, "源文件", source_file_name),
             ("目标集团码文件", target_file_name, "待处理记录", unresolved_review),
         ]
         for row_index, values in enumerate(summary_rows, start=3):

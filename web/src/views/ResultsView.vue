@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { formatDurationMs } from '../taskTime'
 import '../styles/pages/results.css'
 
 type TaskRow = Record<string, unknown> & {
@@ -14,6 +15,7 @@ type TaskRow = Record<string, unknown> & {
   created_at: string
   started_at?: string | null
   finished_at?: string | null
+  compute_duration_ms?: number | null
   result_file_id?: string | null
   processed_rows: number
   total_rows: number
@@ -274,8 +276,6 @@ const allUnmatched = computed(() => {
     && Number(latestSummary.value.pending_review || 0) === 0
 })
 
-const createdAccount = computed(() => displayValue(firstValue(latestSummary.value, ['created_by', 'creator', 'created_user', 'created_username'])
-  ?? firstValue(latestResult.value, ['created_by', 'creator', 'created_user', 'created_username'])))
 const startedAccount = computed(() => displayValue(firstValue(latestSummary.value, ['started_by', 'starter', 'started_user', 'started_username'])
   ?? firstValue(latestResult.value, ['started_by', 'starter', 'started_user', 'started_username'])))
 
@@ -350,6 +350,7 @@ async function load(): Promise<void> {
       created_at: String(task.created_at ?? ''),
       started_at: task.started_at ? String(task.started_at) : null,
       finished_at: task.finished_at ? String(task.finished_at) : null,
+      compute_duration_ms: task.compute_duration_ms == null ? null : Number(task.compute_duration_ms),
       result_file_id: task.result_file_id ? String(task.result_file_id) : null,
       processed_rows: Number(task.processed_rows ?? 0),
       total_rows: Number(task.total_rows ?? 0),
@@ -446,8 +447,8 @@ onMounted(load)
               </div>
               <h3>{{ latestResult.scheme_name }}</h3>
               <div class="result-meta-line">
-                <span>开始时间：{{ formatTime(latestResult.started_at) }}</span>
-                <span>最终结果生成时间：{{ formatTime(resultCompletedAt(latestResult)) }}</span>
+                <span>任务开始时间：{{ formatTime(latestResult.started_at) }}</span>
+                <span>自动计算耗时：{{ formatDurationMs(latestResult.compute_duration_ms) }}</span>
               </div>
             </div>
             <el-button type="primary" plain @click="openTask(latestResult)">查看匹配详情</el-button>
@@ -505,11 +506,10 @@ onMounted(load)
           </div>
 
           <div class="result-lifecycle">
-            <div><span>创建账号</span><b>{{ createdAccount }}</b></div>
-            <div><span>创建时间</span><b>{{ formatTime(latestResult.created_at) }}</b></div>
             <div><span>启动账号</span><b>{{ startedAccount }}</b></div>
-            <div><span>开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
-            <div><span>最终结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
+            <div><span>任务开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
+            <div><span>自动计算耗时</span><b>{{ formatDurationMs(latestResult.compute_duration_ms) }}</b></div>
+            <div><span>结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
           </div>
 
           <div v-if="allUnmatched" class="result-quality-alert">
@@ -579,7 +579,8 @@ onMounted(load)
             <p>{{ waitingState.description }}</p>
             <div class="result-state-meta">
               <span>方案：{{ pendingTask.scheme_name }}</span>
-              <span>开始时间：{{ formatTime(pendingTask.started_at) }}</span>
+              <span>任务开始时间：{{ formatTime(pendingTask.started_at) }}</span>
+              <span>自动计算耗时：{{ formatDurationMs(pendingTask.compute_duration_ms, RUNNING_STATUSES.includes(pendingTask.status) ? '计算中' : '暂无准确记录') }}</span>
               <span>阶段：{{ stageLabels[pendingTask.stage] ?? pendingTask.stage }}</span>
               <span>状态：{{ statusLabel(pendingTask.status) }}</span>
             </div>
@@ -615,7 +616,8 @@ onMounted(load)
       </div>
       <el-table :data="generatedResults" size="default" empty-text="暂无历史结果">
         <el-table-column label="方案名称" min-width="230"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a></template></el-table-column>
-        <el-table-column label="开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
+        <el-table-column label="任务开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
+        <el-table-column label="自动计算耗时" width="170"><template #default="scope">{{ formatDurationMs(scope.row.compute_duration_ms) }}</template></el-table-column>
         <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
         <el-table-column label="源数据总数" width="120"><template #default="scope">{{ scope.row.total_rows ? formatCount(scope.row.total_rows) : '—' }}</template></el-table-column>
         <el-table-column label="状态" width="105"><template #default="scope"><el-tag size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>

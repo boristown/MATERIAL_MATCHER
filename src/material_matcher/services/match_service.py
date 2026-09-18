@@ -14,6 +14,7 @@ from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.ingestion.reader import detect_layout
 from material_matcher.matching.engine import RowResult, match_rows, match_rows_indexed, summarize
 from material_matcher.services.result_export_service import ResultExportService
+from material_matcher.services.task_service import task_time_fields
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
@@ -149,7 +150,7 @@ class MatchService:
             if row is None:
                 return None
             task_id = str(row["task_id"])
-            updated = connection.execute("UPDATE tasks SET status='PREPARING', started_at=COALESCE(started_at,?), error_code=NULL, error_message=NULL WHERE task_id=? AND status IN ('PENDING','RECOVERING')", (_now(), task_id)).rowcount
+            updated = connection.execute("UPDATE tasks SET status='PREPARING', started_at=COALESCE(started_at,created_at), error_code=NULL, error_message=NULL WHERE task_id=? AND status IN ('PENDING','RECOVERING')", (task_id,)).rowcount
         return task_id if updated else None
 
     def _persist_rows(self, task_id: str, batch: list[RowResult]) -> None:
@@ -173,6 +174,16 @@ class MatchService:
             if row is None:
                 raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
             task = dict(row)
+            compute_started_at = _now()
+            with self.meta.connect() as connection:
+                connection.execute(
+                    """INSERT INTO task_compute_lifecycle(task_id,compute_started_at,compute_completed_at)
+                       VALUES(?,?,NULL)
+                       ON CONFLICT(task_id) DO UPDATE SET
+                         compute_started_at=excluded.compute_started_at,
+                         compute_completed_at=NULL""",
+                    (task_id, compute_started_at),
+                )
             config = MatchingConfig.model_validate(json.loads(str(task["config_snapshot"])))
             source = self.files.get(str(task["source_file_id"]))
             catalog = self._catalog(str(task["catalog_version_id"]))
@@ -203,12 +214,16 @@ class MatchService:
 
             rows = self._run_rows(source=source, target=target, catalog=catalog, config=config, on_progress=progress, on_index_progress=index_progress, on_index_ready=index_ready if vector_mode else None, on_batch=persist_batch)
             self._set_runtime(task_id, execution_mode, "PERSIST")
-            now = _now()
             if persisted[0] < len(rows): self._persist_rows(task_id, rows[persisted[0]:])
             with self.meta.connect() as connection:
                 review_count = connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0]
                 stage = "REVIEW" if review_count else "RESULT"
+                now = _now()
                 connection.execute("UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?", (stage, len(rows), len(rows), now, task_id))
+                connection.execute(
+                    "UPDATE task_compute_lifecycle SET compute_completed_at=? WHERE task_id=?",
+                    (now, task_id),
+                )
             self._set_runtime(task_id, execution_mode, "DONE"); self._progress_window.pop(task_id, None)
         except Exception as exc:
             code = exc.code if isinstance(exc, DomainError) else "INTERNAL_ERROR"; message = exc.message if isinstance(exc, DomainError) else str(exc)
@@ -220,7 +235,13 @@ class MatchService:
     def summary(self, task_id: str) -> dict[str, object]:
         with self.meta.connect() as connection:
             rows = connection.execute("SELECT current_status, COUNT(*) count FROM match_items WHERE task_id=? GROUP BY current_status", (task_id,)).fetchall()
-            task_row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            task_row = connection.execute(
+                """SELECT t.*,l.compute_started_at,l.compute_completed_at
+                   FROM tasks t
+                   LEFT JOIN task_compute_lifecycle l ON l.task_id=t.task_id
+                   WHERE t.task_id=?""",
+                (task_id,),
+            ).fetchone()
             preview_rows = connection.execute(
                 """SELECT
                     m.source_row_id,m.source_row_number,m.source_id,m.current_status,
@@ -269,6 +290,7 @@ class MatchService:
             item.pop("selected_score", None)
             business_rows.append(item)
         return {
+            **task_time_fields(self.meta, task),
             "pending_review": counts.get("REVIEW", 0),
             "confirmed": counts.get("CONFIRMED", 0),
             "unmatched": counts.get("UNMATCHED", 0),
