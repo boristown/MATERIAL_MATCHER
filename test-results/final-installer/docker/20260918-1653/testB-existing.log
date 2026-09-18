@@ -1,0 +1,7 @@
+images=1 volumes=0
+DUP_rc=0
+images=1 volumes=0
+material_matcher-app
+unrelated-probe
+{"status":"ready",
+profiles: ['A001 元器件', 'A002 标准紧固件', 'A003 金属材料', 'A005 非金属材料', 'A006 复合材料', 'A007 物资类其他(跨类目)']
