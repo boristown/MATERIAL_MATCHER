@@ -29,9 +29,11 @@ for (const token of [
   if (!results.includes(token)) throw new Error(`STEP4 business result contract missing: ${token}`)
 }
 
+const workspace = read('src/views/TaskWorkspaceBase.vue')
 for (const forbidden of ['准确率验收', 'AI 准确率', '成功准确率', '人工确认']) {
   if (results.includes(forbidden)) throw new Error(`STEP4 must not expose mixed/incorrect business wording: ${forbidden}`)
 }
+if (workspace.includes('准确率验收')) throw new Error('Wizard STEP4 must not expose the accuracy-acceptance entry')
 
 if (!results.includes('formatBusinessRate(latestSummary.automatic_matched, latestTotalRows)')) {
   throw new Error('automatic match rate must use the shared formatter')
