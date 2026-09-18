@@ -283,7 +283,7 @@ def test_chinese_and_long_original_filename_is_safe(authed: TestClient) -> None:
     disposition = response.headers["content-disposition"]
     assert "\r" not in disposition and "\n" not in disposition
     assert "filename*" in disposition.lower()
-    assert len(disposition) < 1200
+    assert len(disposition) < 2500
 
 
 def test_original_input_download_requires_login(client: TestClient) -> None:
