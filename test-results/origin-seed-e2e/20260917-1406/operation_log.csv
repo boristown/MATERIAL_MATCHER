@@ -1,0 +1,11 @@
+﻿seq,operation,actor,object,detail,timestamp
+1,LOGIN,admin,/api/auth/login,session established,2026-09-17 14:13:04
+2,UPLOAD,admin,c402676e6c064aa580808cef6f7a7be6,source_materials_1000.csv role=source sha256=c01693ef4594312a,2026-09-17 14:13:04
+3,UPLOAD,admin,125f52c9cdd54ef2b2273541a09acff3,target_group_codes_from_origin.csv role=target sha256=0fc32b095569e6ec,2026-09-17 14:13:04
+4,UPLOAD,admin,18dbc4d143ec46529ae7481c17b9fee6,acceptance truth (derived from ground_truth.csv) role=supplement,2026-09-17 14:13:04
+5,CATALOG,admin,073b4a9597684ce5a080c24149d64565,origin seed group-code catalog,2026-09-17 14:13:04
+6,DRAFT_RULES,admin,d64045aea7b948cba42d5c43d6bfecfa,"calibrated Z001/Z006 config, thresholds 88/72 top10 (unchanged defaults)",2026-09-17 14:13:04
+7,TASK_START,admin,bd8823b4df48487ca1e79bd4cc51678e,created_by=admin started_by=admin,2026-09-17T14:07:39.558917+08:00
+8,TASK_DONE,system,bd8823b4df48487ca1e79bd4cc51678e,COMPLETED 1000/1000 scan mode,2026-09-17T14:07:57.639111+08:00
+9,EVALUATION,admin,04fa9d8c37974f89b14872a5ffa77837,business evaluation vs derived ground truth,2026-09-17 14:13:04
+10,MANUAL_REVIEW,—,—,"INTENTIONALLY NOT PERFORMED — handed to human reviewer, 516 REVIEW + 345 UNMATCHED pending",

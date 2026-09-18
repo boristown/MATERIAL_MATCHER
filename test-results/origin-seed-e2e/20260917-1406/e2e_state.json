@@ -1,0 +1,867 @@
+{
+ "session": {
+  "me": {
+   "username": "admin",
+   "role": "admin",
+   "enabled": true,
+   "must_change_password": false,
+   "created_at": "2026-09-15T23:06:45.843377+08:00",
+   "updated_at": "2026-09-16T09:11:00.208314+08:00"
+  },
+  "at": "2026-09-17 14:13:04"
+ },
+ "source_file": {
+  "file_id": "c402676e6c064aa580808cef6f7a7be6",
+  "sha256": "c01693ef4594312a81ed5c6ac5950eac9d4c182588959626ce518f2a8edd2afd",
+  "bytes": 235604,
+  "inspection": {
+   "file_type": "csv",
+   "sheets": [
+    {
+     "sheet_name": "CSV",
+     "recommended_header_row": 1,
+     "header_confidence": 1.0,
+     "row_count_estimate": 1000,
+     "column_count": 24,
+     "columns": [
+      {
+       "index": 1,
+       "header": "物料编码",
+       "samples": [
+        "900000000000000572",
+        "900000000000000454",
+        "900000000000000019",
+        "900000000000000944",
+        "900000000000000786"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "source_id",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 2,
+       "header": "物料类型",
+       "samples": [
+        "Z001",
+        "Z001",
+        "Z001",
+        "Z006",
+        "Z006"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 3,
+       "header": "一层分类描述",
+       "samples": [
+        "元器件",
+        "元器件",
+        "元器件",
+        "复合材料",
+        "复合材料"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 4,
+       "header": "二层分类描述",
+       "samples": [
+        "集成电路",
+        "半导体分立器件",
+        "半导体分立器件",
+        "聚合物基复合材料",
+        "聚合物基复合材料"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 5,
+       "header": "三层分类描述",
+       "samples": [
+        "单片集成电路",
+        "晶体管",
+        "晶体管",
+        "聚合物基复合材料棒材",
+        "聚合物基复合材料板材"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 6,
+       "header": "四层分类描述",
+       "samples": [
+        "模拟集成电路",
+        "双极型晶体管",
+        "双极型晶体管",
+        "环氧酚醛层压玻璃布棒",
+        "环氧酚醛玻璃布层压板"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 7,
+       "header": "五层分类描述",
+       "samples": [
+        "运算放大器",
+        "小功率开关晶体管",
+        "小功率开关晶体管",
+        "环氧酚醛层压玻璃布棒",
+        "环氧酚醛玻璃布层压板"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 8,
+       "header": "物料名称",
+       "samples": [
+        "BiMOS高输入阻抗运算放大器",
+        "NPN硅小功率开关晶体管",
+        "PNP外延平面高频小功率三极管",
+        "环氧酚醛层压玻璃布棒",
+        "环氧酚醛玻璃布层压板"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_name",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 9,
+       "header": "型号",
+       "samples": [
+        "F3140A",
+        "3DK9D",
+        " 3CG111F ",
+        " 3841 ",
+        "3240"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "model",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 10,
+       "header": "型号规格",
+       "samples": [
+        "F3140A",
+        "3DK9D",
+        "3CG111F",
+        "φ8",
+        "δ16"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "specification",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 11,
+       "header": "质量等级",
+       "samples": [
+        "J",
+        "J",
+        "J",
+        "B/K",
+        "J"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 12,
+       "header": "国产/进口",
+       "samples": [
+        "10",
+        "10",
+        "10",
+        "10",
+        "10"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 13,
+       "header": "总规范",
+       "samples": [
+        "GJB597A",
+        "88",
+        "QZJ840611",
+        "无",
+        "QZJ840611"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 14,
+       "header": "封装形式",
+       "samples": [
+        "SOP08B",
+        "A3-02B",
+        "A3-01B",
+        "DIP14",
+        "A3-01B"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 15,
+       "header": "详细规范",
+       "samples": [
+        "Q/CA20024B-2007",
+        "Q/BHA30101-2007",
+        "无",
+        "无",
+        "无"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 16,
+       "header": "外形尺寸",
+       "samples": [
+        "无",
+        "88",
+        "无",
+        "无",
+        "无"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "specification",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 17,
+       "header": "生产厂家",
+       "samples": [
+        "天水华天微电子有限公司",
+        "石家庄天林石无二电子有限公司",
+        "济南市半导体元件试验所",
+        "天水天光半导体有限责任公司",
+        "济南市半导体元件试验所"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "manufacturer",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 18,
+       "header": "特殊说明",
+       "samples": [
+        "基于真实种子生成的目录外测试变体；预期人工判定均不匹配"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 19,
+       "header": "采购标准",
+       "samples": [
+        "JB/T56073.26-1999",
+        "GB/T1303.1-1998",
+        "GB/T1303.1-1998",
+        "GB/T1303.1-1998",
+        "GB/T5133-1985"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 20,
+       "header": "规格",
+       "samples": [
+        "δ16 / 目录外规格10"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "specification",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 21,
+       "header": "技术标准",
+       "samples": [],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 22,
+       "header": "标准号",
+       "samples": [],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 23,
+       "header": "型号(牌号)",
+       "samples": [
+        "3240-NM0010"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "model",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 24,
+       "header": "计量单位",
+       "samples": [],
+       "inferred_type": "TEXT",
+       "business_hint": "unit",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      }
+     ],
+     "warnings": []
+    }
+   ],
+   "recommended_sheet": "CSV",
+   "warnings": [],
+   "encoding": "utf-8-sig"
+  }
+ },
+ "target_file": {
+  "file_id": "125f52c9cdd54ef2b2273541a09acff3",
+  "sha256": "0fc32b095569e6ec0c236f644d18ba53c65f3aab4405ae623dfcfc7028a821dd",
+  "bytes": 14544,
+  "inspection": {
+   "file_type": "csv",
+   "sheets": [
+    {
+     "sheet_name": "CSV",
+     "recommended_header_row": 1,
+     "header_confidence": 1.0,
+     "row_count_estimate": 67,
+     "column_count": 21,
+     "columns": [
+      {
+       "index": 1,
+       "header": "集团码",
+       "samples": [
+        "HTWZ050000000368Z",
+        "HTWZ050000000445Z",
+        "HTWZ050000000370Z",
+        "HTWZ050000000371Z",
+        "HTWZ050000000378Z"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "group_code",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 2,
+       "header": "物料类型",
+       "samples": [
+        "Z006",
+        "Z006",
+        "Z006",
+        "Z006",
+        "Z006"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 3,
+       "header": "二层分类",
+       "samples": [
+        "聚合物基复合材料",
+        "聚合物基复合材料",
+        "聚合物基复合材料",
+        "聚合物基复合材料",
+        "聚合物基复合材料"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 4,
+       "header": "三层分类",
+       "samples": [
+        "聚合物基复合材料棒材",
+        "聚合物基复合材料板材",
+        "聚合物基复合材料板材",
+        "聚合物基复合材料棒材",
+        "聚合物基复合材料棒材"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 5,
+       "header": "四层分类",
+       "samples": [
+        "酚醛层压布棒",
+        "环氧酚醛玻璃布层压板",
+        "环氧酚醛玻璃布层压板",
+        "酚醛层压布棒",
+        "酚醛层压布棒"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 6,
+       "header": "五层分类",
+       "samples": [
+        "酚醛层压布棒",
+        "环氧酚醛玻璃布层压板",
+        "环氧酚醛玻璃布层压板",
+        "酚醛层压布棒",
+        "酚醛层压布棒"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_group",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 7,
+       "header": "物料名称",
+       "samples": [
+        "酚醛布棒",
+        "环氧玻璃布层压板",
+        "玻璃布酚醛层压板",
+        "酚醛布棒",
+        "酚醛布棒"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "material_name",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 8,
+       "header": "型号",
+       "samples": [
+        "3723",
+        "3240",
+        "-",
+        "3722",
+        "3723"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "model",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 9,
+       "header": "型号规格",
+       "samples": [
+        "φ10",
+        "δ2.5",
+        "δ5",
+        "φ25",
+        "φ13"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "specification",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 10,
+       "header": "质量等级",
+       "samples": [],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 11,
+       "header": "国产/进口",
+       "samples": [
+        "国产",
+        "国产",
+        "国产",
+        "国产",
+        "国产"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 12,
+       "header": "封装形式",
+       "samples": [],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 13,
+       "header": "生产厂家",
+       "samples": [
+        "<NULL>",
+        "<NULL>",
+        "<NULL>",
+        "<NULL>",
+        "<NULL>"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "manufacturer",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 14,
+       "header": "采用标准",
+       "samples": [
+        "GB/T 5133-1985",
+        "GB/T 1303.1-1998",
+        "Q/YXBYY 003-2000",
+        "GB/T 5133-1985",
+        "GB/T 5133-1985"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 15,
+       "header": "通用规范",
+       "samples": [
+        "GB/T 5133-1985",
+        "GB/T 1303.1-1998",
+        "Q/YXBYY 003-2000",
+        "GB/T 5133-1985",
+        "GB/T 5133-1985"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 16,
+       "header": "详细规范",
+       "samples": [
+        "GB/T 5133-1985",
+        "GB/T 1303.1-1998",
+        "Q/YXBYY 003-2000",
+        "GB/T 5133-1985",
+        "GB/T 5133-1985"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "standard",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 17,
+       "header": "外形尺寸",
+       "samples": [
+        "φ10",
+        "δ2.5",
+        "δ5",
+        "φ25",
+        "φ13"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "specification",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 18,
+       "header": "牌号",
+       "samples": [
+        "3723",
+        "3240",
+        "-",
+        "3722",
+        "3723"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "model",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 19,
+       "header": "规格",
+       "samples": [
+        "φ10",
+        "δ2.5",
+        "δ5",
+        "φ25",
+        "φ13"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "specification",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 20,
+       "header": "计量单位",
+       "samples": [
+        "kg",
+        "kg",
+        "kg",
+        "kg",
+        "kg"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "unit",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 21,
+       "header": "特殊说明",
+       "samples": [
+        "-",
+        "-",
+        "定尺:1000×1000",
+        "-",
+        "-"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      }
+     ],
+     "warnings": []
+    }
+   ],
+   "recommended_sheet": "CSV",
+   "warnings": [],
+   "encoding": "utf-8-sig"
+  }
+ },
+ "truth_file": {
+  "file_id": "18dbc4d143ec46529ae7481c17b9fee6",
+  "sha256": "e2643bec634fc4ec6778983cbc86bbb314cdbf1998e2d9124140eb6f8947350c",
+  "bytes": 47695,
+  "inspection": {
+   "file_type": "csv",
+   "sheets": [
+    {
+     "sheet_name": "CSV",
+     "recommended_header_row": 1,
+     "header_confidence": 1.0,
+     "row_count_estimate": 1000,
+     "column_count": 3,
+     "columns": [
+      {
+       "index": 1,
+       "header": "物料编码",
+       "samples": [
+        "900000000000000572",
+        "900000000000000454",
+        "900000000000000019",
+        "900000000000000944",
+        "900000000000000786"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "source_id",
+       "hint_confidence": 0.99,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 2,
+       "header": "预期是否可匹配",
+       "samples": [
+        "MATCH",
+        "MATCH",
+        "MATCH",
+        "MATCH",
+        "MATCH"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": null,
+       "hint_confidence": 0.0,
+       "leading_zero_risk": false
+      },
+      {
+       "index": 3,
+       "header": "预期集团码",
+       "samples": [
+        "HTWZ010000233825ZS0004747",
+        "HTWZ010000231891ZS0003656",
+        "HTWZ010000781214ZS0004690",
+        "HTWZ050000000380Z",
+        "HTWZ050000000321Z"
+       ],
+       "inferred_type": "TEXT",
+       "business_hint": "group_code",
+       "hint_confidence": 0.82,
+       "leading_zero_risk": false
+      }
+     ],
+     "warnings": []
+    }
+   ],
+   "recommended_sheet": "CSV",
+   "warnings": [],
+   "encoding": "utf-8-sig"
+  }
+ },
+ "catalog_version": "073b4a9597684ce5a080c24149d64565",
+ "catalog_id": "429380514d01422aab360243daae7da6",
+ "draft": "d64045aea7b948cba42d5c43d6bfecfa",
+ "task": "bd8823b4df48487ca1e79bd4cc51678e",
+ "task_started": 1789625259.574188,
+ "task_finished": 1789625584.5494144,
+ "task_progress_final": {
+  "task_id": "bd8823b4df48487ca1e79bd4cc51678e",
+  "stage": "REVIEW",
+  "status": "COMPLETED",
+  "progress": 100.0,
+  "processed_rows": 1000,
+  "total_rows": 1000,
+  "error_code": null,
+  "error_message": null,
+  "execution_mode": "scan",
+  "current_phase": "DONE",
+  "index_id": null,
+  "estimate": null,
+  "started_at": "2026-09-17T14:07:39.558917+08:00",
+  "live_counts": {
+   "matched": 139,
+   "review": 516,
+   "confirmed": 0,
+   "unmatched": 345,
+   "matched_group_codes": 139
+  },
+  "interim": false,
+  "steps": [
+   {
+    "key": "prepare",
+    "label": "数据准备",
+    "status": "DONE"
+   },
+   {
+    "key": "embedding",
+    "label": "向量化 / 索引准备",
+    "status": "SKIPPED"
+   },
+   {
+    "key": "retrieve",
+    "label": "候选召回",
+    "status": "DONE"
+   },
+   {
+    "key": "rerank",
+    "label": "精细评分",
+    "status": "DONE"
+   },
+   {
+    "key": "prepare_result",
+    "label": "结果持久化",
+    "status": "DONE"
+   }
+  ]
+ },
+ "evaluation": {
+  "run_id": "04fa9d8c37974f89b14872a5ffa77837",
+  "task_id": "bd8823b4df48487ca1e79bd4cc51678e",
+  "truth_file_id": "18dbc4d143ec46529ae7481c17b9fee6",
+  "key_mode": "source_id",
+  "key_column": "物料编码",
+  "expected_column": "预期集团码",
+  "metrics": {
+   "truth_rows": 1000,
+   "evaluated_rows": 1000,
+   "truth_coverage": 1.0,
+   "positive_truth_rows": 900,
+   "no_match_truth_rows": 100,
+   "top1_correct": 900,
+   "top1_accuracy": 1.0,
+   "positive_top1_accuracy": 1.0,
+   "final_correct": 231,
+   "final_accuracy": 0.231,
+   "human_accuracy_gain": -0.761,
+   "automatic_rows": 139,
+   "automatic_correct": 139,
+   "automatic_accuracy": 1.0,
+   "automatic_match_rows": 139,
+   "automatic_match_correct": 139,
+   "automatic_match_precision": 1.0,
+   "review_rows": 516,
+   "review_rate": 0.516,
+   "current_review_rows": 516,
+   "current_review_rate": 0.516,
+   "unmatched_rows": 345,
+   "unmatched_rate": 0.345,
+   "resolved_rows": 231,
+   "resolved_rate": 0.231,
+   "human_changed_rows": 0,
+   "candidate_top_n": 10,
+   "candidate_recall_at": {
+    "1": 1.0,
+    "3": 1.0,
+    "5": 1.0,
+    "10": 1.0
+   },
+   "candidate_recall_at_5": 1.0,
+   "candidate_recall_at_10": 1.0,
+   "no_match_true_negative": 92,
+   "no_match_false_positive": 0,
+   "no_match_true_negative_rate": 0.92,
+   "no_match_false_positive_rate": 0.0
+  },
+  "created_at": "2026-09-17T14:07:58.292852+08:00",
+  "expected_result_column": "预期是否可匹配"
+ }
+}

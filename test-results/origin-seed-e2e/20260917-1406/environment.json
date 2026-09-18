@@ -1,0 +1,79 @@
+{
+ "run_ts": "20260917-1406",
+ "base_url": "https://mat.bjlzc.cn",
+ "health": {
+  "status": "ok",
+  "version": "1.1.4"
+ },
+ "ready": {
+  "status": "ready",
+  "checks": {
+   "admin_account": true,
+   "database": true,
+   "data_dir": true,
+   "tmp_dir": true
+  }
+ },
+ "system_info": {
+  "version": "1.1.4",
+  "data_dir": "/var/lib/material_matcher",
+  "database": "/var/lib/material_matcher/meta/material_matcher.db",
+  "max_upload_bytes": 125829120,
+  "max_total_upload_bytes": 2147483648,
+  "chunk_size_bytes": 8388608,
+  "baseline_max_target_rows": 20000,
+  "embedding": {
+   "provider": "onnx_local",
+   "model_id": "BAAI/bge-base-zh-v1.5",
+   "dimensions": 768,
+   "max_length": 256,
+   "precision": "fp32"
+  },
+  "authorization": {
+   "roles": [
+    "admin",
+    "operator",
+    "reviewer",
+    "viewer"
+   ]
+  },
+  "index_dir": "/var/lib/material_matcher/indexes",
+  "embedding_cache_dir": "/var/lib/material_matcher/cache/embeddings"
+ },
+ "session": {
+  "me": {
+   "username": "admin",
+   "role": "admin",
+   "enabled": true,
+   "must_change_password": false,
+   "created_at": "2026-09-15T23:06:45.843377+08:00",
+   "updated_at": "2026-09-16T09:11:00.208314+08:00"
+  },
+  "at": "2026-09-17 14:13:04"
+ },
+ "repo_head": "649fb4ab55bf3c463d6a340e4bdf73657d705eee",
+ "deployed_version_matches_head": true,
+ "uploads": {
+  "source_file": {
+   "file_id": "c402676e6c064aa580808cef6f7a7be6",
+   "sha256": "c01693ef4594312a81ed5c6ac5950eac9d4c182588959626ce518f2a8edd2afd",
+   "bytes": 235604
+  },
+  "target_file": {
+   "file_id": "125f52c9cdd54ef2b2273541a09acff3",
+   "sha256": "0fc32b095569e6ec0c236f644d18ba53c65f3aab4405ae623dfcfc7028a821dd",
+   "bytes": 14544
+  },
+  "truth_file": {
+   "file_id": "18dbc4d143ec46529ae7481c17b9fee6",
+   "sha256": "e2643bec634fc4ec6778983cbc86bbb314cdbf1998e2d9124140eb6f8947350c",
+   "bytes": 47695
+  }
+ },
+ "fixtures_sha256": {
+  "ground_truth.csv": "9ccffd7e70a84a505c86567fd68aa53588f16903ceb2c4f35301b9c97d0c6167",
+  "manifest.json": "f91493ffc686e2596791606608b622bfbe0fb359fcab62fb234b9f41bf7bf38b",
+  "source_materials_1000.csv": "c01693ef4594312a81ed5c6ac5950eac9d4c182588959626ce518f2a8edd2afd",
+  "target_group_codes_from_origin.csv": "0fc32b095569e6ec0c236f644d18ba53c65f3aab4405ae623dfcfc7028a821dd"
+ }
+}
