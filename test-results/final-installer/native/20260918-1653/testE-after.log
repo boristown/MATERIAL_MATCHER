@@ -1,0 +1,5 @@
+3399283519 524288
+profiles: ['A001 元器件', 'A002 标准紧固件', 'A003 金属材料', 'A005 非金属材料', 'A006 复合材料', 'A007 物资类其他(跨类目)']
+tasks: 1 files: 3 users: ['admin']
+dict versions: 3
+{"status":"ok","version":"1.2.2"}

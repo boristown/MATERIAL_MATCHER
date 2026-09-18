@@ -1,0 +1,1 @@
+docker rm -f material_matcher-app → compose up -d → ready；profiles=6、tasks/uploads/results 全在宿主 /var/lib/material_matcher（bind mount），metadata DB 从不入匿名 volume/容器层。环境重启（docker restart 容器）后自动拉起（restart-autostart.log）。

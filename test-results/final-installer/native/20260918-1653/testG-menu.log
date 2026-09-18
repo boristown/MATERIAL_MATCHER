@@ -1,0 +1,27 @@
+==== 物料集团码智能匹配平台 · 维护菜单 ====
+ 1) 查看状态        2) 启动服务
+ 3) 停止服务        4) 重启服务
+ 5) 查看最近日志    6) 健康诊断
+ 7) 查看版本        8) 备份数据
+ 9) 验证最近备份   10) 从备份恢复（需备份文件路径）
+11) 导出诊断包     12) 前端离线重建（高级）
+ 0) 退出
+请选择：----- 备份 -----
+备份完成：/var/backups/material_matcher/mm-backup-20260918-091235.tar.gz
+按回车返回菜单…备份完成：/var/backups/material_matcher/mm-backup-20260918-091235.tar.gz
+==== 物料集团码智能匹配平台 · 维护菜单 ====
+ 1) 查看状态        2) 启动服务
+ 3) 停止服务        4) 重启服务
+ 5) 查看最近日志    6) 健康诊断
+ 7) 查看版本        8) 备份数据
+ 9) 验证最近备份   10) 从备份恢复（需备份文件路径）
+11) 导出诊断包     12) 前端离线重建（高级）
+ 0) 退出
+请选择：restore target: /var/backups/material_matcher/mm-backup-20260918-091235.tar.gz
+恢复完成，服务已启动。恢复前数据库已另存为 material_matcher.db.pre-restore-20260918-095127
+inserted zombie
+恢复完成，服务已启动。恢复前数据库已另存为 material_matcher.db.pre-restore-20260918-095131
+after restore: ['admin']
+{"status":"ready","c
+diag: /var/tmp/mm-diagnostics-20260918-095135.tar.gz
+DIAG-NO-PASSWORD

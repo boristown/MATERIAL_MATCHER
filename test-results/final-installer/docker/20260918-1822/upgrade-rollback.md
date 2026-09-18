@@ -1,0 +1,1 @@
+重复安装=升级 no-op（testB-upgrade-dup.log：复用端口/密码、seed 跳过、6 方案不重复、无关容器存活）。回滚：testF-rollback.log——合成坏镜像（官方 1.2.2 上层覆盖 ENTRYPOINT /bin/false，介质自洽哈希）→ readiness 180 秒 → rc=48 → docker.env 与 compose.yaml 自动回写旧镜像标签 → 服务恢复 ready，数据零损。

@@ -1,0 +1,18 @@
+备份完成：/var/backups/material_matcher/mm-docker-backup-20260918-085503.tar.gz
+备份验证通过：integrity=ok，表数量=27
+inserted zombie
+ Container material_matcher-app  Creating
+ Container material_matcher-app  Created
+ Container material_matcher-app  Starting
+ Container material_matcher-app  Started
+恢复完成；恢复前数据库已留存为 material_matcher.db.pre-restore-20260918-085504
+after restore: ['admin']
+{"status":"ready","c
+诊断包已导出：/var/tmp/mm-docker-diagnostics-20260918-085508.tar.gz（不含密码/会话/客户文件）
+mm-docker-diagnostics-20260918-085508/
+mm-docker-diagnostics-20260918-085508/diagnostics.txt
+mm-docker-diagnostics-20260918-085508/docker.env
+mm-docker-diagnostics-20260918-085508/storage.env
+mm-docker-diagnostics-20260918-085508/docker-install-20260918-085342.txt
+mm-docker-diagnostics-20260918-085508/docker-install-20260918-085405.txt
+DIAG-NO-PASSWORD
