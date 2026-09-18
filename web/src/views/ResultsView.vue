@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
+import { formatDurationMs } from '../taskTime'
 import '../styles/pages/results.css'
 
 type TaskRow = Record<string, unknown> & {
@@ -14,6 +15,7 @@ type TaskRow = Record<string, unknown> & {
   created_at: string
   started_at?: string | null
   finished_at?: string | null
+  compute_duration_ms?: number | null
   result_file_id?: string | null
   processed_rows: number
   total_rows: number
@@ -59,15 +61,33 @@ type ExportBundle = Record<string, unknown> & {
   final_result?: ExportInfo | null
 }
 
+type InputAssetInfo = {
+  kind: 'source' | 'target'
+  label: string
+  original_name?: string | null
+  uploaded_at?: string | null
+  size_bytes?: number | null
+  available: boolean
+  download_url?: string | null
+  message?: string | null
+}
+
+type InputAssetBundle = {
+  source?: InputAssetInfo | null
+  target?: InputAssetInfo | null
+}
+
 const router = useRouter()
 const tasks = ref<TaskRow[]>([])
 const resultFiles = ref<Record<string, FileRecord>>({})
 const latestSummary = ref<ResultSummary>({ pending_review: 0, confirmed: 0, unmatched: 0, automatic_matched: 0 })
 const latestRows = ref<PreviewRow[]>([])
 const latestExports = ref<ExportBundle>({})
+const latestInputAssets = ref<InputAssetBundle>({})
 const loading = ref(true)
 const downloadingTaskId = ref('')
 const downloadingExportKey = ref('')
+const downloadingInputRole = ref<'source' | 'target' | ''>('')
 
 const stageLabels: Record<string, string> = { CALCULATE: '比对计算', REVIEW: '人工处理', RESULT: '生成结果' }
 const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING']
@@ -256,8 +276,6 @@ const allUnmatched = computed(() => {
     && Number(latestSummary.value.pending_review || 0) === 0
 })
 
-const createdAccount = computed(() => displayValue(firstValue(latestSummary.value, ['created_by', 'creator', 'created_user', 'created_username'])
-  ?? firstValue(latestResult.value, ['created_by', 'creator', 'created_user', 'created_username'])))
 const startedAccount = computed(() => displayValue(firstValue(latestSummary.value, ['started_by', 'starter', 'started_user', 'started_username'])
   ?? firstValue(latestResult.value, ['started_by', 'starter', 'started_user', 'started_username'])))
 
@@ -304,14 +322,16 @@ function evaluate(task: TaskRow): void {
 }
 
 async function loadLatestDetails(task: TaskRow): Promise<void> {
-  const [summaryResponse, previewResponse, exportResponse] = await Promise.all([
+  const [summaryResponse, previewResponse, exportResponse, inputAssetsResponse] = await Promise.all([
     api.get(`/tasks/${task.id}/workbench/summary`),
     api.get(`/tasks/${task.id}/live-results`, { params: { limit: 200 } }),
     api.get(`/tasks/${task.id}/exports`),
+    api.get(`/tasks/${task.id}/input-assets`),
   ])
   latestSummary.value = summaryResponse.data ?? latestSummary.value
   latestRows.value = summaryResponse.data?.preview_rows ?? previewResponse.data?.rows ?? []
   latestExports.value = exportResponse.data ?? {}
+  latestInputAssets.value = inputAssetsResponse.data ?? {}
 }
 
 async function load(): Promise<void> {
@@ -330,6 +350,7 @@ async function load(): Promise<void> {
       created_at: String(task.created_at ?? ''),
       started_at: task.started_at ? String(task.started_at) : null,
       finished_at: task.finished_at ? String(task.finished_at) : null,
+      compute_duration_ms: task.compute_duration_ms == null ? null : Number(task.compute_duration_ms),
       result_file_id: task.result_file_id ? String(task.result_file_id) : null,
       processed_rows: Number(task.processed_rows ?? 0),
       total_rows: Number(task.total_rows ?? 0),
@@ -337,12 +358,35 @@ async function load(): Promise<void> {
     latestSummary.value = { pending_review: 0, confirmed: 0, unmatched: 0, automatic_matched: 0 }
     latestRows.value = []
     latestExports.value = {}
+    latestInputAssets.value = {}
     if (latestResult.value) await loadLatestDetails(latestResult.value)
   } catch {
     await router.push('/login')
   } finally {
     loading.value = false
   }
+}
+
+function inputAssetDisplayName(asset: InputAssetInfo | null | undefined): string {
+  return String(asset?.original_name || asset?.message || '该历史任务的原始文件已无法确认')
+}
+
+function inputAssetMeta(asset: InputAssetInfo | null | undefined): string {
+  if (!asset?.available) return String(asset?.message || '该历史任务的原始文件已无法确认')
+  if (asset.uploaded_at) return `原文件上传时间：${formatTime(asset.uploaded_at)}`
+  return '任务启动时已冻结原始文件引用'
+}
+
+function downloadInputAsset(asset: InputAssetInfo | null | undefined, role: 'source' | 'target'): void {
+  if (!asset?.available || !asset.download_url) {
+    ElMessage.warning(asset?.message || '该历史任务的原始文件已无法确认')
+    return
+  }
+  downloadingInputRole.value = role
+  window.location.href = String(asset.download_url)
+  window.setTimeout(() => {
+    if (downloadingInputRole.value === role) downloadingInputRole.value = ''
+  }, 800)
 }
 
 async function downloadExport(exportInfo: ExportInfo | null, key: string, unavailableMessage: string): Promise<void> {
@@ -403,13 +447,56 @@ onMounted(load)
               </div>
               <h3>{{ latestResult.scheme_name }}</h3>
               <div class="result-meta-line">
-                <span>开始时间：{{ formatTime(latestResult.started_at) }}</span>
-                <span>最终结果生成时间：{{ formatTime(resultCompletedAt(latestResult)) }}</span>
+                <span>任务开始时间：{{ formatTime(latestResult.started_at) }}</span>
+                <span>自动计算耗时：{{ formatDurationMs(latestResult.compute_duration_ms) }}</span>
               </div>
             </div>
             <el-button type="primary" plain @click="openTask(latestResult)">查看匹配详情</el-button>
           </div>
 
+          <div class="result-input-assets">
+            <div class="result-input-assets-head">
+              <div>
+                <b>本次使用的原始文件</b>
+                <span>任务启动时冻结的输入资料，历史任务不会跟随后来更新的集团码标准文件。</span>
+              </div>
+            </div>
+            <div class="result-input-asset-list">
+              <div class="result-input-asset-row">
+                <div class="result-input-asset-kind">待匹配源数据</div>
+                <div class="result-input-asset-file">
+                  <b>{{ inputAssetDisplayName(latestInputAssets.source) }}</b>
+                  <span>{{ inputAssetMeta(latestInputAssets.source) }}</span>
+                </div>
+                <el-button
+                  type="primary"
+                  plain
+                  :loading="downloadingInputRole === 'source'"
+                  :disabled="!latestInputAssets.source?.available"
+                  @click="downloadInputAsset(latestInputAssets.source, 'source')"
+                >下载原始文件</el-button>
+              </div>
+              <div class="result-input-asset-row">
+                <div class="result-input-asset-kind">集团码标准数据</div>
+                <div class="result-input-asset-file">
+                  <b>{{ inputAssetDisplayName(latestInputAssets.target) }}</b>
+                  <span>{{ inputAssetMeta(latestInputAssets.target) }}</span>
+                </div>
+                <el-button
+                  type="primary"
+                  plain
+                  :loading="downloadingInputRole === 'target'"
+                  :disabled="!latestInputAssets.target?.available"
+                  @click="downloadInputAsset(latestInputAssets.target, 'target')"
+                >下载原始文件</el-button>
+              </div>
+            </div>
+          </div>
+
+          <div class="result-section-heading">
+            <b>本次匹配结果</b>
+            <span>输入资料经过自动计算与人工处理后的业务结果摘要。</span>
+          </div>
           <div class="result-metrics">
             <div class="result-metric primary"><span>源数据总数</span><b>{{ formatCount(latestTotalRows) }}</b><small>源 Excel 参与匹配的记录</small></div>
             <div class="result-metric"><span>自动匹配数</span><b>{{ formatCount(latestSummary.automatic_matched) }}</b><small>系统直接形成最终集团码</small></div>
@@ -419,11 +506,10 @@ onMounted(load)
           </div>
 
           <div class="result-lifecycle">
-            <div><span>创建账号</span><b>{{ createdAccount }}</b></div>
-            <div><span>创建时间</span><b>{{ formatTime(latestResult.created_at) }}</b></div>
             <div><span>启动账号</span><b>{{ startedAccount }}</b></div>
-            <div><span>开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
-            <div><span>最终结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
+            <div><span>任务开始时间</span><b>{{ formatTime(latestResult.started_at) }}</b></div>
+            <div><span>自动计算耗时</span><b>{{ formatDurationMs(latestResult.compute_duration_ms) }}</b></div>
+            <div><span>结果生成时间</span><b>{{ formatTime(resultCompletedAt(latestResult)) }}</b></div>
           </div>
 
           <div v-if="allUnmatched" class="result-quality-alert">
@@ -466,7 +552,7 @@ onMounted(load)
 
           <div class="result-downloads">
             <div class="result-downloads-head">
-              <div><b>正式结果文件</b><span>一个 Excel 即包含交付、复核和审计所需内容</span></div>
+              <div><b>输出资料</b><span>最终匹配结果 Excel，可与上方两份原始输入一起完整复原本次任务</span></div>
             </div>
             <div class="result-download-primary">
               <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport" @click="downloadExport(finalExport, 'final', '该方案尚未生成可下载的最终匹配结果')">
@@ -493,7 +579,8 @@ onMounted(load)
             <p>{{ waitingState.description }}</p>
             <div class="result-state-meta">
               <span>方案：{{ pendingTask.scheme_name }}</span>
-              <span>开始时间：{{ formatTime(pendingTask.started_at) }}</span>
+              <span>任务开始时间：{{ formatTime(pendingTask.started_at) }}</span>
+              <span>自动计算耗时：{{ formatDurationMs(pendingTask.compute_duration_ms, RUNNING_STATUSES.includes(pendingTask.status) ? '计算中' : '暂无准确记录') }}</span>
               <span>阶段：{{ stageLabels[pendingTask.stage] ?? pendingTask.stage }}</span>
               <span>状态：{{ statusLabel(pendingTask.status) }}</span>
             </div>
@@ -529,7 +616,8 @@ onMounted(load)
       </div>
       <el-table :data="generatedResults" size="default" empty-text="暂无历史结果">
         <el-table-column label="方案名称" min-width="230"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a></template></el-table-column>
-        <el-table-column label="开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
+        <el-table-column label="任务开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
+        <el-table-column label="自动计算耗时" width="170"><template #default="scope">{{ formatDurationMs(scope.row.compute_duration_ms) }}</template></el-table-column>
         <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
         <el-table-column label="源数据总数" width="120"><template #default="scope">{{ scope.row.total_rows ? formatCount(scope.row.total_rows) : '—' }}</template></el-table-column>
         <el-table-column label="状态" width="105"><template #default="scope"><el-tag size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>

@@ -95,15 +95,74 @@ def _load_release_manifest(release_dir: Path) -> dict[str, object]:
     return payload
 
 
+# 介质根目录 → (仓库来源文件, 是否可执行)
+ROOT_COPY_PLAN: tuple[tuple[str, str, bool], ...] = (
+    ("install.sh", "installer/install.sh", True),
+    ("install_wizard.sh", "installer/install_wizard.sh", True),
+    ("mmctl", "installer/mmctl", True),
+    ("verify_offline_bundle.py", "installer/verify_offline_bundle.py", False),
+    ("启动安装.sh", "installer/launch_install.sh", True),
+    ("安装物料集团码智能匹配平台.desktop", "installer/desktop_install.desktop", False),
+    ("维护物料集团码智能匹配平台.desktop", "installer/desktop_maintain.desktop", False),
+    ("维护工具.sh", "installer/maintain.sh", True),
+    ("README-安装前必读.txt", "installer/README_first.txt", False),
+    ("docs/安装手册.md", "installer/docs/install-manual.md", False),
+    ("docs/维护手册.md", "installer/docs/maintain-manual.md", False),
+    ("docs/故障处理.md", "installer/docs/troubleshooting.md", False),
+    ("tools/installer_smoke.py", "scripts/installer_smoke.py", True),
+)
+
+
+def _write_build_info(output_dir: Path, *, release_version: str, target_arch: str, model_id: str,
+                      git_commit: str, python_version: str, bootstrap_python: str) -> None:
+    lines = [
+        "物料集团码智能匹配平台 · 正式离线安装介质",
+        "=========================================",
+        f"版本: {release_version}",
+        f"Git commit: {git_commit}",
+        f"目标架构: {target_arch}",
+        f"目标系统: 银河麒麟 Linux V10",
+        f"构建时间(UTC): {datetime.now(timezone.utc).isoformat()}",
+        f"应用 Python Runtime: {python_version}",
+        f"安装器 bootstrap Python: {bootstrap_python}",
+        f"Embedding 模型: {model_id}",
+        "联网需求: 无（完全离线安装）",
+        "",
+        "普通安装人员：双击『安装物料集团码智能匹配平台』或运行 ./启动安装.sh，按 docs/安装手册.md 操作。",
+    ]
+    (output_dir / "BUILD_INFO.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_sha256sums(output_dir: Path) -> None:
+    lines = []
+    for relative, path, kind in _iter_entries(output_dir):
+        if kind != "file" or relative == "SHA256SUMS":
+            continue
+        lines.append(f"{_sha256(path)}  {relative}")
+    (output_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _bootstrap_python_version(python: Path) -> str:
+    try:
+        result = subprocess.run([str(python), "-c", "import platform;print(platform.python_version())"],
+                                check=True, text=True, capture_output=True)
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
 def build_bundle(
     *,
     release_dir: Path,
     model_dir: Path,
     wheelhouse_dir: Path,
+    bootstrap_runtime_dir: Path,
     output_dir: Path,
     release_version: str,
     target_arch: str,
     model_id: str,
+    node_offline_dir: Path | None = None,
+    git_commit: str = "",
     force: bool = False,
 ) -> Path:
     if not RELEASE_VERSION_RE.fullmatch(release_version):
@@ -143,9 +202,46 @@ def build_bundle(
     _copy_tree(model_dir, model_target)
     _copy_tree(wheelhouse_dir, output_dir / "wheelhouse")
 
-    shutil.copy2(repo_root / "installer" / "install.sh", output_dir / "install.sh")
-    shutil.copy2(repo_root / "installer" / "verify_offline_bundle.py", output_dir / "verify_offline_bundle.py")
-    (output_dir / "install.sh").chmod(0o755)
+    bootstrap_runtime_dir = bootstrap_runtime_dir.resolve()
+    if not (bootstrap_runtime_dir / "bin/python3").is_file():
+        raise ValueError(f"bootstrap runtime 缺少 bin/python3：{bootstrap_runtime_dir}")
+    _copy_tree(bootstrap_runtime_dir, output_dir / "bootstrap/python")
+
+    for target, source, executable in ROOT_COPY_PLAN:
+        source_path = repo_root / source
+        if not source_path.is_file():
+            raise ValueError(f"仓库缺少安装介质入口文件：{source}")
+        target_path = output_dir / target
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        if executable:
+            target_path.chmod(0o755)
+
+    smoke_script = repo_root / "scripts/generate_smoke_data.py"
+    if not smoke_script.is_file():
+        raise ValueError("仓库缺少 scripts/generate_smoke_data.py")
+    sys.path.insert(0, str(repo_root / "scripts"))
+    import generate_smoke_data  # noqa: E402
+
+    generate_smoke_data.generate(output_dir / "smoke")
+
+    if node_offline_dir is not None:
+        node_offline_dir = Path(node_offline_dir).resolve()
+        if not node_offline_dir.is_dir():
+            raise ValueError(f"离线 Node 重建资源目录不存在：{node_offline_dir}")
+        _copy_tree(node_offline_dir, output_dir / "tools/node-offline")
+
+    bootstrap_python = output_dir / "bootstrap/python/bin/python3"
+    _write_build_info(
+        output_dir,
+        release_version=release_version,
+        target_arch=target_arch,
+        model_id=model_path.as_posix(),
+        git_commit=git_commit or str(release_manifest.get("git_commit") or "unknown"),
+        python_version=str(release_manifest.get("python_version") or ""),
+        bootstrap_python=_bootstrap_python_version(bootstrap_python),
+    )
+    _write_sha256sums(output_dir)
 
     files = [_entry(relative, path, kind) for relative, path, kind in _iter_entries(output_dir)]
     manifest = {
@@ -173,6 +269,11 @@ def main() -> None:
     parser.add_argument("--release-dir", type=Path, required=True, help="scripts/build_release.py 生成的自包含 release 目录")
     parser.add_argument("--model-dir", type=Path, required=True, help="目标 Embedding 模型目录，需包含 tokenizer.json 和 ONNX")
     parser.add_argument("--wheelhouse-dir", type=Path, required=True, help="离线 Python wheelhouse")
+    parser.add_argument("--bootstrap-runtime-dir", type=Path, required=True,
+                        help="安装器 bootstrap 自包含 Python（目录内含可执行 bin/python3）")
+    parser.add_argument("--node-offline-dir", type=Path, default=None,
+                        help="可选：离线前端重建资源（node 运行时 + node_modules 归档）")
+    parser.add_argument("--git-commit", default="", help="冻结 commit；缺省读取 release manifest")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--release-version", required=True)
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), required=True)
@@ -184,10 +285,13 @@ def main() -> None:
             release_dir=args.release_dir,
             model_dir=args.model_dir,
             wheelhouse_dir=args.wheelhouse_dir,
+            bootstrap_runtime_dir=args.bootstrap_runtime_dir,
             output_dir=args.output_dir,
             release_version=args.release_version,
             target_arch=args.target_arch,
             model_id=args.model_id,
+            node_offline_dir=args.node_offline_dir,
+            git_commit=args.git_commit,
             force=args.force,
         )
     except Exception as exc:

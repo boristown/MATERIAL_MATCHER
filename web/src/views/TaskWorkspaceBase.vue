@@ -6,6 +6,7 @@ import { api } from '../api'
 import DualExcelUploadPanel from '../components/DualExcelUploadPanel.vue'
 import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
+import { formatDurationMs, formatTimePoint } from '../taskTime'
 
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
@@ -18,6 +19,8 @@ type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion 
 type WorkbenchItem = { source_row_id: string; source_id: string; source_payload: Record<string, unknown>; top1_group_code?: string | null; top1_score: number; second_score: number; score_gap: number; critical_conflict: boolean; current_status?: string }
 type FieldScore = { rule_id: string; score: number; weight: number; source_value: string; target_value: string; critical: boolean; conflict: boolean }
 type Candidate = { rank: number; target_group_code: string; score: number; critical_conflict: boolean; target_payload: Record<string, unknown>; field_scores: FieldScore[] }
+type TaskInputAsset = { kind: 'source' | 'target'; label: string; original_name?: string | null; uploaded_at?: string | null; available: boolean; download_url?: string | null; message?: string | null }
+type TaskInputAssets = { source?: TaskInputAsset | null; target?: TaskInputAsset | null }
 
 const route = useRoute(), router = useRouter()
 const profileQueryId = computed(() => typeof route.query.profile === 'string' ? route.query.profile : '')
@@ -90,6 +93,8 @@ const redecideBusy = ref(false)
 const drawerVisible = ref(false), drawerItem = ref<WorkbenchItem | null>(null)
 const candidates = ref<Candidate[]>([]), candidateIndex = ref(0)
 const finalized = ref(false)
+const taskInputAssets = ref<TaskInputAssets>({})
+const downloadingOriginal = ref<'source' | 'target' | ''>('')
 
 /* ---------- 连线画布 ---------- */
 const pendingSource = ref<string | null>(null)
@@ -597,11 +602,6 @@ function fmtClock(iso: string | null | undefined): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '—' : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
-function elapsedSeconds(startedAt: string | null | undefined): number | null {
-  if (!startedAt) return null
-  const started = new Date(startedAt).getTime()
-  return Number.isNaN(started) ? null : Math.max(0, (Date.now() - started) / 1000)
-}
 const statusLabel = computed(() => ({ PENDING: '排队中', PREPARING: '准备中', RECOVERING: '重启恢复中', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败' }[String(task.value?.status ?? '')] ?? String(task.value?.status ?? '')))
 const phaseLabel = computed(() => ({ INDEX: '正在准备标准数据（首次处理可能稍慢，后续可直接复用）', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
 const isInterim = computed(() => Boolean(progress.value?.interim))
@@ -630,6 +630,7 @@ async function pollProgress(): Promise<void> {
 }
 async function enterStage2Or3(): Promise<void> {
   await loadReviewSummary()
+  await loadTaskInputAssets()
   finalized.value = Boolean(task.value?.result_file_id) || task.value?.stage === 'RESULT'
   if ((reviewSummary.value.pending_review ?? 0) > 0 && !finalized.value) { stage.value = 2; await loadWorkbench() }
   else { stage.value = 3 }
@@ -733,6 +734,33 @@ async function finalizeAndOpenResults(): Promise<void> {
   if (await finalize()) stage.value = 3
 }
 function downloadResult(): void { window.location.href = `/api/tasks/${task.value.task_id}/result` }
+
+async function loadTaskInputAssets(): Promise<void> {
+  if (!task.value?.task_id) return
+  try {
+    taskInputAssets.value = (await api.get(`/tasks/${task.value.task_id}/input-assets`)).data ?? {}
+  } catch {
+    taskInputAssets.value = {}
+  }
+}
+function taskInputName(asset: TaskInputAsset | null | undefined): string {
+  return String(asset?.original_name || asset?.message || '该历史任务的原始文件已无法确认')
+}
+function taskInputMeta(asset: TaskInputAsset | null | undefined): string {
+  if (!asset?.available) return String(asset?.message || '该历史任务的原始文件已无法确认')
+  return asset.uploaded_at ? `上传时间：${String(asset.uploaded_at).slice(0, 19).replace('T', ' ')}` : '任务启动时已冻结原始文件引用'
+}
+function downloadOriginalInput(asset: TaskInputAsset | null | undefined, role: 'source' | 'target'): void {
+  if (!asset?.available || !asset.download_url) {
+    ElMessage.warning(asset?.message || '该历史任务的原始文件已无法确认')
+    return
+  }
+  downloadingOriginal.value = role
+  window.location.href = String(asset.download_url)
+  window.setTimeout(() => {
+    if (downloadingOriginal.value === role) downloadingOriginal.value = ''
+  }, 800)
+}
 
 /* ---------- 恢复 ---------- */
 async function restoreDraft(id: string): Promise<void> {
@@ -1054,7 +1082,8 @@ onBeforeUnmount(() => {
           <div class="stat-card"><span>待人工确认</span><b>{{ Number(liveCounts.review ?? 0).toLocaleString() }}</b></div>
           <div class="stat-card"><span>未匹配</span><b>{{ Number(liveCounts.unmatched ?? 0).toLocaleString() }}</b></div>
           <div class="stat-card"><span>吞吐</span><b>{{ progress?.estimate?.rows_per_minute ? Number(progress.estimate.rows_per_minute).toFixed(0) : '—' }} <i>行/分钟</i></b></div>
-          <div class="stat-card"><span>已用时</span><b>{{ fmtDuration(elapsedSeconds(progress?.started_at ?? task?.started_at)) }}</b></div>
+          <div class="stat-card"><span>任务开始时间</span><b>{{ formatTimePoint(progress?.started_at ?? task?.started_at) }}</b></div>
+          <div class="stat-card"><span>自动计算已用时</span><b>{{ formatDurationMs(progress?.compute_elapsed_ms ?? progress?.compute_duration_ms ?? task?.compute_duration_ms, '准备中') }}</b></div>
           <div class="stat-card accent"><span>{{ progress?.current_phase === 'INDEX' ? '本阶段预计还需' : '预计剩余' }}</span><b>{{ progress?.current_phase === 'INDEX' ? fmtDuration(progress?.estimate?.phase_remaining_seconds) : fmtDuration(progress?.estimate?.eta_seconds) }}</b><i v-if="progress?.estimate?.eta_at">完成约 {{ fmtClock(progress.estimate.eta_at) }}</i></div>
         </div>
       </div>
@@ -1080,6 +1109,7 @@ onBeforeUnmount(() => {
         <h3 style="margin:0">人工调整(待确认 {{ reviewSummary.pending_review ?? 0 }})</h3>
         <el-input v-model="searchQ" placeholder="按物料编码/描述/集团码模糊搜索…" clearable style="width:320px" prefix-icon="Search"/>
       </div>
+      <div class="muted" style="margin-bottom:12px">任务开始时间 {{ formatTimePoint(task?.started_at) }} · 自动计算耗时 {{ formatDurationMs(task?.compute_duration_ms) }}</div>
       <div class="stats">
         <b>待确认 {{ reviewSummary.pending_review ?? 0 }}</b>
         <span>已确认 {{ reviewSummary.confirmed ?? 0 }}</span>
@@ -1119,12 +1149,54 @@ onBeforeUnmount(() => {
 
     <!-- 第四步:输出结果 -->
     <div v-else class="panel">
-      <h3>输出结果</h3>
+      <h3>任务资料</h3>
+      <el-descriptions :column="3" border size="small" style="margin-bottom:16px">
+        <el-descriptions-item label="方案名称">{{ task?.scheme_name || '未命名方案' }}</el-descriptions-item>
+        <el-descriptions-item label="任务开始时间">{{ formatTimePoint(task?.started_at) }}</el-descriptions-item>
+        <el-descriptions-item label="自动计算耗时">{{ formatDurationMs(task?.compute_duration_ms) }}</el-descriptions-item>
+      </el-descriptions>
+      <h3>本次使用的原始文件</h3>
+      <el-descriptions :column="1" border size="small" style="margin-bottom:18px">
+        <el-descriptions-item label="待匹配源数据">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="min-width:220px;flex:1 1 360px">
+              <b>{{ taskInputName(taskInputAssets.source) }}</b>
+              <div class="muted" style="margin-top:3px">{{ taskInputMeta(taskInputAssets.source) }}</div>
+            </div>
+            <el-button
+              type="primary"
+              plain
+              size="small"
+              :loading="downloadingOriginal === 'source'"
+              :disabled="!taskInputAssets.source?.available"
+              @click="downloadOriginalInput(taskInputAssets.source, 'source')"
+            >下载原始文件</el-button>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="集团码标准数据">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="min-width:220px;flex:1 1 360px">
+              <b>{{ taskInputName(taskInputAssets.target) }}</b>
+              <div class="muted" style="margin-top:3px">{{ taskInputMeta(taskInputAssets.target) }}</div>
+            </div>
+            <el-button
+              type="primary"
+              plain
+              size="small"
+              :loading="downloadingOriginal === 'target'"
+              :disabled="!taskInputAssets.target?.available"
+              @click="downloadOriginalInput(taskInputAssets.target, 'target')"
+            >下载原始文件</el-button>
+          </div>
+        </el-descriptions-item>
+      </el-descriptions>
+      <h3>本次匹配结果</h3>
       <div class="stats">
         <span>总行数 {{ finalTotal }}</span><span>自动匹配 {{ reviewSummary.automatic_matched ?? 0 }}</span><span>人工确认 {{ reviewSummary.confirmed ?? 0 }}</span><span>未匹配 {{ reviewSummary.unmatched ?? 0 }}</span><span>仍待确认 {{ reviewSummary.pending_review ?? 0 }}</span>
       </div>
       <el-alert v-if="!finalized && (reviewSummary.pending_review ?? 0) > 0" type="warning" :closable="false" title="仍有待确认行:可返回人工调整,或继续生成(这些行集团码为空)。"/>
       <el-alert v-if="finalized" type="success" :closable="false" title="最终 Excel 已生成:含「匹配摘要」「匹配结果(带状态色)」「TopN候选」「人工确认记录」四张表。"/>
+      <h3 style="margin-top:18px">输出资料</h3>
       <div class="actions">
         <el-button @click="stage=2">← 人工调整</el-button>
         <el-button v-if="!finalized" type="primary" @click="finalize">一键生成匹配结果</el-button>
