@@ -1,0 +1,1 @@
+docker-compose-linux-x86_64 v2.29.7，官方 GitHub Release 发布之 .sha256 与本地核对一致；安装为 CLI 插件目录；compose.yaml 由安装器生成：project=material_matcher、container=material_matcher-app、network=material_matcher-net、restart=unless-stopped、单端口映射。

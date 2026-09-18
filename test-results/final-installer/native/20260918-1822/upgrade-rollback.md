@@ -1,0 +1,1 @@
+升级：testE-old.log（1.1.15+无 seed 证明）→ testE-upgrade.log（seed 6/1 导入、端口密码保持、inode 不变）→ testE-rerun-duplicate.log（客户 A002 修改 v4/91 重跑后仍 v4/91，方案 distinct=6）。回滚：testR-rollback.log（自洽坏构建 1.2.9 → doctor 过 → readiness 120 秒 → rc=48 → current 与 models/current 复原，服务 ready，profiles=6）。

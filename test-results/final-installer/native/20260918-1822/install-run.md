@@ -1,0 +1,1 @@
+operator-run.md/wizard-full.log（一次成功，9 秒，无 >30 秒静默）；quickfirst-native-123.log（预跑 22/22）；20260918-1653/testB-nopython-first.log（无 python3 环境）/testB-duplicate.log/testD-wizard.log/testR-base.log/testR-rollback.log/testG-menu.log/restart-autostart.log。
