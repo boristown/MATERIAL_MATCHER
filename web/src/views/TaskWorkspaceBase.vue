@@ -18,6 +18,8 @@ type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion 
 type WorkbenchItem = { source_row_id: string; source_id: string; source_payload: Record<string, unknown>; top1_group_code?: string | null; top1_score: number; second_score: number; score_gap: number; critical_conflict: boolean; current_status?: string }
 type FieldScore = { rule_id: string; score: number; weight: number; source_value: string; target_value: string; critical: boolean; conflict: boolean }
 type Candidate = { rank: number; target_group_code: string; score: number; critical_conflict: boolean; target_payload: Record<string, unknown>; field_scores: FieldScore[] }
+type TaskInputAsset = { kind: 'source' | 'target'; label: string; original_name?: string | null; uploaded_at?: string | null; available: boolean; download_url?: string | null; message?: string | null }
+type TaskInputAssets = { source?: TaskInputAsset | null; target?: TaskInputAsset | null }
 
 const route = useRoute(), router = useRouter()
 const profileQueryId = computed(() => typeof route.query.profile === 'string' ? route.query.profile : '')
@@ -90,6 +92,8 @@ const redecideBusy = ref(false)
 const drawerVisible = ref(false), drawerItem = ref<WorkbenchItem | null>(null)
 const candidates = ref<Candidate[]>([]), candidateIndex = ref(0)
 const finalized = ref(false)
+const taskInputAssets = ref<TaskInputAssets>({})
+const downloadingOriginal = ref<'source' | 'target' | ''>('')
 
 /* ---------- 连线画布 ---------- */
 const pendingSource = ref<string | null>(null)
@@ -630,6 +634,7 @@ async function pollProgress(): Promise<void> {
 }
 async function enterStage2Or3(): Promise<void> {
   await loadReviewSummary()
+  await loadTaskInputAssets()
   finalized.value = Boolean(task.value?.result_file_id) || task.value?.stage === 'RESULT'
   if ((reviewSummary.value.pending_review ?? 0) > 0 && !finalized.value) { stage.value = 2; await loadWorkbench() }
   else { stage.value = 3 }
@@ -733,6 +738,37 @@ async function finalizeAndOpenResults(): Promise<void> {
   if (await finalize()) stage.value = 3
 }
 function downloadResult(): void { window.location.href = `/api/tasks/${task.value.task_id}/result` }
+
+async function loadTaskInputAssets(): Promise<void> {
+  if (!task.value?.task_id) return
+  try {
+    taskInputAssets.value = (await api.get(`/tasks/${task.value.task_id}/input-assets`)).data ?? {}
+  } catch {
+    taskInputAssets.value = {}
+  }
+}
+function taskInputName(asset: TaskInputAsset | null | undefined): string {
+  return String(asset?.original_name || asset?.message || '该历史任务的原始文件已无法确认')
+}
+function taskInputMeta(asset: TaskInputAsset | null | undefined): string {
+  if (!asset?.available) return String(asset?.message || '该历史任务的原始文件已无法确认')
+  return asset.uploaded_at ? `上传时间：${String(asset.uploaded_at).slice(0, 19).replace('T', ' ')}` : '任务启动时已冻结原始文件引用'
+}
+function downloadOriginalInput(asset: TaskInputAsset | null | undefined, role: 'source' | 'target'): void {
+  if (!asset?.available || !asset.download_url) {
+    ElMessage.warning(asset?.message || '该历史任务的原始文件已无法确认')
+    return
+  }
+  downloadingOriginal.value = role
+  window.location.href = String(asset.download_url)
+  window.setTimeout(() => {
+    if (downloadingOriginal.value === role) downloadingOriginal.value = ''
+  }, 800)
+}
+function taskStartedAt(): string {
+  const value = String(task.value?.started_at || task.value?.created_at || '')
+  return value ? value.slice(0, 19).replace('T', ' ') : '—'
+}
 
 /* ---------- 恢复 ---------- */
 async function restoreDraft(id: string): Promise<void> {
@@ -1119,12 +1155,53 @@ onBeforeUnmount(() => {
 
     <!-- 第四步:输出结果 -->
     <div v-else class="panel">
-      <h3>输出结果</h3>
+      <h3>任务资料</h3>
+      <el-descriptions :column="2" border size="small" style="margin-bottom:16px">
+        <el-descriptions-item label="方案名称">{{ task?.scheme_name || '未命名方案' }}</el-descriptions-item>
+        <el-descriptions-item label="任务开始时间">{{ taskStartedAt() }}</el-descriptions-item>
+      </el-descriptions>
+      <h3>本次使用的原始文件</h3>
+      <el-descriptions :column="1" border size="small" style="margin-bottom:18px">
+        <el-descriptions-item label="待匹配源数据">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="min-width:220px;flex:1 1 360px">
+              <b>{{ taskInputName(taskInputAssets.source) }}</b>
+              <div class="muted" style="margin-top:3px">{{ taskInputMeta(taskInputAssets.source) }}</div>
+            </div>
+            <el-button
+              type="primary"
+              plain
+              size="small"
+              :loading="downloadingOriginal === 'source'"
+              :disabled="!taskInputAssets.source?.available"
+              @click="downloadOriginalInput(taskInputAssets.source, 'source')"
+            >下载原始文件</el-button>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="集团码标准数据">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div style="min-width:220px;flex:1 1 360px">
+              <b>{{ taskInputName(taskInputAssets.target) }}</b>
+              <div class="muted" style="margin-top:3px">{{ taskInputMeta(taskInputAssets.target) }}</div>
+            </div>
+            <el-button
+              type="primary"
+              plain
+              size="small"
+              :loading="downloadingOriginal === 'target'"
+              :disabled="!taskInputAssets.target?.available"
+              @click="downloadOriginalInput(taskInputAssets.target, 'target')"
+            >下载原始文件</el-button>
+          </div>
+        </el-descriptions-item>
+      </el-descriptions>
+      <h3>本次匹配结果</h3>
       <div class="stats">
         <span>总行数 {{ finalTotal }}</span><span>自动匹配 {{ reviewSummary.automatic_matched ?? 0 }}</span><span>人工确认 {{ reviewSummary.confirmed ?? 0 }}</span><span>未匹配 {{ reviewSummary.unmatched ?? 0 }}</span><span>仍待确认 {{ reviewSummary.pending_review ?? 0 }}</span>
       </div>
       <el-alert v-if="!finalized && (reviewSummary.pending_review ?? 0) > 0" type="warning" :closable="false" title="仍有待确认行:可返回人工调整,或继续生成(这些行集团码为空)。"/>
       <el-alert v-if="finalized" type="success" :closable="false" title="最终 Excel 已生成:含「匹配摘要」「匹配结果(带状态色)」「TopN候选」「人工确认记录」四张表。"/>
+      <h3 style="margin-top:18px">输出资料</h3>
       <div class="actions">
         <el-button @click="stage=2">← 人工调整</el-button>
         <el-button v-if="!finalized" type="primary" @click="finalize">一键生成匹配结果</el-button>
