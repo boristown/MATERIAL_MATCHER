@@ -539,7 +539,9 @@ class TaskService:
                               AND t2.catalog_version_id=t.catalog_version_id AND t2.config_sha256=t.config_sha256
                               AND (t2.created_at<t.created_at OR (t2.created_at=t.created_at AND t2.task_id<=t.task_id)))
                         END) AS run_number
-                   FROM tasks t LEFT JOIN task_actors a ON a.task_id=t.task_id
+                   FROM tasks t
+                   LEFT JOIN task_actors a ON a.task_id=t.task_id
+                   LEFT JOIN task_compute_lifecycle l ON l.task_id=t.task_id
                    ORDER BY t.created_at DESC"""
             ).fetchall()
         result: list[dict[str, object]] = []
