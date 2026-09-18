@@ -28,7 +28,7 @@
 | 解压后总目录 | `MATERIAL_MATCHER-最终离线交付介质-1.2.4-x86_64/` | 约 **2.7 GB** |
 | ├ 01-Docker方式（**推荐，客户已确认**） | 含 Docker Engine 27.1.1 官方静态组件、Compose v2.29.7、应用镜像 `material-matcher-app:1.2.4`（tar 1.24 GB）、seed、smoke、`启动Docker安装.sh` | 约 **1.4 GB** |
 | ├ 02-非Docker方式（备用完整方案） | 自包含 Python Runtime + wheelhouse + 模型 + 源码 + systemd 安装链、`启动本地安装.sh` | 约 **1.3 GB** |
-| └ 客户端浏览器-Win7 | Firefox ESR 115.41.0esr（Win7 x64，官方来源已校验）＋《客户工作单-Win7浏览器验收与Chrome获取指引》 | 约 57 MB |
+| └ 客户端浏览器-Win7 | Firefox ESR 115.41.0esr（Win7 x64，官方来源已校验）＋《客户工作单-Win7浏览器验收与Chrome获取指引》；**Chrome 109 已经客户确认豁免**（Google 官方渠道下线，Win7 统一使用 Firefox ESR） | 约 57 MB |
 
 > 两种服务器安装方式**二选一**（客户已确认走 Docker 方式，仅需使用 01 目录）；解压后目录内 `00-请先阅读/README-请选择一种安装方式.txt` 有完整说明。
 > 本清单对应已冻结的最终介质 1.2.3（commit 28b74922）；如后续新增版本，包名/大小/SHA256 同步更新，**端口清单不受影响**。
