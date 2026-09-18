@@ -134,6 +134,7 @@ def build(args: argparse.Namespace) -> Path:
         if item.is_file() and item.name.lower().endswith((".exe", ".msi")):
             shutil.copy2(item, browser_out / item.name)
     (browser_out / "README-浏览器选择.txt").write_text(BROWSER_README, encoding="utf-8")
+    shutil.copy2(REPO / "installer/win7/CLIENT-WIN7-ACCEPTANCE-WORKSHEET.md", browser_out / "客户工作单-Win7浏览器验收与Chrome获取指引.md")
     (browser_out / "LICENSES-AND-SOURCES.txt").write_text(
         BROWSER_LICENSES.replace("{firefox_fetched}", args.firefox_fetched), encoding="utf-8")
     sums = "".join(f"{_sha256(p)}  {p.name}\n" for p in sorted(browser_out.iterdir())
