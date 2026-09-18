@@ -14,6 +14,7 @@ from material_matcher.domain.errors import DomainError
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
 from material_matcher.services.decision_calibration_service import DecisionCalibrationService
 from material_matcher.services.review_workbench_service import ReviewWorkbenchService
+from material_matcher.services.task_input_asset_service import TaskInputAssetService
 from material_matcher.services.versioned_result_service import VersionedResultService
 from material_matcher.settings import Settings
 from material_matcher.storage.files import FileRepository
@@ -243,6 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     versioned_results = VersionedResultService(metadata, files, cfg)
     evaluations = BusinessEvaluationService(metadata, files)
     reviews = ReviewWorkbenchService(metadata)
+    task_input_assets = TaskInputAssetService(metadata, files)
 
     def legacy_expected_version(task_id: str, source_row_id: str, operator: str) -> str:
         # Compatibility for pre-version STEP3 clients: only the account that made
@@ -281,6 +283,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             return str(item["updated_at"] or "")
 
+    _drop_route(app, "/api/task-drafts/{draft_id}/start", "POST")
     _drop_route(app, "/api/tasks/{task_id}/re-decide", "POST")
     _drop_route(app, "/api/tasks/{task_id}/finalize", "POST")
     _drop_route(app, "/api/tasks/{task_id}/evaluations", "POST")
@@ -290,6 +293,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _drop_route(app, "/api/tasks/{task_id}/manual-review/import", "POST")
     for action_path in ("confirm", "match", "reject", "mark-unmatched", "rematch", "cancel", "cancel-match", "cancel-unmatched"):
         _drop_route(app, f"/api/tasks/{{task_id}}/items/{{source_row_id}}/{action_path}", "POST")
+
+    @app.post("/api/task-drafts/{draft_id}/start", status_code=202)
+    def start_task_with_frozen_inputs(draft_id: str, request: Request) -> dict[str, object]:
+        # Formal tasks may only exist after both exact uploaded inputs have been
+        # verified and frozen. This prevents creating a task that cannot later be
+        # reconstructed because its source/target bytes were already unavailable.
+        frozen = task_input_assets.freeze_draft(draft_id)
+        task = app.state.tasks.start(
+            draft_id,
+            actor=str(request.state.username),
+            input_assets=frozen,
+        )
+        app.state.worker.notify()
+        return task
+
+    @app.get("/api/tasks/{task_id}/input-assets")
+    def task_input_asset_summary(task_id: str) -> dict[str, object]:
+        return task_input_assets.describe(task_id)
+
+    @app.get("/api/tasks/{task_id}/input-files/{asset_role}")
+    def task_input_file(task_id: str, asset_role: Literal["source", "target"]) -> FileResponse:
+        download = task_input_assets.download(task_id, asset_role)
+        return FileResponse(
+            path=Path(download["path"]),
+            filename=str(download["filename"]),
+            media_type=str(download["media_type"]),
+        )
 
     @app.get("/api/tasks/{task_id}/calibration")
     def calibration_statistics(task_id: str) -> dict[str, object]:
