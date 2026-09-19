@@ -1,0 +1,32 @@
+== 装后取证（只读，不改动 admin 密码/业务数据） 2026-09-19 16:40:07
+-- frp 公网 Web（mat2 路径等价）--
+GET / via 39.104.206.210:18080 -> 200
+-- 容器与服务 --
+material_matcher-app Up About a minute material-matcher-app:1.2.8
+Docker 27.1.1 root=/var/lib/docker/docker-data
+enabled
+{"status":"ok","version":"1.2.8"}
+{"status":"ready","checks":{"admin_account":true,"database":
+-- 业务种子（DB 只读）--
+profiles: ['A001 元器件', 'A002 标准紧固件', 'A003 金属材料', 'A005 非金属材料', 'A006 复合材料', 'A007 物资类其他(跨类目)']
+dict versions: 3
+admin must_change: 1
+-- 数据盘落位 --
+lrwxrwxrwx 1 root root 41 Sep 19 08:37 /var/lib/material_matcher -> /var/lib/docker/material_matcher_data/lib
+/var/lib/docker/material_matcher_data/lib
+新盘数据块: 504
+data-root": "/var/lib/docker/docker-data",
+-- 安装报告 --
+docker-install-20260919-083809.txt
+物料集团码智能匹配平台（Docker 方式）安装报告
+====================================
+模式：首次安装
+版本：1.2.8
+Git commit：fd3cd175d6587154b4e34b4eeae4414548f01bb5
+Docker 状态：installed (27.1.1)
+Compose：2.29.7
+镜像：material-matcher-app:1.2.8 (ID 65d84f699ea7…)
+时间：2026-09-19 08:38:09
+配置：/etc/material_matcher  数据：/var/lib/material_matcher  日志：/var/log/material_matcher
+数据盘：/var/lib/docker（实际存储 /var/lib/docker/material_matcher_data；Docker data-root：/var/lib/docker/docker-data）
+宿主机端口：18080
