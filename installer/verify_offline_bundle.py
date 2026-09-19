@@ -264,6 +264,10 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "smoke/smoke-集团标准数据.xlsx",
         "tools/installer_smoke.py",
         "disk_select.sh",
+        "重启服务.sh",
+        "停用服务.sh",
+        "卸载服务.sh",
+        "定时备份.sh",
         "release/release-manifest.json",
         "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",
@@ -302,6 +306,10 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
         "tools/installer_smoke.py",
+        "重启服务.sh",
+        "停用服务.sh",
+        "卸载服务.sh",
+        "定时备份.sh",
     ):
         _require_executable(actual, executable)
 

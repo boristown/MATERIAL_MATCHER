@@ -154,3 +154,18 @@ def test_disk_selection_screen_wired() -> None:
         m = read(REPO / manual)
         assert ("数据盘" in m or "磁盘（前三名）" in m) and "前三名" not in m or True, manual
         assert ("推荐" in m and "磁盘" in m), manual
+
+
+def test_lifecycle_scripts_shipped() -> None:
+    for src in ("installer/docker/ops_restart.sh", "installer/docker/ops_stop.sh",
+                "installer/docker/ops_uninstall.sh", "installer/docker/ops_backup_timer.sh",
+                "installer/native_ops/restart.sh", "installer/native_ops/stop.sh",
+                "installer/native_ops/uninstall.sh", "installer/native_ops/backup_timer.sh"):
+        assert (REPO / src).is_file(), src
+    plans = read(REPO / "scripts/build_offline_bundle.py") + read(REPO / "scripts/build_docker_bundle.py")
+    for name in ("重启服务.sh", "停用服务.sh", "卸载服务.sh", "定时备份.sh"):
+        assert name in plans, name
+    for manual in ("installer/docs/install-manual.md", "installer/docker/docs/docker-install-manual.md"):
+        text = read(REPO / manual)
+        assert "卸载服务.sh" in text and "定时备份.sh" in text and "不卸载 Docker" in text or "不动 Docker" in text, manual
+        assert "保留最近 14 份" in text, manual
