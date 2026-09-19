@@ -263,6 +263,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "smoke/smoke-待匹配数据.xlsx",
         "smoke/smoke-集团标准数据.xlsx",
         "tools/installer_smoke.py",
+        "disk_select.sh",
         "release/release-manifest.json",
         "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",

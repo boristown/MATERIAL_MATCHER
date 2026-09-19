@@ -56,7 +56,10 @@ PY
 }
 
 [[ -f "$MANIFEST" ]] && {
-  BUNDLE_VERSION="$(py_json "$MANIFEST" release_version)"
+  # 数据盘候选工具
+[[ -f "$MEDIA_ROOT/disk_select.sh" ]] && . "$MEDIA_ROOT/disk_select.sh"
+
+BUNDLE_VERSION="$(py_json "$MANIFEST" release_version)"
   BUNDLE_ARCH="$(py_json "$MANIFEST" target_arch)"
 }
 [[ -f "$MEDIA_ROOT/release/release-manifest.json" ]] && \
@@ -249,6 +252,7 @@ INSTALL_RC=1
 exec_install_with_progress() {
   local args=()
   [[ -n "${MM_DATA_DIR_SET:-}" ]] && args+=("MM_DATA_DIR=$MM_DATA_DIR_SET")
+  [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && args+=("MM_DATA_MOUNT=$MM_DATA_MOUNT_SET")
   [[ -n "${MM_ADMIN_PASSWORD_SET:-}" ]] && args+=("MM_ADMIN_PASSWORD=$MM_ADMIN_PASSWORD_SET")
   TMP_OUT="$(mktemp /tmp/mm_install.XXXXXX)"
   : >"$WIZARD_LOG" 2>/dev/null || true
@@ -324,16 +328,27 @@ main() {
   INSTALL_PREFIX="$(ui_entry "安装位置" "程序安装位置（直接回车使用默认值）" "$DEFAULT_INSTALL_PREFIX")" || { echo "已取消安装。"; exit 0; }
   [[ "$INSTALL_PREFIX" == /* ]] || { ui_error "安装位置无效" "安装位置必须是绝对路径（例如 /opt/material_matcher）。"; exit 1; }
 
-  MM_DATA_DIR_SET=""
+  MM_DATA_DIR_SET=""; MM_DATA_MOUNT_SET=""
   if [[ "$IS_UPGRADE_DETECTED" == "1" ]]; then
     ui_note "数据位置" "检测到已有安装：升级将自动沿用现有数据目录（/etc/material_matcher/storage.env 指向的位置），不会移动、清空或重建任何业务数据。"
   else
-    rc_choice=0; ui_confirm "数据位置" "数据目录默认由安装程序自动选择空间最大的安全磁盘，\n并通过 /var/lib/material_matcher 统一访问（推荐给绝大多数场景）。" "自动选择" "手工指定（高级）" || rc_choice=$?
+    rc_choice=0
+    DISK_TEXT=""
+    if [[ -f "$MEDIA_ROOT/disk_select.sh" ]]; then
+      DISK_TEXT="$(disk_candidates_text)"
+      DISK_RECOMMEND="$(disk_top_mount)"
+    fi
+    ui_confirm "数据盘选择" "数据目录将决定数据库、上传文件与结果存放位置，安装后固定不变，建议选择剩余空间最大的磁盘。\n\n服务器磁盘（前三名）：\n${DISK_TEXT:-  （探测不到多磁盘，将使用系统默认策略）}\n推荐：${DISK_RECOMMEND:-默认策略}\n\ny = 接受推荐　n = 改选其它磁盘/自定义路径　其它键 = 退出安装（不做任何修改）" "接受推荐" "改选" || rc_choice=$?
     if [[ "$rc_choice" == "0" ]]; then
-      MM_DATA_DIR_SET=""
+      MM_DATA_MOUNT_SET="${DISK_RECOMMEND:-}"
     elif [[ "$rc_choice" == "3" ]]; then
-      MM_DATA_DIR_SET="$(ui_entry "数据目录" "数据目录绝对路径（首次安装确定后将固定，后续升级始终沿用）" "/var/lib/material_matcher_data")" || { echo "已取消安装。"; exit 0; }
-      [[ "$MM_DATA_DIR_SET" == /* ]] || { ui_error "数据目录无效" "数据目录必须是绝对路径。"; exit 1; }
+      ANS="$(ui_entry "改选磁盘" "输入编号（1-3），或输入自定义数据目录绝对路径" "1")" || { echo "用户已取消，未对系统做任何修改。"; exit 0; }
+      RESOLVED=""
+      if [[ -f "$MEDIA_ROOT/disk_select.sh" ]]; then RESOLVED="$(disk_resolve_choice "$ANS" || true)"; fi
+      [[ -z "$RESOLVED" && "$ANS" == /* ]] && RESOLVED="$ANS"
+      [[ -z "$RESOLVED" ]] && { ui_error "无效选择" "未识别编号或路径，安装已退出，系统未做修改。"; exit 1; }
+      if [[ "$RESOLVED" == /*/* || "${ANS:-1}" =~ ^[1-4]$ ]]; then MM_DATA_MOUNT_SET="$RESOLVED"; fi
+      [[ "${ANS:-}" == /* ]] && { MM_DATA_MOUNT_SET=""; MM_DATA_DIR_SET="$ANS"; }
     else
       echo "用户已取消，未对系统做任何修改。"; exit 0
     fi
@@ -387,6 +402,8 @@ main() {
   local mode_text="首次安装"
   [[ "$IS_UPGRADE_DETECTED" == "1" ]] && mode_text="升级安装（保留全部账号、任务、数据库、索引与结果）"
   local data_text="自动选择安全数据盘"
+  [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && data_text="$MM_DATA_MOUNT_SET/material_matcher_data（数据盘统一经 /var/lib/material_matcher 访问）"
+  [[ -n "${MM_DATA_DIR_SET:-}" ]] && data_text="$MM_DATA_DIR_SET"
   [[ "$IS_UPGRADE_DETECTED" == "1" ]] && data_text="沿用现有数据目录（不改动）"
   [[ -n "$MM_DATA_DIR_SET" ]] && data_text="$MM_DATA_DIR_SET"
   ui_confirm "确认安装" "即将开始安装，请确认：\n\n· 产品：物料集团码智能匹配平台\n· 版本：${BUNDLE_VERSION:-未知}（commit ${BUNDLE_COMMIT:-见安装报告}）\n· 架构：${BUNDLE_ARCH:-未知}\n· 方式：$mode_text\n· 程序目录：$INSTALL_PREFIX\n· 数据目录：$data_text\n· 服务端口：$CHOSEN_PORT\n· 管理员密码：$pw_choice\n· 网络：完全离线安装，无需公网\n\n确认后开始安装，期间请勿关闭窗口。" "开始安装" "取消安装" || { echo "用户已取消，未对系统做任何修改。"; exit 0; }

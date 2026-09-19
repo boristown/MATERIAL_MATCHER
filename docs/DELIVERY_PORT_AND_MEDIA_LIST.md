@@ -1,6 +1,6 @@
 # 物料集团码智能匹配平台 · 客户交付端口与介质清单
 
-更新：2026-09-18　适用版本：**1.2.5（双轨最终交付介质·冻结·终版）**
+更新：2026-09-18　适用版本：**1.2.6（双轨交付介质·含数据盘选择）**
 客户已确认：允许在银河麒麟 V10 服务器上安装 Docker，并采用 **Docker 方式** 部署。
 
 ## 一、需要开通的端口清单（白名单方向：客户端 → 服务器）
@@ -23,10 +23,10 @@
 
 | 项 | 名称 | 体积 |
 |---|---|---|
-| 交付包（单个压缩文件，U 盘/分发用） | `MATERIAL_MATCHER-1.2.5-KylinV10-x86_64-双轨最终交付介质.tar.gz` | **1,238,273,556 字节 ≈ 1.24 GB** |
-| SHA256 | `e16f97ae24585a28d910fc96bab74e1c34549d7ce14e91c2ba3e2e8abd256e16` | — |
-| 解压后总目录 | `MATERIAL_MATCHER-最终离线交付介质-1.2.5-x86_64/` | 约 **2.7 GB** |
-| ├ 01-Docker方式（**推荐，客户已确认**） | 含 Docker Engine 27.1.1 官方静态组件、Compose v2.29.7、应用镜像 `material-matcher-app:1.2.5`（tar 1.24 GB）、seed、smoke、`启动Docker安装.sh` | 约 **1.4 GB** |
+| 交付包（单个压缩文件，U 盘/分发用） | `MATERIAL_MATCHER-1.2.6-KylinV10-x86_64-双轨交付介质.tar.gz` | **1,238,282,839 字节 ≈ 1.24 GB** |
+| SHA256 | `e7fa3a9f6b79cda08ee820d6e45e4125a28fe8e1b9519c66a4b0f6c29c03aa22` | — |
+| 解压后总目录 | `MATERIAL_MATCHER-最终离线交付介质-1.2.6-x86_64/` | 约 **2.7 GB** |
+| ├ 01-Docker方式（**推荐，客户已确认**） | 含 Docker Engine 27.1.1 官方静态组件、Compose v2.29.7、应用镜像 `material-matcher-app:1.2.6`（tar 1.24 GB）、seed、smoke、`启动Docker安装.sh` | 约 **1.4 GB** |
 | ├ 02-非Docker方式（备用完整方案） | 自包含 Python Runtime + wheelhouse + 模型 + 源码 + systemd 安装链、`启动本地安装.sh` | 约 **1.3 GB** |
 | └ 客户端浏览器-Win7 | Firefox ESR 115.41.0esr（Win7 x64，官方来源已校验）＋《客户工作单-Win7浏览器验收与Chrome获取指引》；**Chrome 109 已经客户确认豁免**（Google 官方渠道下线，Win7 统一使用 Firefox ESR） | 约 57 MB |
 

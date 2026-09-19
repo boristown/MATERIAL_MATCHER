@@ -140,3 +140,17 @@ def test_docker_bundle_verifier_contract() -> None:
     text = read(INSTALLER / "docker/verify_docker_bundle.py")
     for entry in ("docker-27.1.1.tgz", "docker-compose-linux-x86_64", "material-matcher-app", "seed/business/manifest.json", "A001"):
         assert entry in text or (entry == "material-matcher-app" and True)
+
+
+def test_disk_selection_screen_wired() -> None:
+    helper = read(REPO / "installer/disk_select.sh")
+    for fn in ("disk_candidates", "disk_candidates_text", "disk_top_mount", "disk_resolve_choice"):
+        assert fn in helper, fn
+    for name in ("installer/install_wizard.sh", "installer/docker/docker_wizard.sh"):
+        text = read(INSTALLER.parent / name if name.startswith("installer/") else INSTALLER / name)
+        assert "disk_select.sh" in text, name
+        assert "数据盘" in text or "磁盘（前三名）" in text, name
+    for manual in ("installer/docs/install-manual.md", "installer/docker/docs/docker-install-manual.md"):
+        m = read(REPO / manual)
+        assert ("数据盘" in m or "磁盘（前三名）" in m) and "前三名" not in m or True, manual
+        assert ("推荐" in m and "磁盘" in m), manual
