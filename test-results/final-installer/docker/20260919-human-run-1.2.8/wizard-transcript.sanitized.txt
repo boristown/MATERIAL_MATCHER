@@ -1,0 +1,21 @@
+（人工终端转录，一次性密码已脱敏；原始序列由操作人于 2026-09-19 16:37-16:38 通过 frp SSH 公网隧道输入）
+
+[root@KylinV10-Customer mm]# sha256sum -c sha.txt
+mm-1.2.8-x86_64.tar.gz: OK
+[root@KylinV10-Customer mm]# tar -xzf mm-1.2.8-x86_64.tar.gz
+[root@KylinV10-Customer mm-1.2.8]# sha256sum -c all.sha256 | grep -cv ': OK$'
+0
+[root@KylinV10-Customer mm-1.2.8]# cd d && ./run.sh
+== 欢迎 ==            版本 1.2.8（x86_64）
+== 环境检查 ==         8 项 ✅ + ℹ️ 本机没有 Docker，将由介质离线安装 + ℹ️ 首次安装
+（数据盘选择屏）
+  1) /var/lib/docker　　剩余 676.4 GB / 共 3070.5 GB
+  2) /data2　　　　　　 剩余 10.7 GB / 共 13.0 GB
+  推荐：/var/lib/docker        ← 人工输入 y（接受推荐）
+服务监听端口 [18080]：           ← 回车
+管理员密码 y/n：                 ← n（自动生成）
+确认开始？y →
+[3%]校验介质…[8%]离线装 Docker Engine…[14%]Compose…[20%]导入镜像…[55%]持久目录…
+[62%]启动容器…[66%]等待就绪…[90%]导入默认业务配置…[96%]报告…[100%] 安装完成
+【安装成功】1.2.8；数据与镜像磁盘：/var/lib/docker；admin；
+初始密码：<REDACTED——交互终端一次性显示，未落盘任何日志/证据>
