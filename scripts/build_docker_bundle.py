@@ -27,6 +27,10 @@ DOCKER_COPY_PLAN = (
     ("compose/BUILD_TAG", "installer/docker/build_tag.txt", False),
     ("tools/installer_smoke.py", "scripts/installer_smoke.py", True),
     ("disk_select.sh", "installer/disk_select.sh", False),
+    ("重启服务.sh", "installer/docker/ops_restart.sh", True),
+    ("停用服务.sh", "installer/docker/ops_stop.sh", True),
+    ("卸载服务.sh", "installer/docker/ops_uninstall.sh", True),
+    ("定时备份.sh", "installer/docker/ops_backup_timer.sh", True),
 )
 
 

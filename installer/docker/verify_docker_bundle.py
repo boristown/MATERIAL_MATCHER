@@ -27,8 +27,16 @@ REQUIRED_EXECUTABLES = (
     "bootstrap/python/bin/python3",
     "tools/installer_smoke.py",
     "disk_select.sh",
+    "重启服务.sh",
+    "停用服务.sh",
+    "卸载服务.sh",
+    "定时备份.sh",
 )
 REQUIRED_FILES = REQUIRED_EXECUTABLES + (
+    "重启服务.sh",
+    "停用服务.sh",
+    "卸载服务.sh",
+    "定时备份.sh",
     "verify_docker_bundle.py",
     "README-请先阅读.txt",
     "安装手册-Docker方式.md",
