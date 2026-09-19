@@ -19,7 +19,7 @@ if [[ $EUID -ne 0 ]]; then
   if command -v pkexec >/dev/null 2>&1; then
     exec pkexec env DISPLAY="${DISPLAY:-}" MM_MEDIA_ROOT="$MEDIA" bash "$MEDIA/docker_wizard.sh" "$@"
   fi
-  echo "当前账号没有安装权限：请切换到具备 root/sudo 权限的管理员账号后重新运行 ./启动Docker安装.sh。" >&2
+  echo "当前账号没有安装权限：请切换到具备 root/sudo 权限的管理员账号后重新运行 ./run.sh。" >&2
   exit 44
 fi
 
@@ -159,7 +159,7 @@ _relay() {
 }
 
 main() {
-  [[ -f "$MANIFEST" ]] || { ui_error "无法启动" "当前目录不是完整的 Docker 安装介质（缺少 docker-manifest.json）。请完整复制 01-Docker方式 目录后再运行。"; exit 41; }
+  [[ -f "$MANIFEST" ]] || { ui_error "无法启动" "当前目录不是完整的 Docker 安装介质（缺少 docker-manifest.json）。请完整复制 d 目录后再运行。"; exit 41; }
   ui_note "欢迎" "欢迎安装【物料集团码智能匹配平台 · Docker 方式】。\n\n全程离线：Docker Engine、Compose、应用镜像、业务数据全部由本介质提供。\n版本 ${BUNDLE_VERSION:-未知}（$BUNDLE_ARCH）。无需你手动配置任何 Docker 命令。"
   ui_note "重要说明" "“Docker 方式”与“非 Docker 方式”是两种二选一的安装方案，只需安装其中一种。\n本向导执行的是 Docker 方式。"
   echo "正在自动检查环境……"
@@ -238,7 +238,7 @@ main() {
     local hint=""
     case "$INSTALL_RC" in
       40) hint="\n处理建议：重新运行并选择其它端口。" ;;
-      41) hint="\n处理建议：介质不完整或被修改，请重新完整复制 01-Docker方式 目录。" ;;
+      41) hint="\n处理建议：介质不完整或被修改，请重新完整复制 d 目录。" ;;
       42) hint="\n处理建议：清理磁盘或换更大磁盘（Docker 方式建议 12 GB 以上）。" ;;
       46) hint="\n处理建议：Docker 安装/启动失败。请查看安装日志；安装器不会改动系统其它服务。" ;;
       47|48) hint="\n处理建议：安装器已尝试自动回滚旧镜像；请确认旧系统可用后导出诊断包联系原厂。" ;;
@@ -276,7 +276,7 @@ PYE
   local text="【安装成功】物料集团码智能匹配平台 $BUNDLE_VERSION（Docker 方式）\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
   [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && text="$text\n· 数据与镜像磁盘：$MM_DATA_MOUNT_SET（经 /var/lib/material_matcher、/var/log/material_matcher 统一访问）"
   [[ -n "$addrs" ]] && text="$text\n· 局域网访问：\n$addrs" || text="$text\n· 未检测到局域网 IPv4 地址：仅本机可访问，请确认网络后查看"
-  text="$text\n· 管理员账号：admin$pw_line\n· 默认业务数据：${seed:-已导入}\n· 安装报告：${report:-$WIZARD_LOG}\n\n业务数据保存在宿主机 /etc、/var/lib、/var/log/material_matcher —— 删除或重建容器都不会丢数据。\n\n后续维护：以 root 运行本目录 ./维护工具-Docker.sh\n客户电脑若是 Windows 7 且页面异常，请安装介质根目录《客户端浏览器-Win7》中的 Firefox ESR。"
+  text="$text\n· 管理员账号：admin$pw_line\n· 默认业务数据：${seed:-已导入}\n· 安装报告：${report:-$WIZARD_LOG}\n\n业务数据保存在宿主机 /etc、/var/lib、/var/log/material_matcher —— 删除或重建容器都不会丢数据。\n\n后续维护：以 root 运行本目录 ./menu.sh\n客户电脑若是 Windows 7 且页面异常，请安装介质根目录《win7》中的 Firefox ESR。"
   [[ -n "$fw" ]] && text="$text\n\n注意：$fw"
   if [[ -n "$GUI" ]]; then
     zenity --info --title="安装成功" --text="$text" --width=660 && true

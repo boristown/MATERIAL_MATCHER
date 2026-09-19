@@ -60,11 +60,11 @@ def test_wizard_steps_match_manual_contract() -> None:
 
 
 def test_desktop_entries_point_to_launch_script() -> None:
-    assert "启动本地安装.sh" in read(INSTALLER / "desktop_install.desktop")
-    assert "维护工具.sh" in read(INSTALLER / "desktop_maintain.desktop")
+    assert "run.sh" in read(INSTALLER / "desktop_install.desktop")
+    assert "menu.sh" in read(INSTALLER / "desktop_maintain.desktop")
     readme = read(INSTALLER / "README_first.txt")
     assert "安装物料集团码智能匹配平台" in readme
-    assert "启动本地安装.sh" in readme
+    assert "run.sh" in readme
 
 
 def test_business_error_exit_codes_contract() -> None:
@@ -90,13 +90,13 @@ def test_installer_smoke_is_stdlib_only() -> None:
 
 def test_verify_requires_final_media_entries() -> None:
     text = read(INSTALLER / "verify_offline_bundle.py")
-    for entry in ("启动安装.sh", "install_wizard.sh", "bootstrap/python/bin/python3", "BUILD_INFO.txt", "SHA256SUMS", "git_commit"):
+    for entry in ("run.sh", "install_wizard.sh", "bootstrap/python/bin/python3", "BUILD_INFO.txt", "SHA256SUMS", "git_commit"):
         assert entry in text
 
 
 def test_builder_plan_covers_manual_layout() -> None:
     text = read(REPO / "scripts/build_offline_bundle.py")
-    for target in ("启动安装.sh", "启动本地安装.sh", "安装物料集团码智能匹配平台.desktop", "docs/安装手册.md", "README-安装前必读.txt", "安装手册-非Docker方式.md"):
+    for target in ("run.sh", "menu.sh", "doc.md", "README.md", "rst.sh", "stop.sh", "del.sh", "bk.sh", "安装物料集团码智能匹配平台.desktop", "docs/doc.md", "docs/ops.md", "docs/faq.md"):
         assert target in text
     # 根目录不出现开发仓库噪音：builder 只复制计划内文件。
     assert "git clone" not in text
@@ -130,9 +130,9 @@ def test_manual_promises_default_business_content() -> None:
 
 def test_manual_uses_cli_first_local_entry() -> None:
     manual = read(INSTALLER / "docs/install-manual.md")
-    assert "启动本地安装.sh" in manual
+    assert "./run.sh" in manual
     docker_manual = read(INSTALLER / "docker/docs/docker-install-manual.md")
-    assert "启动Docker安装.sh" in docker_manual
+    assert "./run.sh" in docker_manual
     assert "二选一" in docker_manual
 
 
@@ -163,9 +163,9 @@ def test_lifecycle_scripts_shipped() -> None:
                 "installer/native_ops/uninstall.sh", "installer/native_ops/backup_timer.sh"):
         assert (REPO / src).is_file(), src
     plans = read(REPO / "scripts/build_offline_bundle.py") + read(REPO / "scripts/build_docker_bundle.py")
-    for name in ("重启服务.sh", "停用服务.sh", "卸载服务.sh", "定时备份.sh"):
+    for name in ("rst.sh", "stop.sh", "del.sh", "bk.sh", "menu.sh"):
         assert name in plans, name
     for manual in ("installer/docs/install-manual.md", "installer/docker/docs/docker-install-manual.md"):
         text = read(REPO / manual)
-        assert "卸载服务.sh" in text and "定时备份.sh" in text and "不卸载 Docker" in text or "不动 Docker" in text, manual
+        assert "del.sh" in text and "bk.sh" in text and "不卸载 Docker" in text or "不动 Docker" in text, manual
         assert "保留最近 14 份" in text, manual

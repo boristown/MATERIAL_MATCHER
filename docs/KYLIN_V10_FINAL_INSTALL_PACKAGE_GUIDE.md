@@ -58,10 +58,10 @@
 ```text
 MATERIAL_MATCHER-最终离线交付介质-<version>/
 ├── 00-请先阅读/
-│   └── README-请选择一种安装方式.txt
-├── 01-Docker方式/
-│   ├── 启动Docker安装.sh
-│   ├── 安装手册-Docker方式.md
+│   └── README.md
+├── d/
+│   ├── run.sh
+│   ├── doc.md
 │   ├── docker/
 │   │   ├── engine/
 │   │   ├── compose/
@@ -75,9 +75,9 @@ MATERIAL_MATCHER-最终离线交付介质-<version>/
 │   ├── tools/
 │   ├── BUILD_INFO.txt
 │   └── SHA256SUMS
-├── 02-非Docker方式/
-│   ├── 启动本地安装.sh
-│   ├── 安装手册-非Docker方式.md
+├── n/
+│   ├── run.sh
+│   ├── doc.md
 │   ├── bootstrap/
 │   ├── release/
 │   ├── wheelhouse/
@@ -87,13 +87,13 @@ MATERIAL_MATCHER-最终离线交付介质-<version>/
 │   ├── tools/
 │   ├── BUILD_INFO.txt
 │   └── SHA256SUMS
-├── 客户端浏览器-Win7/
-│   ├── README-浏览器选择.txt
+├── win7/
+│   ├── README.md
 │   ├── Firefox-ESR-115.41.0-Win7-x64.exe
 │   ├── Chrome-109.0.5414.120-Win7-x64.exe
 │   ├── SHA256SUMS.txt
-│   └── LICENSES-AND-SOURCES.txt
-└── SHA256SUMS-整个交付介质.txt
+│   └── lic.txt
+└── all.sha256
 ```
 
 根目录 README 必须明确：
@@ -175,7 +175,7 @@ Docker/Compose 的具体版本必须在最终构建时冻结，并记录：
 - 6 个方案 seed；
 - 同义词 seed。
 
-客户明确禁止 Docker 时，应当可以只拿 `02-非Docker方式/` 完成部署。
+客户明确禁止 Docker 时，应当可以只拿 `n/` 完成部署。
 
 ---
 
@@ -283,8 +283,8 @@ README 明确 Firefox 为首选、Chrome 为备用。
 必须在**没有 Docker**的干净银河麒麟 V10 环境：
 
 1. 断网；
-2. 仅复制 `01-Docker方式/`；
-3. 运行 `./启动Docker安装.sh`；
+2. 仅复制 `d/`；
+3. 运行 `./run.sh`；
 4. 离线安装 Docker Engine；
 5. 离线安装 Compose；
 6. 导入应用 image tar；
@@ -315,8 +315,8 @@ README 明确 Firefox 为首选、Chrome 为备用。
 
 1. 断网；
 2. 不预装项目 Python/Node；
-3. 仅复制 `02-非Docker方式/`；
-4. 运行 `./启动本地安装.sh`；
+3. 仅复制 `n/`；
+4. 运行 `./run.sh`；
 5. 完成 systemd 安装；
 6. health/ready；
 7. 6 方案 + 同义词 seed；

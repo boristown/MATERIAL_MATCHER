@@ -59,9 +59,9 @@ Docker 方式交付目录至少包含：
 
 ```text
 MATERIAL_MATCHER-Docker-KylinV10-<version>-<arch>/
-├── 启动Docker安装.sh
-├── README-请先阅读.txt
-├── 安装手册-Docker方式.md
+├── run.sh
+├── README.md
+├── doc.md
 ├── SHA256SUMS
 ├── BUILD_INFO.txt
 ├── docker/
@@ -97,7 +97,7 @@ MATERIAL_MATCHER-Docker-KylinV10-<version>-<arch>/
 
 ```bash
 cd "/path/to/MATERIAL_MATCHER-Docker-KylinV10-<version>-<arch>"
-./启动Docker安装.sh
+./run.sh
 ```
 
 正常流程不应要求安装人员再手工执行：
@@ -304,7 +304,7 @@ Docker 方式只有以下全部通过才能判定安装成功：
 介质/安装后应提供统一维护脚本，例如：
 
 ```bash
-./维护工具-Docker.sh
+./menu.sh
 ```
 
 至少提供：
@@ -330,7 +330,7 @@ Docker 方式只有以下全部通过才能判定安装成功：
 
 - 完全断网；
 - 只使用本介质；
-- `./启动Docker安装.sh`；
+- `./run.sh`；
 - 自动安装 Docker Engine；
 - 自动安装 Compose；
 - 自动导入镜像；
@@ -390,12 +390,12 @@ Docker 方式只有以下全部通过才能判定安装成功：
 最终介质建议包含：
 
 ```text
-客户端浏览器-Win7/
-├── README-浏览器选择.txt
+win7/
+├── README.md
 ├── Firefox-ESR-115.41.0-Win7-x64.exe
 ├── Chrome-109.0.5414.120-Win7-x64.exe
 ├── SHA256SUMS.txt
-└── LICENSES-AND-SOURCES.txt
+└── lic.txt
 ```
 
 本次默认按 **Windows 7 64 位**准备一套 Firefox 和一套 Chrome。若客户现场存在 32 位 Windows 7，必须另外准备对应 x86 介质，不能把 x64 安装包视为已支持 32 位系统。

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 卸载服务（Docker 方式）：仅卸载 MATERIAL_MATCHER 自身（容器、本项目镜像、compose 配置、定时备份）。
 # 绝不卸载 Docker 软件；默认保留全部业务数据与配置（重装/升级可继续使用）。
-# 用法：./卸载服务.sh              → 卸载应用，保留数据
-#       ./卸载服务.sh --purge-data → 额外删除业务数据与配置（两次 yes 确认）
+# 用法：./del.sh              → 卸载应用，保留数据
+#       ./del.sh --purge-data → 额外删除业务数据与配置（两次 yes 确认）
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "需要 root 或 sudo 权限。" >&2; exit 44; }
 command -v docker >/dev/null 2>&1 || { echo "未检测到 Docker，本系统可能已卸载。" >&2; exit 1; }
@@ -38,5 +38,5 @@ if [ -n "$PURGE" ]; then
   echo "数据与配置已全部删除。"
 else
   echo "数据保留：${DATA_REAL:-/var/lib/material_matcher}；配置保留：/etc/material_matcher。"
-  echo "重新安装：运行介质内 ./启动Docker安装.sh 即可在原数据上恢复。"
+  echo "重新安装：运行介质内 ./run.sh 即可在原数据上恢复。"
 fi

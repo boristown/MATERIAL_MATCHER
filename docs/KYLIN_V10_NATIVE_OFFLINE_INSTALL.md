@@ -50,9 +50,9 @@
 
 ```text
 MATERIAL_MATCHER-Native-KylinV10-<version>-<arch>/
-├── 启动本地安装.sh
-├── README-请先阅读.txt
-├── 安装手册-非Docker方式.md
+├── run.sh
+├── README.md
+├── doc.md
 ├── SHA256SUMS
 ├── BUILD_INFO.txt
 ├── bootstrap/
@@ -91,7 +91,7 @@ MATERIAL_MATCHER-Native-KylinV10-<version>-<arch>/
 
 ```bash
 cd "/path/to/MATERIAL_MATCHER-Native-KylinV10-<version>-<arch>"
-./启动本地安装.sh
+./run.sh
 ```
 
 普通安装人员不直接执行底层 install.sh，也不手工设置 Python 环境变量。
@@ -277,7 +277,7 @@ seed 导入必须幂等且可追溯，不得带入测试任务、测试账号和
 - 无 Git；
 - 无 MATERIAL_MATCHER；
 - 只使用本介质；
-- 执行 `./启动本地安装.sh`；
+- 执行 `./run.sh`；
 - 完成 STEP1～STEP4 smoke。
 
 还必须验证：
@@ -329,12 +329,12 @@ Evidence 至少记录：
 最终介质建议包含：
 
 ```text
-客户端浏览器-Win7/
-├── README-浏览器选择.txt
+win7/
+├── README.md
 ├── Firefox-ESR-115.41.0-Win7-x64.exe
 ├── Chrome-109.0.5414.120-Win7-x64.exe
 ├── SHA256SUMS.txt
-└── LICENSES-AND-SOURCES.txt
+└── lic.txt
 ```
 
 本次默认按 **Windows 7 64 位**准备一套 Firefox 和一套 Chrome。若客户现场存在 32 位 Windows 7，必须另外准备对应 x86 介质，不能把 x64 安装包视为已支持 32 位系统。

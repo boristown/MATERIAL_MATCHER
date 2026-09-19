@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""组装最终交付介质：00-请先阅读 + 01-Docker方式 + 02-非Docker方式 + 客户端浏览器-Win7。
+"""组装最终交付介质：根 README + d（Docker）+ n（Native）+ win7（浏览器工具包）。
 
 用法（构建机）：
   python scripts/build_final_media.py \
@@ -27,17 +27,17 @@ ROOT_README = """物料集团码智能匹配平台 · 最终离线交付介质
 
 本介质提供两种【二选一】的服务器安装方式（选择一种即可，不要两个都安装）：
 
-  01-Docker方式/        【推荐】Docker 离线安装
-                        终端执行：cd 01-Docker方式 && ./启动Docker安装.sh
+  d/                    【推荐】Docker 离线安装
+                        终端执行：cd d && ./run.sh
                         服务器即使完全没有 Docker，也会由本介质离线装好。
 
-  02-非Docker方式/      传统 systemd 源码安装（客户明确不允许 Docker 时使用）
-                        终端执行：cd 02-非Docker方式 && ./启动本地安装.sh
+  n/                    传统 systemd 源码安装（客户明确不允许 Docker 时使用）
+                        终端执行：cd n && ./run.sh
 
 两种方式的服务器都必须先做一件事：把所需目录完整复制到服务器本地磁盘（不要直接从 U 盘运行安装）。
 
 客户端浏览器工具包（装在客户 Windows 7 电脑上，不装在服务器上）：
-  客户端浏览器-Win7/    Firefox ESR（首选）等，见其 README-浏览器选择.txt
+  win7/                 Firefox ESR（首选）等，见其 README.md
 
 每种方式的详细中文步骤见各自目录内的安装手册。全程离线，无需公网。
 """
@@ -53,7 +53,7 @@ BROWSER_README = """客户端浏览器工具包（Windows 7 终端专用）
   - 支持 Windows 7 SP1 x64，随 ESR 系列获得维护更新。
 
 Chrome 109（Win7 备用内核）——客户已确认豁免（2026-09-18）：
-  - Google 官方已停止公开分发 109 离线安装包（见 LICENSES-AND-SOURCES.txt 核查记录）；
+  - Google 官方已停止公开分发 109 离线安装包（见 lic.txt 核查记录）；
   - 客户确认 Win7 终端统一使用本目录 Firefox ESR；如未来经 Google 企业渠道
     自取 109 原版，可放入本目录（验真指引见《客户工作单》第四节）。
 
@@ -101,7 +101,7 @@ def build(args: argparse.Namespace) -> Path:
     import build_offline_bundle
     import build_docker_bundle
 
-    native_dir = out / "02-非Docker方式"
+    native_dir = out / "n"
     build_offline_bundle.build_bundle(
         release_dir=args.release_dir, model_dir=args.model_dir, wheelhouse_dir=args.wheelhouse_dir,
         bootstrap_runtime_dir=args.bootstrap_runtime_dir, output_dir=native_dir,
@@ -110,7 +110,7 @@ def build(args: argparse.Namespace) -> Path:
     )
 
     # 01 Docker方式
-    docker_dir = out / "01-Docker方式"
+    docker_dir = out / "d"
     seed_db_sha = json.loads((args.seed_dir / "manifest.json").read_text(encoding="utf-8"))["source_db_sha256"]
     build_docker_bundle.build(
         output_dir=docker_dir, release_dir=args.release_dir, seed_dir=args.seed_dir,
@@ -122,36 +122,37 @@ def build(args: argparse.Namespace) -> Path:
         force=True,
     )
 
-    # 00 请先阅读
-    zero = out / "00-请先阅读"
-    zero.mkdir(parents=True, exist_ok=True)
-    (zero / "README-请选择一种安装方式.txt").write_text(ROOT_README, encoding="utf-8")
+    # 根 README
+    (out / "README.md").write_text(ROOT_README, encoding="utf-8")
 
-    # 客户端浏览器-Win7
-    browser_out = out / "客户端浏览器-Win7"
+    # win7 浏览器工具包（文件名一律转短 ASCII；原名记录于 lic.txt）
+    browser_out = out / "win7"
     browser_out.mkdir(parents=True, exist_ok=True)
     for item in sorted(args.browser_dir.iterdir()):
         if item.is_file() and item.name.lower().endswith((".exe", ".msi")):
-            shutil.copy2(item, browser_out / item.name)
-    (browser_out / "README-浏览器选择.txt").write_text(BROWSER_README, encoding="utf-8")
+            low = item.name.lower()
+            target = "firefox.exe" if "firefox" in low else ("chrome.exe" if "chrome" in low else item.name.lower().replace(" ", "-"))
+            shutil.copy2(item, browser_out / target)
+    (browser_out / "README.md").write_text(BROWSER_README, encoding="utf-8")
     shutil.copy2(REPO / "installer/win7/CLIENT-WIN7-ACCEPTANCE-WORKSHEET.md", browser_out / "客户工作单-Win7浏览器验收与Chrome获取指引.md")
-    (browser_out / "LICENSES-AND-SOURCES.txt").write_text(
+    (browser_out / "lic.txt").write_text(
         BROWSER_LICENSES.replace("{firefox_fetched}", args.firefox_fetched), encoding="utf-8")
     sums = "".join(f"{_sha256(p)}  {p.name}\n" for p in sorted(browser_out.iterdir())
                    if p.is_file() and p.name.lower().endswith((".exe", ".msi")))
     (browser_out / "SHA256SUMS.txt").write_text(sums, encoding="utf-8")
 
     # 顶层 SHA256SUMS + 版本记录
+    # sha 汇总文件名沿用 all.sha256 / manifest.json（见 EXTRA 重命名）
     all_lines = []
     for path in sorted(out.rglob("*")):
-        if not path.is_file() or path.name == "SHA256SUMS-整个交付介质.txt":
+        if not path.is_file() or path.name == "all.sha256":
             continue
         if path.is_symlink():
             continue  # 符号链接由各分区自身 manifest 校验（仅允许分区内部相对链接）
         all_lines.append(f"{_sha256(path)}  {path.relative_to(out).as_posix()}")
-    (out / "SHA256SUMS-整个交付介质.txt").write_text("\n".join(all_lines) + "\n", encoding="utf-8")
+    (out / "all.sha256").write_text("\n".join(all_lines) + "\n", encoding="utf-8")
     manifest = {
-        "product": "MATERIAL_MATCHER_FINAL_DELIVERY_MEDIA",
+        "product": "MM-DELIVERY",
         "format_version": 1,
         "release_version": args.release_version,
         "git_commit": args.git_commit,
@@ -162,7 +163,7 @@ def build(args: argparse.Namespace) -> Path:
         "browser_dir_files": {p.name: _sha256(p) for p in sorted(browser_out.iterdir()) if p.is_file()},
         "file_count": len(all_lines),
     }
-    (out / "DELIVERY_MANIFEST.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return out
 
 

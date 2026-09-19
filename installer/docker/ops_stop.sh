@@ -10,4 +10,4 @@ if [ -d /opt/material_matcher/docker ]; then
   ( cd /opt/material_matcher/docker && docker compose --env-file /etc/material_matcher/docker.env -f compose.yaml down --no-deps >/dev/null 2>&1 ) || true
 fi
 echo "已停用：服务已停止且不再随开机启动。数据、镜像与 Docker 软件均未改动。"
-echo "恢复运行：在介质 01-Docker方式 目录运行 ./启动Docker安装.sh（升级模式会原地恢复），或 ./重启服务.sh。"
+echo "恢复运行：在介质 d 目录运行 ./run.sh（升级模式会原地恢复），或 ./rst.sh。"
