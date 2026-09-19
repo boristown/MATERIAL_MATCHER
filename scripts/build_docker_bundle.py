@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""组装 01-Docker方式 离线介质（不含任何联网步骤；所有组件来自本地输入并逐一入 manifest）。"""
+"""组装 d（Docker 方式）离线介质（不含任何联网步骤；所有组件来自本地输入并逐一入 manifest）。"""
 from __future__ import annotations
 
 import argparse
@@ -14,23 +14,23 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DOCKER_COPY_PLAN = (
-    ("启动Docker安装.sh", "installer/docker/launch_docker_install.sh", True),
+    ("run.sh", "installer/docker/launch_docker_install.sh", True),
     ("docker_wizard.sh", "installer/docker/docker_wizard.sh", True),
     ("install_docker.sh", "installer/docker/install_docker.sh", True),
-    ("维护工具-Docker.sh", "installer/docker/maintain_docker.sh", True),
+    ("menu.sh", "installer/docker/maintain_docker.sh", True),
     ("verify_docker_bundle.py", "installer/docker/verify_docker_bundle.py", False),
-    ("README-请先阅读.txt", "installer/docker/README_docker.txt", False),
-    ("安装手册-Docker方式.md", "installer/docker/docs/docker-install-manual.md", False),
-    ("维护手册-Docker方式.md", "installer/docker/docs/docker-maintain-manual.md", False),
-    ("docker/licenses/LICENSES-AND-SOURCES.txt", "installer/docker/licenses.md", False),
+    ("README.md", "installer/docker/README_docker.txt", False),
+    ("doc.md", "installer/docker/docs/docker-install-manual.md", False),
+    ("ops.md", "installer/docker/docs/docker-maintain-manual.md", False),
+    ("docker/licenses/lic.txt", "installer/docker/licenses.md", False),
     ("compose/compose.yaml", "installer/docker/compose_reference.yaml", False),
     ("compose/BUILD_TAG", "installer/docker/build_tag.txt", False),
     ("tools/installer_smoke.py", "scripts/installer_smoke.py", True),
     ("disk_select.sh", "installer/disk_select.sh", False),
-    ("重启服务.sh", "installer/docker/ops_restart.sh", True),
-    ("停用服务.sh", "installer/docker/ops_stop.sh", True),
-    ("卸载服务.sh", "installer/docker/ops_uninstall.sh", True),
-    ("定时备份.sh", "installer/docker/ops_backup_timer.sh", True),
+    ("rst.sh", "installer/docker/ops_restart.sh", True),
+    ("stop.sh", "installer/docker/ops_stop.sh", True),
+    ("del.sh", "installer/docker/ops_uninstall.sh", True),
+    ("bk.sh", "installer/docker/ops_backup_timer.sh", True),
 )
 
 
@@ -114,8 +114,8 @@ def build(*, output_dir: Path, release_dir: Path, seed_dir: Path, image_tar: Pat
         f"镜像 tar SHA256: {_sha256(output_dir / 'images' / Path(image_tar).name)}",
         "联网需求: 无（Docker Engine/Compose/镜像/依赖/模型/seed 全部随介质提供）",
         "",
-        "安装：终端执行 ./启动Docker安装.sh，按中文向导操作。",
-        "本方式与“02-非Docker方式”二选一，不要两个都安装。",
+        "安装：终端执行 cd d && ./run.sh，按中文向导操作。",
+        "本方式与 n（非 Docker 方式）二选一，不要两个都安装。",
     ]
     (output_dir / "BUILD_INFO.txt").write_text("\n".join(bi) + "\n", encoding="utf-8")
 

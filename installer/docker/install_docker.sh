@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MATERIAL_MATCHER Docker 方式离线安装脚本（非交互核心，由 docker 向导调用）。
-# 介质结构（01-Docker方式/）：
+# 介质结构（d/）：
 #   docker/engine/docker-<ver>.tgz  docker/compose/docker-compose-linux-x86_64
 #   images/material-matcher-<ver>.tar  compose/compose.yaml  seed/business  smoke  bootstrap
 # 进度协议：@@STEP@@|pct|text；结束 @@RESULT@@|json（不含密码）。退出码与 Native 一致。
@@ -45,7 +45,7 @@ step() {
 die() { echo "安装失败：$2" >&2; exit "$1"; }
 
 [[ $EUID -eq 0 ]] || die "$EXIT_PRIV" "当前账号没有系统管理员权限，无法安装服务。请使用 root 或通过 sudo 重新运行安装程序。"
-[[ -f "$MEDIA/docker-manifest.json" ]] || die "$EXIT_MEDIA" "Docker 安装介质缺少 docker-manifest.json，请把 01-Docker方式 目录完整复制到服务器本地磁盘后再运行。"
+[[ -f "$MEDIA/docker-manifest.json" ]] || die "$EXIT_MEDIA" "Docker 安装介质缺少 docker-manifest.json，请把 d 目录完整复制到服务器本地磁盘后再运行。"
 [[ -f "$MEDIA/verify_docker_bundle.py" ]] || die "$EXIT_MEDIA" "Docker 安装介质缺少校验脚本，请重新复制完整介质。"
 
 # 解释器：bootstrap → 系统兜底

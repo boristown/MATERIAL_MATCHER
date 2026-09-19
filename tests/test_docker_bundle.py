@@ -78,10 +78,10 @@ def test_docker_bundle_build_and_verify(tmp_path: Path) -> None:
     paths = {item["path"] for item in manifest["files"]}
     assert manifest["product"] == "MATERIAL_MATCHER_DOCKER_BUNDLE"
     for required in (
-        "启动Docker安装.sh", "docker_wizard.sh", "install_docker.sh", "维护工具-Docker.sh",
+        "run.sh", "docker_wizard.sh", "install_docker.sh", "menu.sh",
         "docker/engine/docker-27.1.1.tgz", "docker/compose/docker-compose-linux-x86_64",
         "images/fake-image.tar", "seed/business/manifest.json", "smoke/smoke-待匹配数据.xlsx",
-        "安装手册-Docker方式.md", "BUILD_INFO.txt", "SHA256SUMS",
+        "doc.md", "BUILD_INFO.txt", "SHA256SUMS",
     ):
         assert required in paths, required
     verified = subprocess.run(
@@ -122,5 +122,5 @@ def test_docker_bundle_requires_six_seed_profiles(tmp_path: Path) -> None:
 def test_final_media_layout_scripts_exist() -> None:
     assert (REPO / "scripts/build_final_media.py").is_file()
     text = (REPO / "scripts/build_final_media.py").read_text(encoding="utf-8")
-    for marker in ("00-请先阅读", "01-Docker方式", "02-非Docker方式", "客户端浏览器-Win7", "SHA256SUMS-整个交付介质.txt", "二选一"):
+    for marker in ('out / "d"', 'out / "n"', 'out / "win7"', "all.sha256", "二选一"):
         assert marker in text

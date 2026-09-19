@@ -149,7 +149,7 @@ if [[ -n "${1:-}" ]]; then
     restore) cmd_restore "${2:-}" ;;
     export) cmd_export_diag "${2:-}" ;;
     menu) menu_loop ;;
-    *) echo "用法：维护工具-Docker.sh {menu|status|start|stop|restart|logs|doctor|version|backup|verify|restore|export}" >&2; exit 1 ;;
+    *) echo "用法：menu.sh {menu|status|start|stop|restart|logs|doctor|version|backup|verify|restore|export}" >&2; exit 1 ;;
   esac
 else
   menu_loop

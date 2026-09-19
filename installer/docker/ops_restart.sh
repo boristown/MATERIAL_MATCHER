@@ -16,5 +16,5 @@ for i in $(seq 1 60); do
   [ $((i % 10)) -eq 0 ] && echo "等待服务就绪…已 ${i} 秒"
   sleep 1
 done
-echo "服务重启后 60 秒内未就绪，请运行 ./维护工具-Docker.sh status 与 logs 查看，或导出诊断包联系维护人员。" >&2
+echo "服务重启后 60 秒内未就绪，请运行 ./menu.sh status 与 logs 查看，或导出诊断包联系维护人员。" >&2
 exit 1

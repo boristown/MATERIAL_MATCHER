@@ -101,22 +101,21 @@ ROOT_COPY_PLAN: tuple[tuple[str, str, bool], ...] = (
     ("install_wizard.sh", "installer/install_wizard.sh", True),
     ("mmctl", "installer/mmctl", True),
     ("verify_offline_bundle.py", "installer/verify_offline_bundle.py", False),
-    ("启动安装.sh", "installer/launch_install.sh", True),
-    ("启动本地安装.sh", "installer/launch_install.sh", True),
+    ("run.sh", "installer/launch_install.sh", True),
     ("安装物料集团码智能匹配平台.desktop", "installer/desktop_install.desktop", False),
     ("维护物料集团码智能匹配平台.desktop", "installer/desktop_maintain.desktop", False),
-    ("维护工具.sh", "installer/maintain.sh", True),
-    ("README-安装前必读.txt", "installer/README_first.txt", False),
-    ("docs/安装手册.md", "installer/docs/install-manual.md", False),
-    ("安装手册-非Docker方式.md", "installer/docs/install-manual.md", False),
-    ("docs/维护手册.md", "installer/docs/maintain-manual.md", False),
-    ("docs/故障处理.md", "installer/docs/troubleshooting.md", False),
+    ("menu.sh", "installer/maintain.sh", True),
+    ("README.md", "installer/README_first.txt", False),
+    ("doc.md", "installer/docs/install-manual.md", False),
+    ("docs/doc.md", "installer/docs/install-manual.md", False),
+    ("docs/ops.md", "installer/docs/maintain-manual.md", False),
+    ("docs/faq.md", "installer/docs/troubleshooting.md", False),
     ("tools/installer_smoke.py", "scripts/installer_smoke.py", True),
     ("disk_select.sh", "installer/disk_select.sh", False),
-    ("重启服务.sh", "installer/native_ops/restart.sh", True),
-    ("停用服务.sh", "installer/native_ops/stop.sh", True),
-    ("卸载服务.sh", "installer/native_ops/uninstall.sh", True),
-    ("定时备份.sh", "installer/native_ops/backup_timer.sh", True),
+    ("rst.sh", "installer/native_ops/restart.sh", True),
+    ("stop.sh", "installer/native_ops/stop.sh", True),
+    ("del.sh", "installer/native_ops/uninstall.sh", True),
+    ("bk.sh", "installer/native_ops/backup_timer.sh", True),
 )
 
 
@@ -135,7 +134,7 @@ def _write_build_info(output_dir: Path, *, release_version: str, target_arch: st
         f"Embedding 模型: {model_id}",
         "联网需求: 无（完全离线安装）",
         "",
-        "普通安装人员：双击『安装物料集团码智能匹配平台』或运行 ./启动安装.sh，按 docs/安装手册.md 操作。",
+        "普通安装人员：终端运行 ./run.sh，按 doc.md 操作（图形桌面可双击安装快捷方式）。",
     ]
     (output_dir / "BUILD_INFO.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

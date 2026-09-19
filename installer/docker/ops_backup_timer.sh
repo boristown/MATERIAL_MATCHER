@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # 定时备份（Docker 方式）：为 MATERIAL_MATCHER 安装/管理每日自动备份（systemd timer）。
 # 用法：
-#   ./定时备份.sh enable [HH:MM]   开启每日备份（默认 02:30），保留最近 14 份
-#   ./定时备份.sh disable          关闭并移除定时任务（已生成的备份文件保留）
-#   ./定时备份.sh run              立即执行一次备份
-#   ./定时备份.sh list             查看已有备份
+#   ./bk.sh enable [HH:MM]   开启每日备份（默认 02:30），保留最近 14 份
+#   ./bk.sh disable          关闭并移除定时任务（已生成的备份文件保留）
+#   ./bk.sh run              立即执行一次备份
+#   ./bk.sh list             查看已有备份
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "需要 root 或 sudo 权限。" >&2; exit 44; }
 OUT_DIR="/var/backups/material_matcher"

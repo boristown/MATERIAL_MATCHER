@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 卸载服务（非 Docker 方式）：仅卸载 MATERIAL_MATCHER 自身（systemd 单元与程序目录），
 # 默认保留全部业务数据与配置（重装可继续使用）。
-# 用法：./卸载服务.sh              → 卸载应用，保留数据
-#       ./卸载服务.sh --purge-data → 额外删除业务数据与配置（两次 yes 确认）
+# 用法：./del.sh              → 卸载应用，保留数据
+#       ./del.sh --purge-data → 额外删除业务数据与配置（两次 yes 确认）
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "需要 root 或 sudo 权限。" >&2; exit 44; }
 PURGE=""
@@ -26,5 +26,5 @@ if [ -n "$PURGE" ]; then
   echo "数据与配置已全部删除。"
 else
   echo "数据保留：${VAR_REAL:-/var/lib/material_matcher}；配置保留：/etc/material_matcher。"
-  echo "重新安装：运行 ./启动本地安装.sh 即可在原数据上恢复。"
+  echo "重新安装：运行 ./run.sh 即可在原数据上恢复。"
 fi

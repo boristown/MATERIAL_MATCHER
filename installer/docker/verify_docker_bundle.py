@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验 01-Docker方式 离线介质：文件树 SHA256 + 架构 + 必需组件 + 引擎/Compose/镜像记录。"""
+"""校验 d（Docker 方式）离线介质：文件树 SHA256 + 架构 + 必需组件 + 引擎/Compose/镜像记录。"""
 from __future__ import annotations
 
 import argparse
@@ -20,32 +20,32 @@ SUPPORTED_ARCHES = {"x86_64", "aarch64"}
 RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 REQUIRED_EXECUTABLES = (
-    "启动Docker安装.sh",
+    "run.sh",
     "docker_wizard.sh",
     "install_docker.sh",
-    "维护工具-Docker.sh",
+    "menu.sh",
     "bootstrap/python/bin/python3",
     "tools/installer_smoke.py",
     "disk_select.sh",
-    "重启服务.sh",
-    "停用服务.sh",
-    "卸载服务.sh",
-    "定时备份.sh",
+    "rst.sh",
+    "stop.sh",
+    "del.sh",
+    "bk.sh",
 )
 REQUIRED_FILES = REQUIRED_EXECUTABLES + (
-    "重启服务.sh",
-    "停用服务.sh",
-    "卸载服务.sh",
-    "定时备份.sh",
+    "rst.sh",
+    "stop.sh",
+    "del.sh",
+    "bk.sh",
     "verify_docker_bundle.py",
-    "README-请先阅读.txt",
-    "安装手册-Docker方式.md",
-    "维护手册-Docker方式.md",
+    "README.md",
+    "doc.md",
+    "ops.md",
     "BUILD_INFO.txt",
     "SHA256SUMS",
     "docker/engine/docker-27.1.1.tgz",
     "docker/compose/docker-compose-linux-x86_64",
-    "docker/licenses/LICENSES-AND-SOURCES.txt",
+    "docker/licenses/lic.txt",
     "compose/compose.yaml",
     "seed/business/manifest.json",
     "seed/business/profiles.json",

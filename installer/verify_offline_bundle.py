@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -11,7 +10,6 @@ import re
 import stat
 import sys
 from typing import Iterator
-
 MANIFEST_NAME = "offline-manifest.json"
 RELEASE_MANIFEST_NAME = "release-manifest.json"
 RUNTIME_MANIFEST_NAME = "runtime-manifest.json"
@@ -22,14 +20,12 @@ RUNTIME_PRODUCT = "MATERIAL_MATCHER_PYTHON_RUNTIME"
 SUPPORTED_ARCHES = {"x86_64", "aarch64"}
 RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
 
 def _tree_sha256(root: Path, *, exclude_names: set[str] | None = None) -> str:
     excluded = exclude_names or set()
@@ -43,7 +39,6 @@ def _tree_sha256(root: Path, *, exclude_names: set[str] | None = None) -> str:
         digest.update(b"\n")
     return digest.hexdigest()
 
-
 def _normalize_arch(value: str) -> str:
     value = value.lower().strip()
     if value in {"x86_64", "amd64"}:
@@ -52,7 +47,6 @@ def _normalize_arch(value: str) -> str:
         return "aarch64"
     return value
 
-
 def _safe_relative(value: str) -> PurePosixPath:
     if "\\" in value:
         raise ValueError(f"非法离线包路径：{value!r}")
@@ -60,7 +54,6 @@ def _safe_relative(value: str) -> PurePosixPath:
     if not value or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError(f"非法离线包路径：{value!r}")
     return path
-
 
 def _iter_entries(root: Path) -> Iterator[tuple[str, Path]]:
     def walk(directory: Path, prefix: PurePosixPath | None = None) -> Iterator[tuple[str, Path]]:
@@ -79,9 +72,7 @@ def _iter_entries(root: Path) -> Iterator[tuple[str, Path]]:
                 yield relative.as_posix(), path
             else:
                 raise ValueError(f"离线包包含不支持的文件类型：{relative.as_posix()}")
-
     yield from walk(root)
-
 
 def _validate_symlink(root: Path, relative: str, path: Path, expected_target: str) -> None:
     if not expected_target:
@@ -100,12 +91,10 @@ def _validate_symlink(root: Path, relative: str, path: Path, expected_target: st
     except ValueError as exc:
         raise ValueError(f"符号链接逃逸离线包目录：{relative}") from exc
 
-
 def _require_executable(actual: dict[str, Path], relative: str) -> None:
     path = actual[relative]
     if not path.exists() or not path.is_file() or not os.access(path, os.X_OK):
         raise ValueError(f"必需启动文件不可执行：{relative}")
-
 
 def _native_wheel_exists(expected: dict[str, dict[str, object]], package_prefix: str, target_arch: str) -> bool:
     prefix = f"wheelhouse/{package_prefix.lower()}-"
@@ -115,7 +104,6 @@ def _native_wheel_exists(expected: dict[str, dict[str, object]], package_prefix:
         and target_arch in PurePosixPath(path).name.lower()
         for path in expected
     )
-
 
 def _verify_runtime_manifest(root: Path, release_manifest: dict[str, object], target_arch: str) -> dict[str, object]:
     path = root / "release/runtime" / RUNTIME_MANIFEST_NAME
@@ -138,7 +126,6 @@ def _verify_runtime_manifest(root: Path, release_manifest: dict[str, object], ta
     if not re.fullmatch(r"[0-9a-f]{64}", expected_tree_sha) or actual_tree_sha != expected_tree_sha:
         raise ValueError("Runtime 文件与 runtime manifest 摘要不一致")
     return runtime_manifest
-
 
 def _verify_release_manifest(root: Path, manifest: dict[str, object], release_version: str, target_arch: str) -> dict[str, object]:
     path = root / "release" / RELEASE_MANIFEST_NAME
@@ -178,7 +165,6 @@ def _verify_release_manifest(root: Path, manifest: dict[str, object], release_ve
     _verify_runtime_manifest(root, release_manifest, target_arch)
     return release_manifest
 
-
 def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     root = root.resolve()
     if not root.is_dir():
@@ -191,7 +177,6 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         raise ValueError("离线包 manifest 格式版本不受支持")
     if manifest.get("product") != PRODUCT:
         raise ValueError("离线包产品标识不正确")
-
     release_version = str(manifest.get("release_version") or "").strip()
     if not RELEASE_VERSION_RE.fullmatch(release_version):
         raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
@@ -201,7 +186,6 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
     model_id = _safe_relative(str(manifest.get("model_id") or "").strip()).as_posix()
     if not skip_arch and target_arch != _normalize_arch(platform.machine()):
         raise ValueError(f"离线包架构 {target_arch} 与当前机器 {platform.machine()} 不匹配")
-
     raw_files = manifest.get("files")
     if not isinstance(raw_files, list) or not raw_files:
         raise ValueError("离线包 manifest files 为空")
@@ -213,7 +197,6 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         if relative in expected:
             raise ValueError(f"离线包 manifest 路径重复：{relative}")
         expected[relative] = item
-
     actual = {relative: path for relative, path in _iter_entries(root)}
     missing = sorted(set(expected) - set(actual))
     unexpected = sorted(set(actual) - set(expected))
@@ -221,7 +204,6 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         raise ValueError(f"离线包缺少文件：{', '.join(missing[:10])}")
     if unexpected:
         raise ValueError(f"离线包包含未登记文件：{', '.join(unexpected[:10])}")
-
     for relative, item in expected.items():
         path = actual[relative]
         kind = str(item.get("type") or "file")
@@ -240,34 +222,32 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
             raise ValueError(f"SHA-256 校验失败：{relative}")
         if bool(item.get("executable")) and not (stat.S_IMODE(path.stat().st_mode) & 0o111):
             raise ValueError(f"文件缺少可执行权限：{relative}")
-
     model_prefix = f"models/{model_id}/"
     required_exact = {
         "install.sh",
         "install_wizard.sh",
         "mmctl",
         "verify_offline_bundle.py",
-        "启动安装.sh",
-        "启动本地安装.sh",
-        "维护工具.sh",
-        "安装手册-非Docker方式.md",
+        "run.sh",
+        "menu.sh",
+        
         "安装物料集团码智能匹配平台.desktop",
         "维护物料集团码智能匹配平台.desktop",
-        "README-安装前必读.txt",
+        "README.md",
         "BUILD_INFO.txt",
         "SHA256SUMS",
-        "docs/安装手册.md",
-        "docs/维护手册.md",
-        "docs/故障处理.md",
+        "docs/doc.md",
+        "docs/ops.md",
+        "docs/faq.md",
         "bootstrap/python/bin/python3",
         "smoke/smoke-待匹配数据.xlsx",
         "smoke/smoke-集团标准数据.xlsx",
         "tools/installer_smoke.py",
         "disk_select.sh",
-        "重启服务.sh",
-        "停用服务.sh",
-        "卸载服务.sh",
-        "定时备份.sh",
+        "rst.sh",
+        "stop.sh",
+        "del.sh",
+        "bk.sh",
         "release/release-manifest.json",
         "release/runtime/runtime-manifest.json",
         "release/runtime/bin/python3",
@@ -299,26 +279,23 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "install.sh",
         "install_wizard.sh",
         "mmctl",
-        "启动安装.sh",
-        "启动本地安装.sh",
-        "维护工具.sh",
+        "run.sh",
+        "menu.sh",
         "bootstrap/python/bin/python3",
         "release/runtime/bin/python3",
         "release/runtime/bin/material-matcher",
         "tools/installer_smoke.py",
-        "重启服务.sh",
-        "停用服务.sh",
-        "卸载服务.sh",
-        "定时备份.sh",
+        "rst.sh",
+        "stop.sh",
+        "del.sh",
+        "bk.sh",
     ):
         _require_executable(actual, executable)
-
     build_info = actual["BUILD_INFO.txt"].read_text(encoding="utf-8")
     if release_version not in build_info:
         raise ValueError("BUILD_INFO.txt 版本与 offline manifest 不一致")
     if target_arch not in build_info:
         raise ValueError("BUILD_INFO.txt 架构与 offline manifest 不一致")
-
     for sha_line in actual["SHA256SUMS"].read_text(encoding="utf-8").splitlines():
         if not sha_line.strip():
             continue
@@ -329,16 +306,13 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         entry = expected.get(relative)
         if entry is None or str(entry.get("sha256") or "").lower() != digest:
             raise ValueError(f"SHA256SUMS 与离线 manifest 不一致：{relative}")
-
     release_manifest = _verify_release_manifest(root, manifest, release_version, target_arch)
-
     if not any(path in expected for path in (f"models/{model_id}/model_int8.onnx", f"models/{model_id}/model.onnx")):
         raise ValueError(f"离线包缺少 {model_prefix} 下的 ONNX 模型")
     if not _native_wheel_exists(expected, "onnxruntime", target_arch):
         raise ValueError(f"wheelhouse 缺少适用于 {target_arch} 的 onnxruntime wheel")
     if not _native_wheel_exists(expected, "tokenizers", target_arch):
         raise ValueError(f"wheelhouse 缺少适用于 {target_arch} 的 tokenizers wheel")
-
     return {
         "ok": True,
         "release_version": release_version,
@@ -347,7 +321,6 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "python_version": release_manifest["python_version"],
         "file_count": len(expected),
     }
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="校验 MATERIAL_MATCHER 正式离线发布目录")
@@ -360,7 +333,6 @@ def main() -> None:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(2) from exc
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-
 
 if __name__ == "__main__":
     main()

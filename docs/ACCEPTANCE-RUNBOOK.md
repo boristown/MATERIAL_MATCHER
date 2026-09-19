@@ -42,13 +42,13 @@ cd /root && tar -xzf 客户交付介质/MATERIAL_MATCHER-1.2.5-KylinV10-x86_64-�
 cd "MATERIAL_MATCHER-最终离线交付介质-1.2.5-x86_64"
 
 # ③ 全量完整性校验（三级链之顶层，逐文件，热缓存约 5 秒；冷盘约 2~5 分钟，正常）
-sha256sum -c SHA256SUMS-整个交付介质.txt | grep -v ': OK$' ; echo "不匹配行数应为 0"
+sha256sum -c all.sha256 | grep -v ': OK$' ; echo "不匹配行数应为 0"
 
 # ④ 一键安装（Docker 方式）——全程中文问答，无需任何 docker 知识
-cd 01-Docker方式 && ./启动Docker安装.sh   # 数据屏按 y 接受推荐(/data2)
+cd d && ./run.sh   # 数据屏按 y 接受推荐(/data2)
 ```
 
-向导每屏（与介质内《安装手册-Docker方式.md》一致）：
+向导每屏（与介质内《doc.md》一致）：
 1. 欢迎/二选一说明 —— 自动继续；
 2. 环境检查 —— 全 ✅ + ℹ️（本机没有 Docker：将由介质离线安装引擎 27.1.1）；
 3. 数据盘选择 —— 展示磁盘前三名及剩余空间并推荐最大者：y=接受推荐（模拟机上预期推荐 /data2）；n=按编号改选；数据库/上传/结果与 Docker 镜像仓库 data-root 一并落盘所选磁盘；
@@ -57,7 +57,7 @@ cd 01-Docker方式 && ./启动Docker安装.sh   # 数据屏按 y 接受推荐(/d
 6. 确认安装 —— 输入 **y**；
 6. 进度：校验介质→离线装 Docker Engine→Compose→导入镜像（1~3 分钟，持续提示）→持久目录→启动→就绪（每 15 秒心跳）→**自动导入 6 个正式方案+同义词**→安装报告 → 【安装成功】。
 
-关于"docker 里还能不能再装 docker"的疑问：可以。安装器在麒麟系统内安装的是**官方静态版 Docker Engine**（`01-Docker方式/docker/engine/docker-27.1.1.tgz`）+ systemd 单元；已在本模拟环境多轮实测（含首次全新安装与"已存在则复用"两条路径，复用路径不会动你已有的任何容器/镜像，也不做 prune）。若你想先人工安装 Docker 再跑向导：向导第 4 步会检测到已有 Docker 并提示"直接复用"，同样通过。
+关于"docker 里还能不能再装 docker"的疑问：可以。安装器在麒麟系统内安装的是**官方静态版 Docker Engine**（`d/docker/engine/docker-27.1.1.tgz`）+ systemd 单元；已在本模拟环境多轮实测（含首次全新安装与"已存在则复用"两条路径，复用路径不会动你已有的任何容器/镜像，也不做 prune）。若你想先人工安装 Docker 再跑向导：向导第 4 步会检测到已有 Docker 并提示"直接复用"，同样通过。
 
 ## 4. 装完后的最小验收（工作单第 5~12 步的服务端半区）
 
@@ -65,7 +65,7 @@ cd 01-Docker方式 && ./启动Docker安装.sh   # 数据屏按 y 接受推荐(/d
 curl -s http://127.0.0.1:18080/api/health          # {"status":"ok","version":"1.2.5"}
 curl -s http://127.0.0.1:18080/api/health/ready    # "ready"
 # 6 方案与同义词：介质原厂工具一键取证
-cd /root/MATERIAL_MATCHER-最终离线交付介质-1.2.5-x86_64/01-Docker方式
+cd /root/MATERIAL_MATCHER-最终离线交付介质-1.2.5-x86_64/d
 bootstrap/python/bin/python3 tools/installer_smoke.py --base-url http://127.0.0.1:18080 \
   --password-file /etc/material_matcher/secret/admin_password.env --smoke-dir smoke
 # 期望最后一行：SMOKE 22/22 passed
@@ -76,7 +76,7 @@ docker restart mm-customer   # （在宿主机执行）模拟断电重启；15 �
 
 ## 5. Native（非 Docker）备用轨（可选，另一台干净机执行）
 
-`cd 02-非Docker方式 && ./启动本地安装.sh`（答案序列：回车 / y(数据盘推荐) / 回车 / n / y）。systemd 直装 + 自包含 Runtime，6 方案/同义词自动导入。预演 5 秒完成。
+`cd n && ./run.sh`（答案序列：回车 / y(数据盘推荐) / 回车 / n / y）。systemd 直装 + 自包含 Runtime，6 方案/同义词自动导入。预演 5 秒完成。
 
 ## 6. 原厂预演记录（2026-09-19 00:26–00:28 UTC，一次性容器、同版本介质）
 
@@ -84,7 +84,7 @@ docker restart mm-customer   # （在宿主机执行）模拟断电重启；15 �
 |---|---|---|
 | 外层 tar sha256 -c | OK | ~1 min |
 | 解包 2.7GB | 完整 | 21 s |
-| SHA256SUMS-整个交付介质.txt 全量 | **0 不匹配** | 5 s（热缓存） |
+| all.sha256 全量 | **0 不匹配** | 5 s（热缓存） |
 | Docker 轨向导（无 Docker 起） | rc=0，装至 1.2.5 | **18 s** |
 | docker verify_offline/bundle + 重启自启 | 1.2.5 / enabled / ready | ~50 s |
 | smoke（Docker 轨） | 22/22 | 1 s |
@@ -96,16 +96,16 @@ docker restart mm-customer   # （在宿主机执行）模拟断电重启；15 �
 ## 7. 若卡住的处置
 
 - 任何屏幕与手册不符/找不到下一步：先按介质内《安装手册》"故障处理"节；仍异常→宿主机 `docker exec mm-customer bash -c 'tail -50 /var/tmp/material_matcher_docker_wizard-*.log'` 取证，并把现象报给原厂（不要手工改库/改配置）。
-- 按到"其它键"会**安全退出且零改动**，直接重新运行 `./启动Docker安装.sh` 即可。
+- 按到"其它键"会**安全退出且零改动**，直接重新运行 `./run.sh` 即可。
 
 ## 8. 生命周期脚本（1.2.7 起随介质两区提供）
 
-| 脚本（01-Docker方式 或 02-非Docker方式 目录内） | 作用 |
+| 脚本（d 或 n 目录内） | 作用 |
 |---|---|
-| `sudo ./重启服务.sh` | 重启本系统服务并探活（60 秒内确认 200） |
-| `sudo ./停用服务.sh` | 停止服务并取消自启；数据/镜像/Docker 全保留 |
-| `sudo ./定时备份.sh enable [HH:MM]` | 每日自动备份（默认 02:30），root-only，保留最近 14 份；`run`/`list`/`disable` |
-| `sudo ./卸载服务.sh` | 仅卸载本系统（容器/镜像/compose 或 systemd 单元）；**不卸载 Docker 软件、保留数据** |
-| `sudo ./卸载服务.sh --purge-data` | 同上并删除数据与配置（两次 yes 确认） |
+| `sudo ./rst.sh` | 重启本系统服务并探活（60 秒内确认 200） |
+| `sudo ./stop.sh` | 停止服务并取消自启；数据/镜像/Docker 全保留 |
+| `sudo ./bk.sh enable [HH:MM]` | 每日自动备份（默认 02:30），root-only，保留最近 14 份；`run`/`list`/`disable` |
+| `sudo ./del.sh` | 仅卸载本系统（容器/镜像/compose 或 systemd 单元）；**不卸载 Docker 软件、保留数据** |
+| `sudo ./del.sh --purge-data` | 同上并删除数据与配置（两次 yes 确认） |
 
 预演记录（1.2.7，一次性容器）：安装→备份 enable+run（timer active）→停用（health 000）→重启（恢复 200）→卸载（Docker 27.1.1 仍在、本项目镜像清零、数据块保留）→重装（升级模式，health 1.2.7）。见 docker/20260919-lifecycle/。
