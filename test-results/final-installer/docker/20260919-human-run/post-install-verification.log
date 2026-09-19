@@ -1,0 +1,14 @@
+== 全量交付介质校验（补跑，人工执行时被终端粘贴吞行） 2026-09-19 10:59:23
+0
+18636
+== 安装后状态核验
+enabled
+material_matcher-app Up 4 minutes material-matcher-app:1.2.5
+{"status":"ok","version":"1.2.5"}
+{"status":"ready","checks":{"admin_account":true,"database":
+== 介质内验证器复核（人工装完后独立验证）
+{"compose": "v2.29.7", "docker_engine": "27.1.1", "file_count": 3082, "image_ref": "material-matcher-app:1.2.5", "ok": true, "release_version": "1.2.5", "target_arch": "x86_64"}
+== 原厂 smoke
+SMOKE 22/22 passed in 1s
+== 从宿主机经内网访问页面（模拟客户浏览器路径）
+GET / http_code=200
