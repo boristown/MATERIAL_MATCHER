@@ -36,6 +36,8 @@ BUNDLE_VERSION="$(py_json "$MANIFEST" release_version)"
 BUNDLE_ARCH="$(py_json "$MANIFEST" target_arch)"
 ENGINE_VERSION="$(py_json "$MANIFEST" docker_engine_version)"
 COMPOSE_VERSION="$(py_json "$MANIFEST" docker_compose_version)"
+# 数据盘候选工具
+[[ -f "$MEDIA/disk_select.sh" ]] && . "$MEDIA/disk_select.sh"
 
 ui_note() {
   if [[ -n "$GUI" ]]; then zenity --info --title="$1" --text="$2" --width=640
@@ -130,13 +132,13 @@ run_install() {
     local zpid=$!
     exec 5>"$FIFO"
     MM_PROGRESS_ON=1 MM_PORT_USER_CHOICE=1 MM_INSTALL_PORT="$CHOSEN_PORT" MM_ADMIN_PASSWORD_SOURCE="$PW_MODE" \
-      env "${args[@]}" bash "$INSTALL_SH" > >(tee "$TMP_OUT" | _forward) 2>&1
+      env ${MM_DATA_MOUNT_SET:+MM_DATA_MOUNT="$MM_DATA_MOUNT_SET"} "${args[@]}" bash "$INSTALL_SH" > >(tee "$TMP_OUT" | _forward) 2>&1
     INSTALL_RC=$?
     sleep 1; printf '100\n#安装结束\n' >&5 2>/dev/null || true; exec 5>&-
     wait "$zpid" 2>/dev/null || true; rm -f "$FIFO"
   else
     MM_PROGRESS_ON=1 MM_PORT_USER_CHOICE=1 MM_INSTALL_PORT="$CHOSEN_PORT" MM_ADMIN_PASSWORD_SOURCE="$PW_MODE" \
-      env "${args[@]}" bash "$INSTALL_SH" 2>&1 | _relay
+      env ${MM_DATA_MOUNT_SET:+MM_DATA_MOUNT="$MM_DATA_MOUNT_SET"} "${args[@]}" bash "$INSTALL_SH" 2>&1 | _relay
     INSTALL_RC=${PIPESTATUS[0]}
   fi
   cat "$TMP_OUT" >>"$WIZARD_LOG" 2>/dev/null || true
@@ -165,6 +167,26 @@ main() {
   local check_text=""; for line in "${CHECK_LINES[@]}"; do check_text+="$line\n"; done
   ui_note "环境检查" "$check_text"
   [[ "$CHECKS_OK" == "1" ]] || { ui_error "环境检查未通过" "$check_text\n安装未开始，系统未做任何修改。"; exit 43; }
+
+  MM_DATA_MOUNT_SET=""
+  if [[ "$IS_UPGRADE" == "0" && -f "$MEDIA/disk_select.sh" ]]; then
+    DISK_TEXT="$(disk_candidates_text)"
+    DISK_RECOMMEND="$(disk_top_mount)"
+    rc_disk=0
+    ui_confirm "数据盘选择" "数据与镜像存储位置安装后保持固定，建议选择剩余空间最大的磁盘。\n\n服务器磁盘（前三名）：\n${DISK_TEXT:-  （仅探测到默认磁盘）}\n推荐：${DISK_RECOMMEND:-系统默认位置}\n\n接受推荐后：/var/lib/material_matcher、/var/log/material_matcher 将指向该磁盘；全新安装时 Docker 镜像仓库存放（data-root）也会设在同一磁盘。\ny = 接受推荐　n = 改选其它磁盘编号　其它键 = 退出（不做任何修改）" "接受推荐" "改选" || rc_disk=$?
+    if [[ "$rc_disk" == "0" ]]; then
+      MM_DATA_MOUNT_SET="${DISK_RECOMMEND:-}"
+    elif [[ "$rc_disk" == "3" ]]; then
+      ANS="$(ui_entry "改选磁盘" "输入磁盘编号（1-3）" "1")" || { echo "用户已取消，未对系统做任何修改。"; exit 0; }
+      RESOLVED="$(disk_resolve_choice "$ANS" || true)"
+      [[ -z "$RESOLVED" ]] && { echo "未识别的编号，安装已退出，系统未做修改。"; exit 1; }
+      MM_DATA_MOUNT_SET="$RESOLVED"
+    else
+      echo "用户已取消，未对系统做任何修改。"; exit 0
+    fi
+  elif [[ "$IS_UPGRADE" == "1" ]]; then
+    ui_note "数据盘" "检测到已有安装：数据与 Docker 存储位置保持现状，不迁移、不改动。"
+  fi
 
   local port_note="（首次安装默认 18080）"
   [[ "$IS_UPGRADE" == "1" ]] && port_note="（升级：保持当前端口）"
@@ -252,6 +274,7 @@ PYE
 )"
   report="$(grep -m1 '安装报告：' "$TMP_OUT" | sed 's/^安装报告：//' || true)"
   local text="【安装成功】物料集团码智能匹配平台 $BUNDLE_VERSION（Docker 方式）\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
+  [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && text="$text\n· 数据与镜像磁盘：$MM_DATA_MOUNT_SET（经 /var/lib/material_matcher、/var/log/material_matcher 统一访问）"
   [[ -n "$addrs" ]] && text="$text\n· 局域网访问：\n$addrs" || text="$text\n· 未检测到局域网 IPv4 地址：仅本机可访问，请确认网络后查看"
   text="$text\n· 管理员账号：admin$pw_line\n· 默认业务数据：${seed:-已导入}\n· 安装报告：${report:-$WIZARD_LOG}\n\n业务数据保存在宿主机 /etc、/var/lib、/var/log/material_matcher —— 删除或重建容器都不会丢数据。\n\n后续维护：以 root 运行本目录 ./维护工具-Docker.sh\n客户电脑若是 Windows 7 且页面异常，请安装介质根目录《客户端浏览器-Win7》中的 Firefox ESR。"
   [[ -n "$fw" ]] && text="$text\n\n注意：$fw"

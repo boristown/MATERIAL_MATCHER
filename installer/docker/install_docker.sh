@@ -113,7 +113,14 @@ ensure_docker_engine() {
   install -m 0755 /tmp/docker/* /usr/local/bin/ || die "$EXIT_DOCKER" "Docker 组件安装到 /usr/local/bin 失败，请检查磁盘与权限。"
   rm -rf /tmp/docker
   mkdir -p /etc/docker
-  [[ -f /etc/docker/daemon.json ]] || printf '{\n  "log-driver": "json-file",\n  "log-opts": {"max-size": "20m", "max-file": "3"}\n}\n' > /etc/docker/daemon.json
+  if [[ ! -f /etc/docker/daemon.json ]]; then
+    if [[ -n "${MM_DATA_MOUNT:-}" && -d "${MM_DATA_MOUNT:-}" ]]; then
+      mkdir -p "$MM_DATA_MOUNT/docker-data"
+      printf '{\n  "data-root": "%s/docker-data",\n  "log-driver": "json-file",\n  "log-opts": {"max-size": "20m", "max-file": "3"}\n}\n' "$MM_DATA_MOUNT" > /etc/docker/daemon.json
+    else
+      printf '{\n  "log-driver": "json-file",\n  "log-opts": {"max-size": "20m", "max-file": "3"}\n}\n' > /etc/docker/daemon.json
+    fi
+  fi
   cat >/etc/systemd/system/containerd.service <<'EOF'
 [Unit]
 Description=containerd container runtime
@@ -209,6 +216,25 @@ if [[ ! -f "$STORAGE_ENV" ]]; then
 fi
 DATA_DIR="$(grep -m1 '^MATERIAL_MATCHER_DATA_DIR=' "$STORAGE_ENV" | cut -d= -f2 | tr -d '"')"
 [[ "$DATA_DIR" == "$VAR" ]] || die "$EXIT_DB" "Docker 方式要求数据目录为 /var/lib/material_matcher（storage.env 当前指向 $DATA_DIR）。两种方式不能混用在同一数据目录，请先由维护人员确认，不自动迁移。"
+
+DATA_MOUNT_RESOLVED=""
+apply_data_mount() {  # 全新安装时把 lib/log 数据目录放到选定磁盘（已有数据绝不迁移）
+  [[ -n "${MM_DATA_MOUNT:-}" && -d "${MM_DATA_MOUNT:-}" ]] || return 0
+  local base="$MM_DATA_MOUNT/material_matcher_data"
+  mkdir -p "$base/lib" "$base/log" 2>/dev/null || { echo "提示：$MM_DATA_MOUNT 不可写，使用默认位置。" >&2; return 0; }
+  local pair link target
+  for pair in "$VAR:$base/lib" "$LOG:$base/log"; do
+    link="${pair%%:*}"; target="${pair##*:}"
+    if [[ ! -e "$link" ]]; then
+      ln -sfn "$target" "$link"
+    elif [[ -d "$link" && -z "$(ls -A "$link" 2>/dev/null)" ]]; then
+      rmdir "$link" 2>/dev/null && ln -sfn "$target" "$link"
+    fi
+    [[ "$(readlink -f "$link")" != "$(readlink -f "$target")" ]] && echo "提示：$link 已有既有数据，保持原位（不自动迁移）。" >&2
+  done
+  DATA_MOUNT_RESOLVED="$base"
+}
+apply_data_mount
 mkdir -p "$VAR/meta" "$VAR/uploads" "$VAR/datasets" "$VAR/results" "$VAR/indexes" "$VAR/jobs" "$VAR/tmp" "$VAR/cache/embeddings"
 [[ -s "$VAR/meta/material_matcher.db" ]] || true
 
@@ -376,6 +402,7 @@ REPORT_FILE="$REPORT_DIR/docker-install-$(date +%Y%m%d-%H%M%S).txt"
   echo "镜像：$IMAGE_REF (ID $(docker image inspect --format '{{.Id}}' "$IMAGE_REF" | cut -c8-19)…)"
   echo "时间：$(date '+%F %T')"
   echo "配置：$ETC  数据：$VAR  日志：$LOG"
+  [[ -n "$DATA_MOUNT_RESOLVED" ]] && echo "数据盘：${MM_DATA_MOUNT:-}（实际存储 $DATA_MOUNT_RESOLVED；Docker data-root：$(sed -n 's/.*"data-root": *"\([^"]*\)".*/\1/p' /etc/docker/daemon.json 2>/dev/null || true)）"
   echo "宿主机端口：$FINAL_PORT"
   echo "本机访问：http://127.0.0.1:$FINAL_PORT"
   for a in $MAP_ADDRESSES; do echo "局域网访问：http://${a}:$FINAL_PORT"; done

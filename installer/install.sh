@@ -235,6 +235,19 @@ if [[ ! -f "$STORAGE_ENV" ]]; then
       mkdir -p "$MM_DATA_DIR"
       printf 'MATERIAL_MATCHER_DATA_MOUNT=%q\nMATERIAL_MATCHER_DATA_DIR=%q\n' "$MM_DATA_DIR" "$MM_DATA_DIR" >"$STORAGE_ENV"
     fi
+  elif [[ -n "${MM_DATA_MOUNT:-}" && -d "${MM_DATA_MOUNT:-}" ]]; then
+    data_mount="$MM_DATA_MOUNT"
+    physical_data="$data_mount/material_matcher_data"
+    mkdir -p "$physical_data"
+    if [[ ! -e "$VAR" ]]; then
+      ln -s "$physical_data" "$VAR"
+    elif [[ -d "$VAR" && ! -L "$VAR" && -z "$(find "$VAR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+      rmdir "$VAR"
+      ln -s "$physical_data" "$VAR"
+    else
+      physical_data="$VAR"
+    fi
+    printf 'MATERIAL_MATCHER_DATA_MOUNT=%q\nMATERIAL_MATCHER_DATA_DIR=%q\n' "$data_mount" "$VAR" >"$STORAGE_ENV"
   else
     data_mount=$(find_data_mount || true)
     [[ -n "$data_mount" ]] || data_mount="/var/lib"

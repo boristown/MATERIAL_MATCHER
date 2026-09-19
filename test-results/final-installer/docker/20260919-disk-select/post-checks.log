@@ -1,0 +1,12 @@
+-- 链接 --
+/var/lib/material_matcher -> /data2/material_matcher_data/lib
+-- daemon.json --
+data-root": "/data2/docker-data",
+ Docker Root Dir: /data2/docker-data
+-- /data2 用量 --
+2502128	/data2
+docker-data
+lost+found
+material_matcher_data
+{"status":"ok","version":"1.2.6"}
+SMOKE 22/22 passed in 1s

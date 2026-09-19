@@ -112,6 +112,7 @@ ROOT_COPY_PLAN: tuple[tuple[str, str, bool], ...] = (
     ("docs/维护手册.md", "installer/docs/maintain-manual.md", False),
     ("docs/故障处理.md", "installer/docs/troubleshooting.md", False),
     ("tools/installer_smoke.py", "scripts/installer_smoke.py", True),
+    ("disk_select.sh", "installer/disk_select.sh", False),
 )
 
 

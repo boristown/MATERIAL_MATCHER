@@ -26,6 +26,7 @@ DOCKER_COPY_PLAN = (
     ("compose/compose.yaml", "installer/docker/compose_reference.yaml", False),
     ("compose/BUILD_TAG", "installer/docker/build_tag.txt", False),
     ("tools/installer_smoke.py", "scripts/installer_smoke.py", True),
+    ("disk_select.sh", "installer/disk_select.sh", False),
 )
 
 
