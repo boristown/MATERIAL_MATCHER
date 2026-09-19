@@ -1,0 +1,20 @@
+-- 定时备份 enable/run/list --
+Created symlink /etc/systemd/system/timers.target.wants/mm-backup.timer → /etc/systemd/system/mm-backup.timer.
+已开启每日备份（02:30），保留最近 14 份，目录：/var/backups/material_matcher（root-only）。
+-- 停用 --
+已停用：服务已停止且不再随开机启动。数据、镜像与 Docker 软件均未改动。
+恢复运行：在介质 01-Docker方式 目录运行 ./启动Docker安装.sh（升级模式会原地恢复），或 ./重启服务.sh。
+停用后health=000
+-- 重启 --
+服务已重启并可访问：http://127.0.0.1:18080
+-- 卸载（保留数据）--
+应用已卸载。Docker 软件与其原有容器/镜像未受影响：Docker version 27.1.1, build 6312585
+数据保留：/var/lib/docker/material_matcher_data/lib；配置保留：/etc/material_matcher。
+重新安装：运行介质内 ./启动Docker安装.sh 即可在原数据上恢复。
+Docker version 27.1.1, build 6312585
+0
+数据块保留: 0
+-- 重装（升级模式恢复）--
+reinstall_rc=0
+{"status":"ok","version":"1.2.7"}
+/root/lc.sh: line 22: /opt/material_matcher/current/runtime/bin/python3: No such file or directory

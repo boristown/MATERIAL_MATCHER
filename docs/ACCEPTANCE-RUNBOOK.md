@@ -1,6 +1,6 @@
 # MATERIAL_MATCHER · 人工断网离线部署验证手册（模拟麒麟 V10 实机体验）
 
-更新：2026-09-19　介质：**1.2.6 双轨交付介质（新增数据盘选择屏）**　状态：**双轨一键预演通过，环境已就绪**
+更新：2026-09-19　介质：**1.2.7 双轨交付介质（数据盘选择 + 生命周期一键脚本）**　状态：**双轨一键预演通过，环境已就绪**
 
 ## 0. 一句话结论
 
@@ -22,9 +22,12 @@
 ssh -p 17470 root@39.104.206.210
 ```
 
-root 密码由运维现场提供（一次性沙箱凭据，不入仓库）。隧道为独立 systemd 单元 `frpc-mm-customer.service`（只映射该机 22 端口，remotePort 17470），与既有 frpc.service/xiaogang/material-matcher 隧道互不影响；验证结束可 `systemctl stop frpc-mm-customer` 下线。
+root 密码由运维现场提供（一次性沙箱凭据，不入仓库）。隧道为独立 systemd 单元 `frpc-mm-customer.service`，当前映射两条：
+- SSH：remotePort 17470 → 该机 22；
+- Web：remotePort 18080 → 该机 18080（**装完后即可用 `http://mat2:18080` 或 `http://39.104.206.210:18080` 直接打开系统**，mat2 为你已解析到 frps 的 A 记录）。
+与既有 frpc.service/xiaogang/material-matcher 隧道互不影响；验证结束 `systemctl stop frpc-mm-customer` 下线。
 
-模拟机网络：docker 内部网络（internal，无路由出口）——**任何外网访问必然失败，这正是断网验证的一部分**。SSH 走宿主机 frpc 反向通道，不占用麒麟系统任何对外连接。
+模拟机网络：docker internal 桥（无路由出口）；另挂有第二块数据盘 /data2（13G ext4 loop），用于体验数据盘选择屏。——**任何外网访问必然失败，这正是断网验证的一部分**。SSH 走宿主机 frpc 反向通道，不占用麒麟系统任何对外连接。
 
 ## 3. 人工安装流程（Docker 方式，客户已确认路线；预计全程 10~15 分钟）
 
@@ -42,13 +45,13 @@ cd "MATERIAL_MATCHER-最终离线交付介质-1.2.5-x86_64"
 sha256sum -c SHA256SUMS-整个交付介质.txt | grep -v ': OK$' ; echo "不匹配行数应为 0"
 
 # ④ 一键安装（Docker 方式）——全程中文问答，无需任何 docker 知识
-cd 01-Docker方式 && ./启动Docker安装.sh
+cd 01-Docker方式 && ./启动Docker安装.sh   # 数据屏按 y 接受推荐(/data2)
 ```
 
 向导每屏（与介质内《安装手册-Docker方式.md》一致）：
 1. 欢迎/二选一说明 —— 自动继续；
 2. 环境检查 —— 全 ✅ + ℹ️（本机没有 Docker：将由介质离线安装引擎 27.1.1）；
-3. 数据盘选择 —— 展示磁盘前三名及剩余空间并推荐最大者：回车/y=接受推荐；n=按编号改选（数据库/上传/结果与 Docker 镜像仓库 data-root 一并落盘所选磁盘）；
+3. 数据盘选择 —— 展示磁盘前三名及剩余空间并推荐最大者：y=接受推荐（模拟机上预期推荐 /data2）；n=按编号改选；数据库/上传/结果与 Docker 镜像仓库 data-root 一并落盘所选磁盘；
 4. 服务端口 —— **直接回车**（18080）；
 5. 管理员密码 —— 输入 **n**（自动生成；交互终端会显示一次）；
 6. 确认安装 —— 输入 **y**；
@@ -73,7 +76,7 @@ docker restart mm-customer   # （在宿主机执行）模拟断电重启；15 �
 
 ## 5. Native（非 Docker）备用轨（可选，另一台干净机执行）
 
-`cd 02-非Docker方式 && ./启动本地安装.sh`（答案同上：回车 / y(数据盘推荐) / 回车 / n / y）。systemd 直装 + 自包含 Runtime，6 方案/同义词自动导入。预演 5 秒完成。
+`cd 02-非Docker方式 && ./启动本地安装.sh`（答案序列：回车 / y(数据盘推荐) / 回车 / n / y）。systemd 直装 + 自包含 Runtime，6 方案/同义词自动导入。预演 5 秒完成。
 
 ## 6. 原厂预演记录（2026-09-19 00:26–00:28 UTC，一次性容器、同版本介质）
 
@@ -94,3 +97,15 @@ docker restart mm-customer   # （在宿主机执行）模拟断电重启；15 �
 
 - 任何屏幕与手册不符/找不到下一步：先按介质内《安装手册》"故障处理"节；仍异常→宿主机 `docker exec mm-customer bash -c 'tail -50 /var/tmp/material_matcher_docker_wizard-*.log'` 取证，并把现象报给原厂（不要手工改库/改配置）。
 - 按到"其它键"会**安全退出且零改动**，直接重新运行 `./启动Docker安装.sh` 即可。
+
+## 8. 生命周期脚本（1.2.7 起随介质两区提供）
+
+| 脚本（01-Docker方式 或 02-非Docker方式 目录内） | 作用 |
+|---|---|
+| `sudo ./重启服务.sh` | 重启本系统服务并探活（60 秒内确认 200） |
+| `sudo ./停用服务.sh` | 停止服务并取消自启；数据/镜像/Docker 全保留 |
+| `sudo ./定时备份.sh enable [HH:MM]` | 每日自动备份（默认 02:30），root-only，保留最近 14 份；`run`/`list`/`disable` |
+| `sudo ./卸载服务.sh` | 仅卸载本系统（容器/镜像/compose 或 systemd 单元）；**不卸载 Docker 软件、保留数据** |
+| `sudo ./卸载服务.sh --purge-data` | 同上并删除数据与配置（两次 yes 确认） |
+
+预演记录（1.2.7，一次性容器）：安装→备份 enable+run（timer active）→停用（health 000）→重启（恢复 200）→卸载（Docker 27.1.1 仍在、本项目镜像清零、数据块保留）→重装（升级模式，health 1.2.7）。见 docker/20260919-lifecycle/。
