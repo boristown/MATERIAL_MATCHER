@@ -1,0 +1,12 @@
+（以下为人工终端转录，一次性密码已按合同脱敏）
+[root@KylinV10-Customer 01-Docker方式]# ./启动Docker安装.sh
+== 欢迎 ==  版本 1.2.5（x86_64）…
+== 环境检查 ==  ✅×8 + ℹ️ 本机没有 Docker：将由介质离线安装 Docker Engine 27.1.1 + ℹ️ 首次安装
+服务监听端口（首次安装默认 18080） [18080]：<回车>
+请选择 admin 初始密码设置方式：…：n
+确认开始？…：y
+[3%]…[100%] 安装完成。
+MATERIAL_MATCHER（Docker 方式）首次安装完成：版本 1.2.5，端口 18080。
+局域网访问地址：http://172.30.88.2:18080
+初始密码（请立即保存）：<REDACTED>
+安装报告：/var/log/material_matcher/install-reports/docker-install-20260919-025451.txt
