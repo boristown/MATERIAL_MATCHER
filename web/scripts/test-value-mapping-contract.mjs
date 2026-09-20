@@ -15,6 +15,14 @@ for (const token of [
   'ruleSourceValueOptions',
   'ruleTargetValueOptions',
   'ruleValueMappingVisible',
+  'expandedValueMappings',
+  'valueMappingConfiguredCount',
+  'valueMappingHasDetectedCandidates',
+  'isValueMappingExpanded',
+  'toggleValueMapping',
+  '已识别候选值',
+  '已配置 {{ valueMappingConfiguredCount(scope.row) }} 项',
+  'v-if="isValueMappingExpanded(scope.row)"',
   '自动识别只提供候选值，必须手工确认对应关系',
   '可手工新增，例如 10、11',
   '可手工新增，例如 国产、进口',
@@ -26,6 +34,12 @@ for (const token of [
   if (!workspace.includes(token)) throw new Error(`value mapping contract missing: ${token}`)
 }
 
+if (workspace.includes('class="value-mapping-editor">') && workspace.includes('v-if="ruleValueMappingVisible(scope.row)" class="value-mapping-editor"')) {
+  throw new Error('value mapping editor must be collapsed by default behind a compact trigger')
+}
+if (!workspace.includes('return expandedValueMappings.value[rule.id] === true')) {
+  throw new Error('value mapping expansion must default to collapsed')
+}
 if (workspace.includes('rule.value_mapping[sourceValue] = ruleTargetEnumValues(rule)[0]')) {
   throw new Error('value mapping must never auto-select a target value')
 }
