@@ -965,12 +965,20 @@ async function pollProgress(): Promise<void> {
     else if (task.value.status === 'COMPLETED') { stopPolling(); await enterStage2Or3() }
   } catch (error) { stopPolling(); ElMessage.error((error as Error).message) }
 }
+async function openReviewForTask(): Promise<void> {
+  const taskId = String(task.value?.task_id ?? '')
+  if (!taskId) return
+  await router.push({ path: '/review', query: { task: taskId } })
+}
 async function enterStage2Or3(): Promise<void> {
   await loadReviewSummary()
-  await loadTaskInputAssets()
   finalized.value = Boolean(task.value?.result_file_id) || task.value?.stage === 'RESULT'
-  if ((reviewSummary.value.pending_review ?? 0) > 0 && !finalized.value) { stage.value = 2; await loadWorkbench() }
-  else { stage.value = 3 }
+  if ((reviewSummary.value.pending_review ?? 0) > 0 && !finalized.value) {
+    await openReviewForTask()
+    return
+  }
+  await loadTaskInputAssets()
+  stage.value = 3
 }
 
 /* ---------- 人工调整 ---------- */
@@ -1716,7 +1724,7 @@ onBeforeUnmount(() => {
       <el-alert v-if="finalized" type="success" :closable="false" title="最终 Excel 已生成:含「匹配摘要」「匹配结果(带状态色)」「TopN候选」「人工操作记录」四张表。"/>
       <h3 style="margin-top:18px">输出资料</h3>
       <div class="actions">
-        <el-button @click="stage=2">← 人工调整</el-button>
+        <el-button @click="openReviewForTask">← 人工调整</el-button>
         <el-button v-if="!finalized" type="primary" @click="finalize">一键生成匹配结果</el-button>
         <el-button v-else type="primary" @click="downloadResult">下载结果 Excel</el-button>
       </div>
