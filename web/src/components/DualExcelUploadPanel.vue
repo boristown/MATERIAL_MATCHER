@@ -25,14 +25,19 @@ type ParsedPayload = {
   columns: ColumnInfo[]
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   source: FileRecord | null
   target: FileRecord | null
   sourceColumns: ColumnInfo[]
   targetColumns: ColumnInfo[]
   sourceIdColumn: string
   groupCodeColumn: string
-}>()
+  mode?: 'data' | 'template'
+}>(), {
+  mode: 'data',
+})
+
+const isTemplateMode = computed(() => props.mode === 'template')
 
 const emit = defineEmits<{
   parsed: [payload: ParsedPayload]
@@ -109,7 +114,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
       loadedInspectionIds.value.target = payload.file.file_id
     }
     emit('parsed', payload)
-    ElMessage.success(`${kind === 'source' ? '待匹配数据' : '集团码标准数据'}解析完成，共识别 ${payload.columns.length} 个字段`)
+    const label = isTemplateMode.value
+      ? (kind === 'source' ? '客户物料模板' : '集团码模板')
+      : (kind === 'source' ? '待匹配数据' : '集团码标准数据')
+    ElMessage.success(`${label}解析完成，共识别 ${payload.columns.length} 个字段`)
   } catch (error) {
     ElMessage.error((error as Error).message || '文件上传解析失败')
   } finally {
@@ -124,8 +132,8 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
       <div class="excel-card-head">
         <div>
           <span class="side-badge">左侧</span>
-          <h4>待匹配数据</h4>
-          <p>上传需要补充集团码的源 Excel</p>
+          <h4>{{ isTemplateMode ? '客户物料模板' : '待匹配数据' }}</h4>
+          <p>{{ isTemplateMode ? '上传客户侧 Excel 模板，系统自动识别字段' : '上传需要补充集团码的源 Excel' }}</p>
         </div>
         <el-tag v-if="source" type="success" size="small">已解析</el-tag>
       </div>
@@ -139,8 +147,8 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
       >
         <div class="drop-content">
           <span class="upload-icon">⬆</span>
-          <b>{{ source ? '重新上传待匹配 Excel' : '拖入待匹配 Excel' }}</b>
-          <small>支持 .xlsx / .xlsm / .csv，上传后自动识别工作表、表头和字段</small>
+          <b>{{ source ? (isTemplateMode ? '重新上传客户物料模板' : '重新上传待匹配 Excel') : (isTemplateMode ? '拖入客户物料模板' : '拖入待匹配 Excel') }}</b>
+          <small>{{ isTemplateMode ? '只需保留真实表头即可；上传后自动识别工作表、表头和字段' : '支持 .xlsx / .xlsm / .csv，上传后自动识别工作表、表头和字段' }}</small>
         </div>
       </el-upload>
       <div v-if="source" class="parsed-block">
@@ -152,7 +160,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
           <span><em>数据</em><b>{{ Number(sourceSheet?.row_count_estimate ?? 0).toLocaleString() }} 行</b></span>
         </div>
         <label class="column-picker">
-          <span>客户物料编码列</span>
+          <span>
+            {{ isTemplateMode ? '客户物料编码字段' : '客户物料编码列' }}
+            <small v-if="isTemplateMode">用于唯一识别每条客户物料。系统会自动识别；未识别时只需在这里确认一次。</small>
+          </span>
           <el-select
             :model-value="sourceIdColumn"
             filterable
@@ -182,8 +193,8 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
       <div class="excel-card-head">
         <div>
           <span class="side-badge">右侧</span>
-          <h4>集团码标准数据</h4>
-          <p>上传作为匹配目标的集团码 Excel</p>
+          <h4>{{ isTemplateMode ? '集团码模板' : '集团码标准数据' }}</h4>
+          <p>{{ isTemplateMode ? '上传集团码侧 Excel 模板，系统自动识别字段' : '上传作为匹配目标的集团码 Excel' }}</p>
         </div>
         <el-tag v-if="target" type="success" size="small">已解析</el-tag>
       </div>
@@ -197,8 +208,8 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
       >
         <div class="drop-content">
           <span class="upload-icon">⬆</span>
-          <b>{{ target ? '重新上传集团码 Excel' : '拖入集团码标准 Excel' }}</b>
-          <small>无需提前维护基础数据，上传后系统会自动完成后续准备</small>
+          <b>{{ target ? (isTemplateMode ? '重新上传集团码模板' : '重新上传集团码 Excel') : (isTemplateMode ? '拖入集团码模板' : '拖入集团码标准 Excel') }}</b>
+          <small>{{ isTemplateMode ? '只需保留真实表头即可；上传后系统会自动识别可映射字段' : '无需提前维护基础数据，上传后系统会自动完成后续准备' }}</small>
         </div>
       </el-upload>
       <div v-if="target" class="parsed-block">
@@ -210,7 +221,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
           <span><em>数据</em><b>{{ Number(targetSheet?.row_count_estimate ?? 0).toLocaleString() }} 行</b></span>
         </div>
         <label class="column-picker">
-          <span>集团码列</span>
+          <span>
+            {{ isTemplateMode ? '集团码字段' : '集团码列' }}
+            <small v-if="isTemplateMode">最终返回给客户的集团码所在列。系统会自动识别；未识别时只需在这里确认一次。</small>
+          </span>
           <el-select
             :model-value="groupCodeColumn"
             filterable
@@ -343,12 +357,20 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
 }
 .column-picker {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   font-size: 12px;
   font-weight: 600;
   color: #475569;
+}
+.column-picker > span small {
+  display: block;
+  margin-top: 3px;
+  color: #8a94a6;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 .sample-preview {
   padding: 10px;

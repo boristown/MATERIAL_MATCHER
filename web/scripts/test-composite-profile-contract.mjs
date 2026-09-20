@@ -23,8 +23,8 @@ expect(uploader.includes('本次任务只有一个源文件'), 'composite task m
 expect(helper.includes('recommendCompositeAssignments'), 'adapter must expose automatic child-target assignment')
 expect(helper.includes('resolveCompositeTargetBindings'), 'adapter must resolve each child assignment to its own catalog version')
 expect(workspace.includes('delete baseAdvanced.composite_run'), 'frontend must leave composite_run generation to the task backend')
-expect(!workspace.includes('fixed_value'), 'fixed-value UI stays owned by the dedicated dependency PR to avoid duplicate implementation')
-expect(!workspace.includes('如 Z001'), 'example values must not be hard-coded into the product UI')
-expect(!workspace.includes('物料类型只匹配 Z001'), 'example field/value names must remain generic')
+expect(workspace.includes('fixed_value'), 'integrated normal-profile fixed-value capability must remain available')
+expect(workspace.includes('v-if="!isCompositeProfile && rules.length"'), 'composite editor must not duplicate normal field-mapping/fixed-value rules')
+expect(!editor.includes('fixed_value') && !uploader.includes('fixed_value'), 'composite-specific panels must keep using child schemes instead of defining their own fixed-value mappings')
 
 console.log('A007 composite frontend contract: OK')

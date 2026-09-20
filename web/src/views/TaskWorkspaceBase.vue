@@ -21,7 +21,7 @@ import { formatDurationMs, formatTimePoint } from '../taskTime'
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
-type FieldSide = { fields: string[]; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
+type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
@@ -83,6 +83,7 @@ const filterEnabled = ref(false)
 const filterField = ref('')
 const filterValues = ref<string[]>([])
 const filterMode = ref<'include' | 'exclude'>('include')
+const filterMatch = ref<'exact' | 'contains'>('exact')
 const successThreshold = ref(88), reviewThreshold = ref(75), topN = ref(5)
 const retrievalMaxLength = ref(256)
 const retrievalDocument = ref<Record<string, unknown>>({})
@@ -193,7 +194,10 @@ const compositeAssignmentsComplete = computed(() =>
 const profileTaskValid = computed(() => Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
 const profileFilterSummary = computed(() => {
   if (!filterEnabled.value || !filterField.value || !filterValues.value.length) return '不过滤'
-  return `${filterField.value} ${filterMode.value === 'exclude' ? '排除' : '包含'} ${filterValues.value.join('、')}`
+  const operator = filterMode.value === 'exclude'
+    ? (filterMatch.value === 'contains' ? '不包含' : '不等于')
+    : (filterMatch.value === 'contains' ? '包含' : '等于')
+  return `${filterField.value} ${operator} ${filterValues.value.join('、')}`
 })
 const profileScopeSummary = computed(() => ({ GLOBAL: '全库匹配', STRICT: '同组匹配', MAPPED: '分类映射' }[scopeMode.value] ?? scopeMode.value))
 const draftStateLabel = computed(() => ({ idle: '草稿待保存', saving: '草稿保存中…', saved: '草稿已保存', error: '草稿保存失败' }[draftSaveState.value]))
@@ -209,8 +213,8 @@ function hintOf(columns: ColumnInfo[], header: string): string {
 function makeRule(sourceFields: string[], targetFields: string[], matcher: string, weight: number, critical = false): Rule {
   return {
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    source: { fields: sourceFields, combine: 'concat', separator: ' ', pipeline: [] },
-    target: { fields: targetFields, combine: 'concat', separator: ' ', pipeline: [] },
+    source: { fields: sourceFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
+    target: { fields: targetFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
     matcher, weight, critical, matcher_options: {},
   }
 }
@@ -279,7 +283,19 @@ function removeRule(ruleId: string): void {
   if (index >= 0) rules.value.splice(index, 1)
 }
 function ruleSideLabel(side: FieldSide): string {
+  if (side.fixed_value !== null && side.fixed_value !== undefined) return `固定值：${side.fixed_value}`
   return side.fields.join(side.combine === 'coalesce' ? ' / ' : ' + ')
+}
+function sideMode(side: FieldSide): 'field' | 'fixed' {
+  return side.fixed_value !== null && side.fixed_value !== undefined ? 'fixed' : 'field'
+}
+function setSideMode(side: FieldSide, mode: string): void {
+  if (mode === 'fixed') {
+    side.fields = []
+    side.fixed_value = ''
+  } else {
+    side.fixed_value = null
+  }
 }
 
 /* ---------- 数据加载 ---------- */
@@ -295,16 +311,20 @@ async function loadFileColumns(fileId: string, kind: 'source' | 'target'): Promi
   if (kind === 'source') {
     source.value = response.file
     sourceColumns.value = columns
-    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && Boolean(sourceIdColumn.value)
-    if (!preserveProfileField && (!sourceIdColumn.value || !columns.some(column => column.header === sourceIdColumn.value))) {
+    const configuredSourceFieldStillExists = Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
+    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && configuredSourceFieldStillExists
+    if (isProfileEditorMode.value) {
+      sourceIdColumn.value = configuredSourceFieldStillExists ? sourceIdColumn.value : findHint(columns, 'source_id')
+    } else if (!preserveProfileField && !configuredSourceFieldStillExists) {
       sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
     }
     if (!filterField.value && !isProfileTaskCreateMode.value) filterField.value = findHint(columns, 'material_group') || findHint(columns, 'material_type') || ''
   } else {
     target.value = response.file
     targetColumns.value = columns
-    if (!groupCodeColumn.value || !columns.some(column => column.header === groupCodeColumn.value)) {
-      groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
+    const configuredGroupCodeStillExists = Boolean(groupCodeColumn.value) && columns.some(column => column.header === groupCodeColumn.value)
+    if (!configuredGroupCodeStillExists) {
+      groupCodeColumn.value = findHint(columns, 'group_code') || (isProfileEditorMode.value ? '' : columns[0]?.header || '')
     }
   }
 }
@@ -313,17 +333,25 @@ function onWorkbookParsed(payload: ParsedWorkbookPayload): void {
   if (payload.kind === 'source') {
     source.value = payload.file
     sourceColumns.value = columns
-    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
-    if (!preserveProfileField) sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
+    const configuredSourceFieldStillExists = Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
+    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && configuredSourceFieldStillExists
+    if (isProfileEditorMode.value) {
+      sourceIdColumn.value = configuredSourceFieldStillExists ? sourceIdColumn.value : findHint(columns, 'source_id')
+    } else if (!preserveProfileField) {
+      sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
+    }
     if (!filterField.value && !isProfileTaskCreateMode.value) filterField.value = findHint(columns, 'material_group') || findHint(columns, 'material_type') || ''
   } else {
     target.value = payload.file
     targetColumns.value = columns
-    groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
+    const configuredGroupCodeStillExists = Boolean(groupCodeColumn.value) && columns.some(column => column.header === groupCodeColumn.value)
+    groupCodeColumn.value = configuredGroupCodeStillExists
+      ? groupCodeColumn.value
+      : (findHint(columns, 'group_code') || (isProfileEditorMode.value ? '' : columns[0]?.header || ''))
     targetMode.value = 'upload'
     catalogVersionId.value = ''
   }
-  if (source.value && target.value && !rules.value.length) autoMap()
+  if (!isCompositeProfile.value && source.value && target.value && !rules.value.length) autoMap()
 }
 function onSourceIdColumnChange(value: string): void {
   sourceIdColumn.value = value
@@ -463,11 +491,13 @@ function loadDocument(document: any): void {
   const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
   profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
   compositeTargetBindings.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
-  if (isProfileEditorMode.value && isCompositeProfile.value) {
-    const remembered = Array.isArray(advancedDocument.template_schema?.source_fields)
-      ? advancedDocument.template_schema.source_fields.map(String)
-      : []
-    if (!sourceColumns.value.length && remembered.length) sourceColumns.value = remembered.map((header: string) => ({ header }))
+  if (isProfileEditorMode.value) {
+    const templateSchema = advancedDocument.template_schema
+    const rememberedSourceFields = Array.isArray(templateSchema?.source_fields) ? templateSchema.source_fields.map(String) : []
+    const rememberedTargetFields = Array.isArray(templateSchema?.target_fields) ? templateSchema.target_fields.map(String) : []
+    if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map((header: string) => ({ header }))
+    if (!isCompositeProfile.value && !targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map((header: string) => ({ header }))
+    if (!isCompositeProfile.value) groupCodeColumn.value = String(templateSchema?.group_code_field ?? '')
   }
   if (!isCompositeProfile.value) {
     compositeChildren.value = []
@@ -491,6 +521,7 @@ function loadDocument(document: any): void {
   filterField.value = String(flt?.field ?? '')
   filterValues.value = Array.isArray(flt?.values) ? flt.values.map(String) : []
   filterMode.value = flt?.mode === 'exclude' ? 'exclude' : 'include'
+  filterMatch.value = flt?.match === 'contains' ? 'contains' : 'exact'
   advanced.value = false
 }
 function workspaceTargetFromDocument(document: any): { fileId: string; groupCodeColumn: string } {
@@ -524,6 +555,13 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     }
   } else {
     delete baseAdvanced.composite_children
+    if (isProfileEditorMode.value && (srcHeaders.value.length || tgtHeaders.value.length)) {
+      baseAdvanced.template_schema = {
+        source_fields: [...srcHeaders.value],
+        target_fields: [...tgtHeaders.value],
+        group_code_field: groupCodeColumn.value || null,
+      }
+    }
     if (includeWorkspaceTarget && target.value) {
       baseAdvanced.workspace_target = {
         file_id: target.value.file_id,
@@ -544,7 +582,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     scope: isCompositeProfile.value
       ? { ...baseScope, source_field: null, target_field: null }
       : { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
-    source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: 'exact' } : null,
+    source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: filterMatch.value } : null,
     rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
     decision: {
       ...baseDecision,
@@ -557,10 +595,17 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     advanced: baseAdvanced,
   }
 }
+function sideReady(side: FieldSide): boolean {
+  return side.fixed_value !== null && side.fixed_value !== undefined
+    ? String(side.fixed_value).trim().length > 0
+    : side.fields.length > 0
+}
 const configValid = computed(() => {
   if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
   if (isCompositeProfile.value) return compositeAssignmentsComplete.value
-  return Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0
+  return Boolean(target.value && groupCodeColumn.value)
+    && rules.value.length > 0
+    && rules.value.every(rule => sideReady(rule.source) && sideReady(rule.target))
 })
 
 async function persistProfileDraft(showMessage = true): Promise<string | null> {
@@ -1014,6 +1059,7 @@ watch([
   filterField,
   filterValues,
   filterMode,
+  filterMatch,
   successThreshold,
   reviewThreshold,
   topN,
@@ -1124,11 +1170,12 @@ onBeforeUnmount(() => {
         <el-alert type="info" :closable="false" title="这是本次匹配的初始配置；后续调整只作用于本次匹配，不会修改已发布方案。"/>
       </div>
 
-      <div v-if="!isProfileEditorMode" class="panel step1-data-panel">
+      <div v-if="!isProfileEditorMode || !isCompositeProfile" class="panel step1-data-panel">
         <div class="section-head step1-heading">
           <div>
-            <h3 style="margin:0">数据上传</h3>
-            <p class="step1-subtitle">{{ isCompositeProfile ? '上传一个 SAP 待匹配文件与多份集团文件；集团文件可以使用不同字段结构，系统会按子方案自动推荐对应关系。' : '只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。' }}</p>
+            <h3 style="margin:0">{{ isProfileEditorMode ? '模板字段识别' : '数据上传' }}</h3>
+            <p v-if="isProfileEditorMode" class="step1-subtitle">字段很多时无需逐个录入。上传客户物料模板和集团码模板，系统自动识别两侧字段，并据此生成后续字段映射。</p>
+            <p v-else class="step1-subtitle">{{ isCompositeProfile ? '上传一个 SAP 待匹配文件与多份集团文件；集团文件可以使用不同字段结构，系统会按子方案自动推荐对应关系。' : '只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。' }}</p>
           </div>
         </div>
         <CompositeTaskUploadPanel
@@ -1152,9 +1199,17 @@ onBeforeUnmount(() => {
           :target-columns="targetColumns"
           :source-id-column="sourceIdColumn"
           :group-code-column="groupCodeColumn"
+          :mode="isProfileEditorMode ? 'template' : 'data'"
           @parsed="onWorkbookParsed"
           @update:sourceIdColumn="onSourceIdColumnChange"
           @update:groupCodeColumn="onGroupCodeColumnChange"
+        />
+        <el-alert
+          v-if="isProfileEditorMode && !isCompositeProfile"
+          class="profile-compatibility-alert"
+          type="info"
+          :closable="false"
+          title="这里上传的两份模板只用于识别字段和辅助配置方案；方案发布后保存的是字段规则，不会把模板当作本次匹配数据。"
         />
         <template v-if="isProfileTaskCreateMode">
           <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前数据与方案配置还需要确认">
@@ -1173,7 +1228,6 @@ onBeforeUnmount(() => {
               <el-radio-button value="composite">跨类目组合方案</el-radio-button>
             </el-radio-group>
           </label>
-          <label v-if="!isCompositeProfile"><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
         </div>
         <CompositeProfilePanel
           v-if="isProfileEditorMode && isCompositeProfile"
@@ -1191,9 +1245,13 @@ onBeforeUnmount(() => {
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
             <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
+            <p v-else class="section-note">建议先上传两份模板自动识别字段。每一侧都可以选择 Excel 字段或固定值；固定值参与字段匹配规则，下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
           </div>
           <div>
-            <el-button v-if="isProfileEditorMode" size="small" type="primary" plain @click="addProfileRule">＋ 添加字段映射</el-button>
+            <template v-if="isProfileEditorMode">
+              <el-button size="small" type="primary" plain :disabled="!sourceColumns.length || !targetColumns.length" @click="autoMap">自动推荐映射</el-button>
+              <el-button size="small" @click="addProfileRule">＋ 添加字段映射</el-button>
+            </template>
             <template v-else>
               <el-button size="small" type="primary" plain :disabled="!sourceColumns.length || !targetColumns.length" @click="autoMap">自动推荐映射</el-button>
               <el-button size="small" :disabled="!sourceColumns.length || !targetColumns.length" @click="rules.push(defaultRule()); normalizeWeights()">手动加一条</el-button>
@@ -1216,16 +1274,28 @@ onBeforeUnmount(() => {
             @target-click="onTargetChip"
           />
         </template>
-        <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
+        <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>
         <el-table v-if="!isCompositeProfile && rules.length" :data="rules" row-key="id" size="small" class="rules-table">
-          <el-table-column label="源字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
-            <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+          <el-table-column label="源侧" min-width="280"><template #default="scope">
+            <div class="field-side-editor">
+              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event))">
+                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
+              </el-select>
+              <el-input v-if="sideMode(scope.row.source) === 'fixed'" v-model="scope.row.source.fixed_value" clearable placeholder="例如：Z001"/>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable :allow-create="!sourceColumns.length" default-first-option placeholder="选择客户模板字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+            </div>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
-          <el-table-column label="目标字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
-            <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+          <el-table-column label="目标侧" min-width="280"><template #default="scope">
+            <div class="field-side-editor">
+              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event))">
+                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
+              </el-select>
+              <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+            </div>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
             <el-select v-model="scope.row.matcher" size="small">
@@ -1241,16 +1311,18 @@ onBeforeUnmount(() => {
       <div class="panel">
         <h3>{{ isProfileEditorMode ? (isCompositeProfile ? '源数据过滤与匹配阈值' : '过滤、匹配范围与阈值') : '③ 匹配设置' }}</h3>
         <div class="filter-row">
-          <el-switch v-model="filterEnabled"/><span>仅处理满足条件的源数据行</span>
+          <el-switch v-model="filterEnabled"/><span>按条件筛选本方案处理的源数据行</span>
           <template v-if="filterEnabled">
-            <el-select v-model="filterField" placeholder="字段" style="width:180px" filterable :allow-create="isProfileEditorMode" default-first-option>
+            <el-select v-model="filterField" placeholder="字段" style="width:180px" filterable :allow-create="isProfileEditorMode && !sourceColumns.length" default-first-option>
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
             </el-select>
-            <el-radio-group v-model="filterMode" size="small"><el-radio-button value="include">等于其中之一</el-radio-button><el-radio-button value="exclude">排除</el-radio-button></el-radio-group>
-            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="输入值后回车" style="width:320px">
+            <span class="muted">条件</span>
+            <el-select v-model="filterMatch" size="small" style="width:100px"><el-option label="等于" value="exact"/><el-option label="包含" value="contains"/></el-select>
+            <el-select v-model="filterMode" size="small" style="width:160px"><el-option label="保留满足条件的行" value="include"/><el-option label="排除满足条件的行" value="exclude"/></el-select>
+            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="默认值，例如：Z001" style="width:300px">
               <el-option v-for="value in filterValues" :key="value" :label="value" :value="value"/>
             </el-select>
-            <span class="muted">按所选源字段和值限定本方案需要处理的数据范围。</span>
+            <span class="muted">例：字段“物料类型” 等于 Z001，只处理该类源数据</span>
           </template>
         </div>
         <div class="threshold">
@@ -1551,7 +1623,7 @@ onBeforeUnmount(() => {
 }
 .profile-editor-meta {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(260px, 0.75fr);
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
   gap: 16px;
   padding-bottom: 18px;
   margin-bottom: 18px;
@@ -1567,6 +1639,20 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.field-side-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.field-side-editor > :last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.side-mode-select {
+  flex: 0 0 96px;
+  width: 96px;
 }
 .compatibility-list {
   padding-top: 6px;
