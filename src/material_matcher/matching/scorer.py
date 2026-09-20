@@ -79,8 +79,10 @@ def _trace_dicts(value: ProcessedValue) -> list[dict[str, object]]:
 
 
 def prepare_side_values(row: Mapping[str, object], side: FieldSide) -> list[ProcessedValue]:
-    raw_values = [row.get(field) for field in side.fields]
     pipeline = _pipeline_dicts(side)
+    if side.fixed_value is not None:
+        return [apply_processing_pipeline(side.fixed_value, pipeline)]
+    raw_values = [row.get(field) for field in side.fields]
     if side.combine == "best_of":
         return [
             apply_processing_pipeline(value, pipeline)
