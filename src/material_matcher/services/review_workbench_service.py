@@ -202,7 +202,8 @@ class ReviewWorkbenchService:
             marks = ",".join("?" for _ in chunk)
             rows = connection.execute(
                 f"""SELECT task_id,source_row_id,rank,target_row_number,target_group_code,target_payload,
-                           score,field_scores,critical_conflict
+                           score,field_scores,critical_conflict,child_profile_id,child_profile_version,
+                           child_profile_name,target_file_id,target_file_name
                     FROM match_candidates
                     WHERE task_id=? AND source_row_id IN ({marks}) AND rank<=?
                     ORDER BY source_row_id,rank""",
