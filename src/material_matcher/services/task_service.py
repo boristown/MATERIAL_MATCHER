@@ -566,6 +566,12 @@ class TaskService:
             if payload.get("composite_targets"):
                 raise DomainError("INVALID_REQUEST", "普通匹配方案不能配置多个目标文件", status_code=422)
             self._replace_draft_targets(draft_id, [])
+        if "composite_targets" in payload:
+            with self.repo.connect() as connection:
+                connection.execute(
+                    "UPDATE task_drafts SET current_step=2,updated_at=? WHERE draft_id=?",
+                    (_now(), draft_id),
+                )
         return self.get_draft(draft_id)
 
     def save_data(self, draft_id: str, payload: dict[str, Any]) -> dict[str, object]:
