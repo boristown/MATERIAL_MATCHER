@@ -16,6 +16,8 @@ if (workspace.includes('v-if="!isProfileEditorMode" class="panel step1-data-pane
 /* 上传模板识别出的全量字段必须进入方案字段选择器。 */
 if (!workspace.includes('...srcHeaders.value')) throw new Error('Recognized source template headers must feed profile source field options')
 if (!workspace.includes('...tgtHeaders.value')) throw new Error('Recognized target template headers must feed profile target field options')
+if (!workspace.includes('baseAdvanced.template_schema')) throw new Error('Recognized template schema must be persisted in the profile document')
+if (!workspace.includes('rememberedSourceFields') || !workspace.includes('rememberedTargetFields')) throw new Error('Saved template schema must be restored when the profile is edited again')
 
 /* 两侧模板准备好后可自动生成映射，新方案无需逐条手工添加。 */
 if (!workspace.includes('@click="autoMap">自动推荐映射</el-button>')) throw new Error('Profile editor must expose automatic mapping after template recognition')
