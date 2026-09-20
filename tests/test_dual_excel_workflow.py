@@ -127,7 +127,7 @@ def test_dual_excel_upload_draft_restore_and_start(authed: TestClient) -> None:
         "group_code_column": "集团码",
     }
     assert restored_document["decision"]["success_threshold"] == 88
-    assert restored_document["decision"]["review_threshold"] == 75
+    assert "review_threshold" not in restored_document["decision"]
     assert restored_document["rules"][0]["source"]["fields"] == ["物料名称", "型号"]
     assert restored_document["rules"][0]["weight"] == 70
     assert restored_document["rules"][0]["matcher"] == "fuzzy"
