@@ -81,7 +81,7 @@ export function buildWorkbenchParams(
   filter: ReviewFilter,
   page: number,
   pageSize: number,
-  includeCandidates = 5,
+  includeCandidates = 0,
 ): Record<string, string | number> {
   const params: Record<string, string | number> = {
     status: filter.status,
@@ -98,7 +98,7 @@ export function buildWorkbenchParams(
 
 export async function fetchWorkbenchPage(taskId: string, filter: ReviewFilter, page: number, pageSize: number): Promise<any> {
   const data = (await api.get(`/tasks/${taskId}/workbench/items`, {
-    params: buildWorkbenchParams(filter, page, pageSize, 5),
+    params: buildWorkbenchParams(filter, page, pageSize),
   })).data ?? {}
   if (Array.isArray(data.items)) {
     for (const item of data.items) {
