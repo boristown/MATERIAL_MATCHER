@@ -13,6 +13,7 @@ from material_matcher.domain.models import MatchingConfig
 from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.ingestion.reader import detect_layout
 from material_matcher.matching.engine import RowResult, match_rows, match_rows_indexed, summarize
+from material_matcher.services.composite_match_service import CompositeMatchService
 from material_matcher.services.result_export_service import ResultExportService
 from material_matcher.services.task_service import task_time_fields
 from material_matcher.settings import Settings
@@ -36,6 +37,7 @@ class MatchService:
         self.settings = settings
         self.indexes = indexes or VectorIndexService(metadata, files, settings)
         self.result_exporter = ResultExportService(metadata, files, settings)
+        self.composite_matcher = CompositeMatchService(metadata, files, self._run_rows)
         self._progress_window: dict[str, list[tuple[float, str, int, int]]] = {}
 
     def observe_progress(self, task_id: str, kind: str, done: int, total: int, *, now: float | None = None) -> None:
@@ -108,7 +110,11 @@ class MatchService:
             raise DomainError("TASK_DRAFT_NOT_FOUND", "任务草稿不存在", status_code=404)
         draft = dict(row)
         config = MatchingConfig.model_validate(json.loads(str(draft["config_document"] or "{}")))
-        if not draft.get("source_file_id") or not draft.get("catalog_version_id") or not config.rules:
+        if (
+            not draft.get("source_file_id")
+            or not draft.get("catalog_version_id")
+            or (not config.rules and not CompositeMatchService.is_composite(config))
+        ):
             raise DomainError("TASK_DRAFT_INCOMPLETE", "请先完成数据选择和匹配规则配置", status_code=422)
         source = self.files.get(str(draft["source_file_id"]))
         catalog = self._catalog(str(draft["catalog_version_id"]))
@@ -137,7 +143,20 @@ class MatchService:
 
     def dry_run(self, draft_id: str, sample_rows: int = 100) -> dict[str, object]:
         _, config, source, catalog = self._draft_context(draft_id)
-        rows = self._run_rows(source=source, target=dict(catalog["file"]), catalog=catalog, config=config, max_source_rows=sample_rows)
+        if CompositeMatchService.is_composite(config):
+            rows = self.composite_matcher.execute(
+                source=source,
+                parent_config=config,
+                max_source_rows=sample_rows,
+            )
+        else:
+            rows = self._run_rows(
+                source=source,
+                target=dict(catalog["file"]),
+                catalog=catalog,
+                config=config,
+                max_source_rows=sample_rows,
+            )
         return {"summary": summarize(rows), "rows": [self._row_response(row) for row in rows]}
 
     @staticmethod
@@ -159,7 +178,29 @@ class MatchService:
             for item in batch:
                 connection.execute("""INSERT OR REPLACE INTO match_items(task_id,source_row_id,source_row_number,source_id,source_payload,original_status,current_status,top1_group_code,top1_score,second_score,score_gap,critical_conflict,final_group_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (task_id, item.source_row_id, item.source_row_number, item.source_id, _json(item.source_payload), item.status, item.status, item.candidates[0].group_code if item.candidates else None, item.first_score, item.second_score, item.score_gap, 1 if item.critical_conflict else 0, item.final_group_code, now, now))
                 for candidate in item.candidates:
-                    connection.execute("""INSERT OR REPLACE INTO match_candidates(task_id,source_row_id,rank,target_row_number,target_group_code,target_payload,score,field_scores,critical_conflict) VALUES(?,?,?,?,?,?,?,?,?)""", (task_id, item.source_row_id, candidate.rank, candidate.target_row_number, candidate.group_code, _json(candidate.target_payload), candidate.score, _json(candidate.field_scores), 1 if candidate.critical_conflict else 0))
+                    connection.execute(
+                        """INSERT OR REPLACE INTO match_candidates(
+                               task_id,source_row_id,rank,target_row_number,target_group_code,target_payload,
+                               score,field_scores,critical_conflict,child_profile_id,child_profile_version,
+                               child_profile_name,target_file_id,target_file_name
+                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            task_id,
+                            item.source_row_id,
+                            candidate.rank,
+                            candidate.target_row_number,
+                            candidate.group_code,
+                            _json(candidate.target_payload),
+                            candidate.score,
+                            _json(candidate.field_scores),
+                            1 if candidate.critical_conflict else 0,
+                            candidate.child_profile_id,
+                            candidate.child_profile_version,
+                            candidate.child_profile_name,
+                            candidate.target_file_id,
+                            candidate.target_file_name,
+                        ),
+                    )
 
     def live_counts(self, task_id: str) -> dict[str, int]:
         with self.meta.connect() as connection:
@@ -186,50 +227,116 @@ class MatchService:
                 )
             config = MatchingConfig.model_validate(json.loads(str(task["config_snapshot"])))
             source = self.files.get(str(task["source_file_id"]))
-            catalog = self._catalog(str(task["catalog_version_id"]))
-            target = self.files.get(str(catalog["source_file_id"]))
             with self.meta.connect() as connection:
                 connection.execute("DELETE FROM match_candidates WHERE task_id=?", (task_id,))
                 connection.execute("DELETE FROM match_items WHERE task_id=?", (task_id,))
-                connection.execute("UPDATE tasks SET status='RUNNING', progress=2, processed_rows=0, total_rows=0 WHERE task_id=?", (task_id,))
-            vector_mode = self._use_vector(config, Path(str(target["stored_path"])))
-            execution_mode = "vector" if vector_mode else "scan"
-            self._set_runtime(task_id, execution_mode, "INDEX" if vector_mode else "RETRIEVE")
+                connection.execute(
+                    "UPDATE tasks SET status='RUNNING', progress=2, processed_rows=0, total_rows=0 WHERE task_id=?",
+                    (task_id,),
+                )
 
-            def index_progress(done: int, total: int) -> None:
-                pct = 3.0 + 27.0 * (done / max(total, 1)); self.observe_progress(task_id, "index", done, total)
-                with self.meta.connect() as connection: connection.execute("UPDATE tasks SET progress=? WHERE task_id=?", (min(30.0, pct), task_id))
-
-            def progress(done: int, total: int) -> None:
-                self.observe_progress(task_id, "query", done, total)
-                if done == 1: self._set_runtime(task_id, execution_mode, "RERANK")
-                base = 32.0 if vector_mode else 5.0; span = 63.0 if vector_mode else 90.0; pct = base + span * (done / max(total, 1))
-                with self.meta.connect() as connection: connection.execute("UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?", (done, total, min(95.0, pct), task_id))
-
-            def index_ready(index_id: str) -> None: self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
             persisted = [0]
+            if CompositeMatchService.is_composite(config):
+                execution_mode = "composite"
+                self._set_runtime(task_id, execution_mode, "RETRIEVE")
 
-            def persist_batch(batch: list[RowResult]) -> None:
-                self._persist_rows(task_id, batch); persisted[0] += len(batch)
+                def composite_progress(child_index: int, child_count: int, done: int, total: int) -> None:
+                    child_fraction = done / max(total, 1)
+                    fraction = (child_index + child_fraction) / max(child_count, 1)
+                    virtual_done = min(total, max(0, int(round(total * fraction))))
+                    self.observe_progress(task_id, "query", virtual_done, max(total, 1))
+                    if done == 1:
+                        self._set_runtime(task_id, execution_mode, "RERANK")
+                    with self.meta.connect() as connection:
+                        connection.execute(
+                            "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
+                            (virtual_done, total, min(95.0, 5.0 + 90.0 * fraction), task_id),
+                        )
 
-            rows = self._run_rows(source=source, target=target, catalog=catalog, config=config, on_progress=progress, on_index_progress=index_progress, on_index_ready=index_ready if vector_mode else None, on_batch=persist_batch)
+                rows = self.composite_matcher.execute(
+                    source=source,
+                    parent_config=config,
+                    on_progress=composite_progress,
+                )
+            else:
+                catalog = self._catalog(str(task["catalog_version_id"]))
+                target = self.files.get(str(catalog["source_file_id"]))
+                vector_mode = self._use_vector(config, Path(str(target["stored_path"])))
+                execution_mode = "vector" if vector_mode else "scan"
+                self._set_runtime(task_id, execution_mode, "INDEX" if vector_mode else "RETRIEVE")
+
+                def index_progress(done: int, total: int) -> None:
+                    pct = 3.0 + 27.0 * (done / max(total, 1))
+                    self.observe_progress(task_id, "index", done, total)
+                    with self.meta.connect() as connection:
+                        connection.execute(
+                            "UPDATE tasks SET progress=? WHERE task_id=?",
+                            (min(30.0, pct), task_id),
+                        )
+
+                def progress(done: int, total: int) -> None:
+                    self.observe_progress(task_id, "query", done, total)
+                    if done == 1:
+                        self._set_runtime(task_id, execution_mode, "RERANK")
+                    base = 32.0 if vector_mode else 5.0
+                    span = 63.0 if vector_mode else 90.0
+                    pct = base + span * (done / max(total, 1))
+                    with self.meta.connect() as connection:
+                        connection.execute(
+                            "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
+                            (done, total, min(95.0, pct), task_id),
+                        )
+
+                def index_ready(index_id: str) -> None:
+                    self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
+
+                def persist_batch(batch: list[RowResult]) -> None:
+                    self._persist_rows(task_id, batch)
+                    persisted[0] += len(batch)
+
+                rows = self._run_rows(
+                    source=source,
+                    target=target,
+                    catalog=catalog,
+                    config=config,
+                    on_progress=progress,
+                    on_index_progress=index_progress,
+                    on_index_ready=index_ready if vector_mode else None,
+                    on_batch=persist_batch,
+                )
+
             self._set_runtime(task_id, execution_mode, "PERSIST")
-            if persisted[0] < len(rows): self._persist_rows(task_id, rows[persisted[0]:])
+            if persisted[0] < len(rows):
+                self._persist_rows(task_id, rows[persisted[0]:])
             with self.meta.connect() as connection:
-                review_count = connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0]
+                review_count = connection.execute(
+                    "SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",
+                    (task_id,),
+                ).fetchone()[0]
                 stage = "REVIEW" if review_count else "RESULT"
                 now = _now()
-                connection.execute("UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?", (stage, len(rows), len(rows), now, task_id))
+                connection.execute(
+                    "UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?",
+                    (stage, len(rows), len(rows), now, task_id),
+                )
                 connection.execute(
                     "UPDATE task_compute_lifecycle SET compute_completed_at=? WHERE task_id=?",
                     (now, task_id),
                 )
-            self._set_runtime(task_id, execution_mode, "DONE"); self._progress_window.pop(task_id, None)
+            self._set_runtime(task_id, execution_mode, "DONE")
+            self._progress_window.pop(task_id, None)
         except Exception as exc:
-            code = exc.code if isinstance(exc, DomainError) else "INTERNAL_ERROR"; message = exc.message if isinstance(exc, DomainError) else str(exc)
-            with self.meta.connect() as connection: connection.execute("UPDATE tasks SET status='FAILED', error_code=?, error_message=?, finished_at=? WHERE task_id=?", (code, message, _now(), task_id))
-            current_mode = self.runtime_status(task_id).get("execution_mode", "unknown"); self._set_runtime(task_id, str(current_mode), "FAILED")
-            if isinstance(exc, DomainError): return
+            code = exc.code if isinstance(exc, DomainError) else "INTERNAL_ERROR"
+            message = exc.message if isinstance(exc, DomainError) else str(exc)
+            with self.meta.connect() as connection:
+                connection.execute(
+                    "UPDATE tasks SET status='FAILED', error_code=?, error_message=?, finished_at=? WHERE task_id=?",
+                    (code, message, _now(), task_id),
+                )
+            current_mode = self.runtime_status(task_id).get("execution_mode", "unknown")
+            self._set_runtime(task_id, str(current_mode), "FAILED")
+            if isinstance(exc, DomainError):
+                return
             raise
 
     def summary(self, task_id: str) -> dict[str, object]:
