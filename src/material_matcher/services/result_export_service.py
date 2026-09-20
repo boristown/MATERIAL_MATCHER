@@ -11,6 +11,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from material_matcher.settings import Settings
+from material_matcher.services.export_profile import load_export_profile
 from material_matcher.storage.files import FileRepository
 from material_matcher.services.task_input_asset_service import TaskInputAssetService
 from material_matcher.services.task_service import (
@@ -21,51 +22,6 @@ from material_matcher.services.task_service import (
 )
 from material_matcher.storage.metadata import MetadataRepository
 
-
-STATUS_LABELS = {
-    "MATCHED": "自动匹配",
-    "CONFIRMED": "人工匹配",
-    "REVIEW": "待处理",
-    "UNMATCHED": "未匹配",
-}
-
-ACTION_LABELS = {
-    "CONFIRM_CANDIDATE": "匹配",
-    "MATCH": "匹配",
-    "BATCH_CONFIRM_TOP1": "匹配",
-    "CANCEL_MATCH": "取消匹配",
-    "CANCEL": "取消匹配",
-    "UNMATCH": "取消匹配",
-    "REMATCH": "重新匹配",
-    "RE_MATCH": "重新匹配",
-    "REJECT_ALL": "标记未匹配",
-    "MARK_UNMATCHED": "标记未匹配",
-    "BATCH_REJECT": "标记未匹配",
-}
-
-HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
-HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
-GROUP_SOURCE_FILL = PatternFill("solid", fgColor="D9EAF7")
-GROUP_RESULT_FILL = PatternFill("solid", fgColor="DDEBF7")
-GROUP_TARGET_FILL = PatternFill("solid", fgColor="E2F0D9")
-GROUP_AUDIT_FILL = PatternFill("solid", fgColor="FFF2CC")
-EXACT_FILL = PatternFill("solid", fgColor="E2F0D9")
-PARTIAL_FILL = PatternFill("solid", fgColor="FFF2CC")
-DIFFERENT_FILL = PatternFill("solid", fgColor="FCE4D6")
-MISSING_FILL = PatternFill("solid", fgColor="E7E6E6")
-STATUS_FILLS = {
-    "自动匹配": PatternFill("solid", fgColor="E2F0D9"),
-    "人工匹配": PatternFill("solid", fgColor="DDEBF7"),
-    "待处理": PatternFill("solid", fgColor="FFF2CC"),
-    "未匹配": PatternFill("solid", fgColor="E7E6E6"),
-}
-THIN_BORDER = Border(
-    left=Side(style="thin", color="D9E2F3"),
-    right=Side(style="thin", color="D9E2F3"),
-    top=Side(style="thin", color="D9E2F3"),
-    bottom=Side(style="thin", color="D9E2F3"),
-)
-DATE_FORMAT = "yyyy-mm-dd hh:mm:ss"
 
 
 def _now() -> str:
@@ -128,23 +84,6 @@ def _ordered_fields(payloads: Iterable[Mapping[str, object]]) -> list[str]:
     return list(fields)
 
 
-def _action_label(action: object) -> str:
-    text = str(action or "").strip().upper()
-    return ACTION_LABELS.get(text, "人工调整" if text else "")
-
-
-def _method_label(status: str, review: Mapping[str, object] | None) -> str:
-    if status == "MATCHED":
-        return "自动匹配"
-    if status == "CONFIRMED":
-        return "人工匹配"
-    if status == "REVIEW":
-        return "待人工处理"
-    if review:
-        return "人工标记未匹配"
-    return "自动判定未匹配"
-
-
 class ResultExportService:
     """Build the customer-facing final workbook without exposing internal diagnostics."""
 
@@ -152,6 +91,7 @@ class ResultExportService:
         self.meta = metadata
         self.files = files
         self.settings = settings
+        self.export_profile = load_export_profile(settings.config_dir)
         self.task_input_assets = TaskInputAssetService(metadata, files)
 
     def _task_actor(self, task_id: str, task: Mapping[str, object], kind: str) -> str:
@@ -305,22 +245,37 @@ class ResultExportService:
                 target_states[field] = "missing"
         return source_states, target_states
 
-    @staticmethod
-    def _fill_for_state(state: str | None) -> PatternFill | None:
-        return {
-            "exact": EXACT_FILL,
-            "partial": PARTIAL_FILL,
-            "different": DIFFERENT_FILL,
-            "missing": MISSING_FILL,
-        }.get(state or "")
+    def _solid_fill(self, key: str) -> PatternFill:
+        return PatternFill("solid", fgColor=self.export_profile.color(key))
 
-    @staticmethod
+    def _thin_border(self) -> Border:
+        color = self.export_profile.color("border_color")
+        return Border(
+            left=Side(style="thin", color=color),
+            right=Side(style="thin", color=color),
+            top=Side(style="thin", color=color),
+            bottom=Side(style="thin", color=color),
+        )
+
+    def _fill_for_state(self, state: str | None) -> PatternFill | None:
+        key = {
+            "exact": "exact_fill",
+            "partial": "partial_fill",
+            "different": "different_fill",
+            "missing": "missing_fill",
+        }.get(state or "")
+        return self._solid_fill(key) if key else None
+
     def _append_grouped_headers(
+        self,
         sheet: Any,
         groups: list[tuple[str, list[str], PatternFill]],
     ) -> dict[str, tuple[int, int]]:
         ranges: dict[str, tuple[int, int]] = {}
         column = 1
+        border = self._thin_border()
+        header_fill = self._solid_fill("header_fill")
+        header_font = Font(color=self.export_profile.color("header_font_color"), bold=True, size=10)
         for group_name, headers, fill in groups:
             if not headers:
                 continue
@@ -329,39 +284,40 @@ class ResultExportService:
             sheet.merge_cells(start_row=1, start_column=start, end_row=1, end_column=end)
             top = sheet.cell(1, start, group_name)
             top.fill = fill
-            top.font = Font(bold=True, color="1F2937")
+            top.font = Font(bold=True, color=self.export_profile.color("group_font_color"))
             top.alignment = Alignment(horizontal="center", vertical="center")
             for current in range(start, end + 1):
                 cell = sheet.cell(1, current)
                 cell.fill = fill
-                cell.border = THIN_BORDER
+                cell.border = border
             for offset, header in enumerate(headers):
                 cell = sheet.cell(2, start + offset, header)
-                cell.fill = HEADER_FILL
-                cell.font = HEADER_FONT
+                cell.fill = header_fill
+                cell.font = header_font
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                cell.border = THIN_BORDER
+                cell.border = border
             ranges[group_name] = (start, end)
             column = end + 1
-        sheet.row_dimensions[1].height = 22
-        sheet.row_dimensions[2].height = 34
-        sheet.freeze_panes = "A3"
+        sheet.row_dimensions[1].height = self.export_profile.group_header_height
+        sheet.row_dimensions[2].height = self.export_profile.column_header_height
+        sheet.freeze_panes = self.export_profile.freeze_panes
         return ranges
 
-    @staticmethod
-    def _style_data_sheet(sheet: Any, *, max_width: int = 38) -> None:
+    def _style_data_sheet(self, sheet: Any, *, max_width: int | None = None) -> None:
         sheet.sheet_view.showGridLines = False
+        border = self._thin_border()
+        resolved_max_width = max_width or self.export_profile.max_column_width
         for row in sheet.iter_rows(min_row=3):
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
-                cell.border = THIN_BORDER
+                cell.border = border
         for index in range(1, sheet.max_column + 1):
             letter = get_column_letter(index)
             width = 10
             for cell in list(sheet[letter])[:250]:
                 if cell.value is not None:
-                    width = max(width, min(max_width, len(str(cell.value)) + 2))
-            sheet.column_dimensions[letter].width = min(max_width, width)
+                    width = max(width, min(resolved_max_width, len(str(cell.value)) + 2))
+            sheet.column_dimensions[letter].width = min(resolved_max_width, width)
         if sheet.max_column:
             sheet.auto_filter.ref = f"A2:{get_column_letter(sheet.max_column)}{max(2, sheet.max_row)}"
 
@@ -370,17 +326,17 @@ class ResultExportService:
         cell.value = _text(value)
         cell.number_format = "@"
 
-    @staticmethod
-    def _write_time(cell: Any, value: object) -> None:
+    def _write_time(self, cell: Any, value: object) -> None:
         parsed = _display_time(value)
         if parsed is None:
             cell.value = ""
             cell.number_format = "@"
         else:
             cell.value = parsed
-            cell.number_format = DATE_FORMAT
+            cell.number_format = self.export_profile.date_format
 
     def export_task(self, task_id: str, task: Mapping[str, object], *, unresolved_review: int) -> dict[str, object]:
+        profile = self.export_profile
         with self.meta.connect() as connection:
             items = [dict(row) for row in connection.execute(
                 "SELECT * FROM match_items WHERE task_id=? ORDER BY COALESCE(source_row_number, CAST(source_row_id AS INTEGER)), CAST(source_row_id AS INTEGER)",
@@ -431,10 +387,10 @@ class ResultExportService:
 
         workbook = Workbook()
         summary = workbook.active
-        summary.title = "匹配摘要"
+        summary.title = profile.sheet("summary")
         summary.sheet_view.showGridLines = False
-        summary["A1"] = "匹配结果摘要"
-        summary["A1"].font = Font(size=16, bold=True, color="1F4E78")
+        summary["A1"] = profile.label("summary_title")
+        summary["A1"].font = Font(size=16, bold=True, color=profile.color("summary_title_color"))
         summary.merge_cells("A1:D1")
         started_by = self._task_actor(task_id, task, "started")
         scheme_name = resolve_task_scheme_name(self.meta, dict(task))
@@ -442,58 +398,69 @@ class ResultExportService:
         business_stamp = f"{business_digits[:8]}_{business_digits[8:14]}"
         timing = task_time_fields(self.meta, dict(task))
         summary_rows = [
-            ("方案名称", scheme_name, "源数据总数", len(items)),
-            ("自动匹配数", counts["MATCHED"], "人工匹配数", counts["CONFIRMED"]),
-            ("未匹配数", counts["UNMATCHED"], "待处理数", counts["REVIEW"]),
-            ("启动账号", started_by, "任务开始时间", timing.get("started_at")),
-            ("自动计算耗时", format_duration_ms(timing.get("compute_duration_ms")), "自动计算完成时间", timing.get("compute_completed_at")),
-            ("结果生成时间", generated_at, "源文件", source_file_name),
-            ("目标集团码文件", target_file_name, "待处理记录", unresolved_review),
+            (profile.summary_label("scheme_name"), scheme_name, False, profile.summary_label("source_total"), len(items), False),
+            (profile.summary_label("automatic_matches"), counts["MATCHED"], False, profile.summary_label("manual_matches"), counts["CONFIRMED"], False),
+            (profile.summary_label("unmatched_count"), counts["UNMATCHED"], False, profile.summary_label("pending_count"), counts["REVIEW"], False),
+            (profile.summary_label("started_by"), started_by, False, profile.summary_label("started_at"), timing.get("started_at"), True),
+            (profile.summary_label("compute_duration"), format_duration_ms(timing.get("compute_duration_ms")), False, profile.summary_label("compute_completed_at"), timing.get("compute_completed_at"), True),
+            (profile.summary_label("generated_at"), generated_at, True, profile.summary_label("source_file"), source_file_name, False),
+            (profile.summary_label("target_file"), target_file_name, False, profile.summary_label("pending_records"), unresolved_review, False),
         ]
+        border = self._thin_border()
         for row_index, values in enumerate(summary_rows, start=3):
             summary.cell(row_index, 1, values[0])
-            summary.cell(row_index, 3, values[2])
+            summary.cell(row_index, 3, values[3])
             for key_col in (1, 3):
-                summary.cell(row_index, key_col).font = Font(bold=True, color="475569")
-                summary.cell(row_index, key_col).fill = PatternFill("solid", fgColor="F3F6FA")
-            if values[0].endswith("时间"):
+                summary.cell(row_index, key_col).font = Font(bold=True, color=profile.color("summary_key_color"))
+                summary.cell(row_index, key_col).fill = self._solid_fill("summary_key_fill")
+            if values[2]:
                 self._write_time(summary.cell(row_index, 2), values[1])
             else:
                 self._write_text(summary.cell(row_index, 2), values[1])
-            if values[2].endswith("时间"):
-                self._write_time(summary.cell(row_index, 4), values[3])
+            if values[5]:
+                self._write_time(summary.cell(row_index, 4), values[4])
             else:
-                self._write_text(summary.cell(row_index, 4), values[3])
+                self._write_text(summary.cell(row_index, 4), values[4])
             for column in range(1, 5):
-                summary.cell(row_index, column).border = THIN_BORDER
+                summary.cell(row_index, column).border = border
                 summary.cell(row_index, column).alignment = Alignment(vertical="center", wrap_text=True)
 
-        summary["A12"] = "字段颜色说明"
-        summary["A12"].font = Font(bold=True, color="475569")
-        legend = [("完全一致", EXACT_FILL), ("部分相似", PARTIAL_FILL), ("不一致", DIFFERENT_FILL), ("无数据", MISSING_FILL)]
+        summary["A12"] = profile.label("legend_title")
+        summary["A12"].font = Font(bold=True, color=profile.color("summary_key_color"))
+        legend = [
+            (profile.legend_label("exact"), self._solid_fill("exact_fill")),
+            (profile.legend_label("partial"), self._solid_fill("partial_fill")),
+            (profile.legend_label("different"), self._solid_fill("different_fill")),
+            (profile.legend_label("missing"), self._solid_fill("missing_fill")),
+        ]
         for offset, (label, fill) in enumerate(legend, start=1):
             cell = summary.cell(13, offset, label)
             cell.fill = fill
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal="center")
-            cell.border = THIN_BORDER
-        summary.column_dimensions["A"].width = 22
-        summary.column_dimensions["B"].width = 34
-        summary.column_dimensions["C"].width = 22
-        summary.column_dimensions["D"].width = 34
-        summary.freeze_panes = "A3"
+            cell.border = border
+        for column, width in profile.summary_column_widths.items():
+            summary.column_dimensions[column].width = width
+        summary.freeze_panes = profile.freeze_panes
 
-        result_sheet = workbook.create_sheet("最终匹配结果")
-        result_headers = ["匹配状态", "最终集团码", "相似度", "匹配方式", "操作账号", "匹配日期时间"]
+        result_sheet = workbook.create_sheet(profile.sheet("final_result"))
+        result_headers = [
+            profile.header("status"),
+            profile.header("final_group_code"),
+            profile.header("similarity"),
+            profile.header("match_method"),
+            profile.header("operator"),
+            profile.header("match_time"),
+        ]
         groups = [
-            ("源数据区", ["源表原始行号", *source_fields], GROUP_SOURCE_FILL),
-            ("匹配结果区", result_headers, GROUP_RESULT_FILL),
-            ("目标数据区", ["目标表原始行号", *target_fields], GROUP_TARGET_FILL),
+            (profile.group("source"), [profile.header("source_row_number"), *source_fields], self._solid_fill("group_source_fill")),
+            (profile.group("result"), result_headers, self._solid_fill("group_result_fill")),
+            (profile.group("target"), [profile.header("target_row_number"), *target_fields], self._solid_fill("group_target_fill")),
         ]
         ranges = self._append_grouped_headers(result_sheet, groups)
-        source_start = ranges["源数据区"][0]
-        result_start = ranges["匹配结果区"][0]
-        target_start = ranges["目标数据区"][0]
+        source_start = ranges[profile.group("source")][0]
+        result_start = ranges[profile.group("result")][0]
+        target_start = ranges[profile.group("target")][0]
 
         for excel_row, item in enumerate(items, start=3):
             source_payload = item["source_payload"]
@@ -511,16 +478,17 @@ class ResultExportService:
             for index, field in enumerate(source_fields, start=source_start + 1):
                 self._write_text(result_sheet.cell(excel_row, index), source_payload.get(field))
 
-            self._write_text(result_sheet.cell(excel_row, result_start), STATUS_LABELS.get(status, ""))
+            self._write_text(result_sheet.cell(excel_row, result_start), profile.status_label(status))
             self._write_text(result_sheet.cell(excel_row, result_start + 1), item.get("final_group_code"))
             result_sheet.cell(excel_row, result_start + 2, similarity)
             result_sheet.cell(excel_row, result_start + 2).number_format = "0.0"
-            self._write_text(result_sheet.cell(excel_row, result_start + 3), _method_label(status, review))
+            self._write_text(result_sheet.cell(excel_row, result_start + 3), profile.method_label(status, reviewed=bool(review)))
             self._write_text(result_sheet.cell(excel_row, result_start + 4), operator)
             self._write_time(result_sheet.cell(excel_row, result_start + 5), match_time)
             status_cell = result_sheet.cell(excel_row, result_start)
-            if status_cell.value in STATUS_FILLS:
-                status_cell.fill = STATUS_FILLS[str(status_cell.value)]
+            status_color = profile.status_color(status)
+            if status_color:
+                status_cell.fill = PatternFill("solid", fgColor=status_color)
 
             result_sheet.cell(excel_row, target_start, selected.get("target_row_number") if selected else None)
             for index, field in enumerate(target_fields, start=target_start + 1):
@@ -538,20 +506,25 @@ class ResultExportService:
 
         self._style_data_sheet(result_sheet)
 
-        top5 = workbook.create_sheet("Top5候选")
-        candidate_result_headers = ["候选排名", "目标表原始行号", "集团码", "相似度"]
+        top5 = workbook.create_sheet(profile.sheet("top_candidates"))
+        candidate_result_headers = [
+            profile.header("candidate_rank"),
+            profile.header("target_row_number"),
+            profile.header("group_code"),
+            profile.header("similarity"),
+        ]
         top_groups = [
-            ("源数据区", ["源表原始行号", "源物料编码", *source_fields], GROUP_SOURCE_FILL),
-            ("候选结果区", candidate_result_headers, GROUP_RESULT_FILL),
-            ("目标数据区", target_fields, GROUP_TARGET_FILL),
+            (profile.group("source"), [profile.header("source_row_number"), profile.header("source_material_code"), *source_fields], self._solid_fill("group_source_fill")),
+            (profile.group("candidate_result"), candidate_result_headers, self._solid_fill("group_result_fill")),
+            (profile.group("target"), target_fields, self._solid_fill("group_target_fill")),
         ]
         top_ranges = self._append_grouped_headers(top5, top_groups)
-        top_source_start = top_ranges["源数据区"][0]
-        top_result_start = top_ranges["候选结果区"][0]
-        top_target_start = top_ranges["目标数据区"][0]
+        top_source_start = top_ranges[profile.group("source")][0]
+        top_result_start = top_ranges[profile.group("candidate_result")][0]
+        top_target_start = top_ranges[profile.group("target")][0]
         candidate_excel_row = 3
         for candidate in candidates:
-            if int(candidate.get("rank") or 999) > 5:
+            if int(candidate.get("rank") or 999) > profile.candidate_top_n:
                 continue
             item = item_by_source.get(str(candidate.get("source_row_id") or ""))
             if item is None:
@@ -581,21 +554,32 @@ class ResultExportService:
             candidate_excel_row += 1
         self._style_data_sheet(top5)
 
-        audit = workbook.create_sheet("人工操作记录")
+        audit = workbook.create_sheet(profile.sheet("audit"))
         audit_groups = [
-            ("源数据", ["源表原始行号", "源物料编码"], GROUP_SOURCE_FILL),
-            ("人工操作", ["操作", "目标表原始行号", "集团码", "操作账号", "备注", "操作时间"], GROUP_AUDIT_FILL),
+            (profile.group("audit_source"), [profile.header("source_row_number"), profile.header("source_material_code")], self._solid_fill("group_source_fill")),
+            (
+                profile.group("audit_action"),
+                [
+                    profile.header("action"),
+                    profile.header("target_row_number"),
+                    profile.header("group_code"),
+                    profile.header("operator"),
+                    profile.header("comment"),
+                    profile.header("action_time"),
+                ],
+                self._solid_fill("group_audit_fill"),
+            ),
         ]
         audit_ranges = self._append_grouped_headers(audit, audit_groups)
-        audit_source_start = audit_ranges["源数据"][0]
-        audit_action_start = audit_ranges["人工操作"][0]
+        audit_source_start = audit_ranges[profile.group("audit_source")][0]
+        audit_action_start = audit_ranges[profile.group("audit_action")][0]
         for excel_row, review in enumerate(reviews, start=3):
             source_key = str(review.get("source_row_id") or "")
             item = item_by_source.get(source_key)
             row_candidates = candidate_by_source.get(source_key, [])
             audit.cell(excel_row, audit_source_start, item.get("source_row_number") if item else None)
             self._write_text(audit.cell(excel_row, audit_source_start + 1), item.get("source_id") if item else None)
-            self._write_text(audit.cell(excel_row, audit_action_start), _action_label(review.get("action")))
+            self._write_text(audit.cell(excel_row, audit_action_start), profile.action_label(review.get("action")))
             audit.cell(excel_row, audit_action_start + 1, self._review_target_row(review, row_candidates))
             self._write_text(audit.cell(excel_row, audit_action_start + 2), review.get("selected_group_code"))
             self._write_text(audit.cell(excel_row, audit_action_start + 3), review.get("operator"))
@@ -603,14 +587,25 @@ class ResultExportService:
             self._write_time(audit.cell(excel_row, audit_action_start + 5), review.get("created_at"))
         self._style_data_sheet(audit)
 
-        unmatched = workbook.create_sheet("未匹配清单")
+        unmatched = workbook.create_sheet(profile.sheet("unmatched"))
         unmatched_groups = [
-            ("源数据区", ["源表原始行号", *source_fields], GROUP_SOURCE_FILL),
-            ("参考信息", ["状态", "第一候选目标行", "第一候选集团码", "第一候选相似度", "最后操作账号", "最后操作时间"], GROUP_RESULT_FILL),
+            (profile.group("source"), [profile.header("source_row_number"), *source_fields], self._solid_fill("group_source_fill")),
+            (
+                profile.group("unmatched_reference"),
+                [
+                    profile.header("unmatched_status"),
+                    profile.header("first_target_row"),
+                    profile.header("first_group_code"),
+                    profile.header("first_similarity"),
+                    profile.header("last_operator"),
+                    profile.header("last_action_time"),
+                ],
+                self._solid_fill("group_result_fill"),
+            ),
         ]
         unmatched_ranges = self._append_grouped_headers(unmatched, unmatched_groups)
-        unmatched_source_start = unmatched_ranges["源数据区"][0]
-        unmatched_result_start = unmatched_ranges["参考信息"][0]
+        unmatched_source_start = unmatched_ranges[profile.group("source")][0]
+        unmatched_result_start = unmatched_ranges[profile.group("unmatched_reference")][0]
         unmatched_excel_row = 3
         for item in items:
             if str(item.get("current_status") or "") != "UNMATCHED":
@@ -622,7 +617,7 @@ class ResultExportService:
             unmatched.cell(unmatched_excel_row, unmatched_source_start, item.get("source_row_number"))
             for index, field in enumerate(source_fields, start=unmatched_source_start + 1):
                 self._write_text(unmatched.cell(unmatched_excel_row, index), item["source_payload"].get(field))
-            self._write_text(unmatched.cell(unmatched_excel_row, unmatched_result_start), "未匹配")
+            self._write_text(unmatched.cell(unmatched_excel_row, unmatched_result_start), profile.status_label("UNMATCHED"))
             unmatched.cell(unmatched_excel_row, unmatched_result_start + 1, top1.get("target_row_number") if top1 else None)
             self._write_text(unmatched.cell(unmatched_excel_row, unmatched_result_start + 2), top1.get("target_group_code") if top1 else None)
             unmatched.cell(unmatched_excel_row, unmatched_result_start + 3, top1.get("score") if top1 else None)
@@ -636,7 +631,7 @@ class ResultExportService:
         workbook.save(output)
         output.seek(0)
         return self.files.save_stream(
-            f"物料集团码匹配结果_{safe_business_filename(scheme_name)}_{business_stamp}.xlsx",
+            f"{safe_business_filename(profile.filename_prefix)}_{safe_business_filename(scheme_name)}_{business_stamp}.xlsx",
             "result",
             output,
             self.settings.max_total_upload_bytes,
