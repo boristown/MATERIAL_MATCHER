@@ -474,17 +474,20 @@ class DecisionCalibrationService:
         with self.meta.connect() as connection:
             self._task(connection, task_id)
             row = connection.execute(
-                "SELECT success_threshold,review_threshold FROM decision_revisions WHERE task_id=? AND revision_no=?",
+                "SELECT success_threshold FROM decision_revisions WHERE task_id=? AND revision_no=?",
                 (task_id, revision_no),
             ).fetchone()
         if row is None:
             raise DomainError("DECISION_REVISION_NOT_FOUND", "阈值版本不存在", status_code=404)
+        # Historical revision rows keep the old review_threshold column for
+        # database compatibility, but rollback no longer revives that concept.
         return self.apply(
             task_id,
             float(row["success_threshold"]),
-            float(row["review_threshold"]),
+            0.0,
             operator=operator,
             rollback_of_revision=revision_no,
+            inclusive_success=True,
         )
 
     @staticmethod
