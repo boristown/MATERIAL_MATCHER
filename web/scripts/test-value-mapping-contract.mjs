@@ -15,7 +15,14 @@ for (const token of [
   'ruleSourceValueOptions',
   'ruleTargetValueOptions',
   'ruleValueMappingVisible',
-  '自动识别只提供候选值，必须手工确认对应关系',
+  'valueMappingConfiguredCount',
+  'valueMappingHasDetectedCandidates',
+  'label="值映射"',
+  'popper-class="value-mapping-popover"',
+  '配置候选',
+  '已配 {{ valueMappingConfiguredCount(scope.row) }} 项',
+  '添加映射',
+  '仅在编码或枚举值不一致时配置；系统不会自动建立对应关系。',
   '可手工新增，例如 10、11',
   '可手工新增，例如 国产、进口',
   '手工选择或输入目标值',
@@ -26,6 +33,21 @@ for (const token of [
   if (!workspace.includes(token)) throw new Error(`value mapping contract missing: ${token}`)
 }
 
+if (!workspace.includes('<el-popover') || !workspace.includes('label="值映射" width="112"')) {
+  throw new Error('value mapping must live in a dedicated lightweight column')
+}
+const targetStart = workspace.indexOf('<el-table-column label="目标侧"')
+const valueMappingStart = workspace.indexOf('<el-table-column label="值映射"')
+if (targetStart < 0 || valueMappingStart < 0 || valueMappingStart <= targetStart) {
+  throw new Error('value mapping column must follow the target field column')
+}
+const targetColumnSource = workspace.slice(targetStart, valueMappingStart)
+if (targetColumnSource.includes('value-mapping-popover-content') || targetColumnSource.includes('value-candidate-editor')) {
+  throw new Error('value mapping editor must not be nested inside the target field cell')
+}
+if (workspace.includes('expandedValueMappings') || workspace.includes('isValueMappingExpanded') || workspace.includes('toggleValueMapping')) {
+  throw new Error('inline expanding value mapping UI must not return')
+}
 if (workspace.includes('rule.value_mapping[sourceValue] = ruleTargetEnumValues(rule)[0]')) {
   throw new Error('value mapping must never auto-select a target value')
 }

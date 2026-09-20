@@ -362,6 +362,12 @@ function ruleValueMappingVisible(rule: Rule): boolean {
     || ruleTargetEnumValues(rule).length > 0
     || Object.keys(rule.value_mapping ?? {}).length > 0
 }
+function valueMappingConfiguredCount(rule: Rule): number {
+  return Object.keys(rule.value_mapping ?? {}).length
+}
+function valueMappingHasDetectedCandidates(rule: Rule): boolean {
+  return ruleSourceEnumValues(rule).length > 0 || ruleTargetEnumValues(rule).length > 0
+}
 function normalizeManualValues(values: string[]): string[] {
   return uniqueValueOptions(values)
 }
@@ -1370,8 +1376,15 @@ onBeforeUnmount(() => {
           />
         </template>
         <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>
-        <el-table v-if="!isCompositeProfile && rules.length" :data="rules" row-key="id" size="small" class="rules-table">
-          <el-table-column label="源侧" min-width="280"><template #default="scope">
+        <el-table
+          v-if="!isCompositeProfile && rules.length"
+          :data="rules"
+          row-key="id"
+          size="small"
+          table-layout="fixed"
+          class="rules-table"
+        >
+          <el-table-column label="源侧" min-width="260"><template #default="scope">
             <div class="field-side-editor">
               <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event), scope.row)">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
@@ -1381,8 +1394,8 @@ onBeforeUnmount(() => {
               <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
             </div>
           </template></el-table-column>
-          <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
-          <el-table-column label="目标侧" min-width="280"><template #default="scope">
+          <el-table-column label="" width="36" align="center"><template #default><span class="rule-arrow">→</span></template></el-table-column>
+          <el-table-column label="目标侧" min-width="260"><template #default="scope">
             <div class="field-side-editor">
               <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event), scope.row)">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
@@ -1390,10 +1403,37 @@ onBeforeUnmount(() => {
               <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
               <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
               <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
-              <div v-if="ruleValueMappingVisible(scope.row)" class="value-mapping-editor">
-                <div class="value-mapping-title">
-                  <b>值转换（可选）</b>
-                  <span>自动识别只提供候选值，必须手工确认对应关系</span>
+            </div>
+          </template></el-table-column>
+          <el-table-column label="值映射" width="112" align="center"><template #default="scope">
+            <el-popover
+              v-if="ruleValueMappingVisible(scope.row)"
+              placement="bottom-end"
+              trigger="click"
+              :width="560"
+              :show-arrow="false"
+              popper-class="value-mapping-popover"
+            >
+              <template #reference>
+                <el-button
+                  link
+                  size="small"
+                  :type="valueMappingConfiguredCount(scope.row) ? 'success' : 'primary'"
+                  class="value-mapping-entry"
+                >
+                  <span v-if="valueMappingConfiguredCount(scope.row)">已配 {{ valueMappingConfiguredCount(scope.row) }} 项</span>
+                  <span v-else-if="valueMappingHasDetectedCandidates(scope.row)">配置候选</span>
+                  <span v-else>添加映射</span>
+                </el-button>
+              </template>
+              <div class="value-mapping-popover-content">
+                <div class="value-mapping-popover-head">
+                  <div>
+                    <b>值映射</b>
+                    <p>仅在编码或枚举值不一致时配置；系统不会自动建立对应关系。</p>
+                  </div>
+                  <el-tag v-if="valueMappingConfiguredCount(scope.row)" size="small" type="success" effect="plain">{{ valueMappingConfiguredCount(scope.row) }} 项已配置</el-tag>
+                  <el-tag v-else-if="valueMappingHasDetectedCandidates(scope.row)" size="small" type="info" effect="plain">已识别候选值</el-tag>
                 </div>
                 <div class="value-candidate-editor">
                   <label>
@@ -1423,7 +1463,8 @@ onBeforeUnmount(() => {
                     </el-select>
                   </label>
                 </div>
-                <div v-if="!ruleSourceValueOptions(scope.row).length" class="value-mapping-empty">暂无候选值，可直接在上方手工新增源值和目标值。</div>
+                <div class="value-mapping-relations-title">对应关系</div>
+                <div v-if="!ruleSourceValueOptions(scope.row).length" class="value-mapping-empty">暂无源值候选，可先在上方补充源值和目标值。</div>
                 <div v-for="sourceValue in ruleSourceValueOptions(scope.row)" :key="sourceValue" class="value-mapping-row">
                   <span class="source-enum-value">{{ sourceValue }}</span><span class="value-arrow">→</span>
                   <el-select
@@ -1440,17 +1481,18 @@ onBeforeUnmount(() => {
                   <el-button v-if="scope.row.value_mapping?.[sourceValue] !== undefined" link type="danger" size="small" @click="removeRuleValueMapping(scope.row, sourceValue)">清除</el-button>
                 </div>
               </div>
-            </div>
+            </el-popover>
+            <span v-else class="value-mapping-na">—</span>
           </template></el-table-column>
-          <el-table-column label="匹配方式" width="150"><template #default="scope">
+          <el-table-column label="匹配方式" width="128" align="center"><template #default="scope">
             <el-select v-model="scope.row.matcher" size="small" @change="onRuleMatcherChange(scope.row, $event)">
               <el-option label="精确匹配" value="exact"/>
               <el-option label="智能匹配" value="semantic" :disabled="!embeddingReady"/>
             </el-select>
           </template></el-table-column>
-          <el-table-column label="权重" width="130"><template #default="scope"><el-input-number v-model="scope.row.weight" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
-          <el-table-column v-if="isProfileEditorMode" label="冲突阻断" width="90"><template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template></el-table-column>
-          <el-table-column label="" width="60"><template #default="scope"><el-button link type="danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
+          <el-table-column label="权重" width="108" align="center"><template #default="scope"><el-input-number v-model="scope.row.weight" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
+          <el-table-column v-if="isProfileEditorMode" label="冲突阻断" width="82" align="center"><template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template></el-table-column>
+          <el-table-column label="" width="48" align="center"><template #default="scope"><el-button link type="danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
         </el-table>
       </div>
 
@@ -1831,13 +1873,126 @@ onBeforeUnmount(() => {
 </style>
 
 <style scoped>
-.value-mapping-editor { flex: 1 0 100%; width: 100%; margin-top: 8px; padding: 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
-.value-mapping-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:9px; font-size:11px; }
-.value-mapping-title span { color:#7b879a; font-weight:400; }
-.value-candidate-editor { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
-.value-candidate-editor label { display:flex; flex-direction:column; gap:4px; min-width:0; color:#64748b; font-size:10.5px; }
-.value-mapping-empty { padding:7px 0; color:#8a94a6; font-size:11px; }
-.value-mapping-row { display:grid; grid-template-columns:minmax(54px, .7fr) 20px minmax(120px, 1.6fr) 42px; align-items:center; gap:5px; margin-top:5px; }
-.source-enum-value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; color:#334155; }
-.value-arrow { text-align:center; color:#8290a3; }
+.rules-table {
+  width: 100%;
+}
+.rules-table :deep(.el-table__header th.el-table__cell) {
+  padding: 8px 0;
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+.rules-table :deep(.el-table__row td.el-table__cell) {
+  padding: 8px 0;
+  vertical-align: middle;
+}
+.rules-table :deep(.cell) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.field-side-editor {
+  flex-wrap: nowrap;
+}
+.side-mode-select {
+  flex: 0 0 82px;
+  width: 82px;
+}
+.rule-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: #64748b;
+  font-size: 16px;
+}
+.value-mapping-entry {
+  padding: 0 2px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.value-mapping-na {
+  color: #cbd5e1;
+}
+.value-mapping-popover-content {
+  min-width: 0;
+}
+.value-mapping-popover-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #eef2f7;
+}
+.value-mapping-popover-head b {
+  color: #1e293b;
+  font-size: 14px;
+}
+.value-mapping-popover-head p {
+  margin: 3px 0 0;
+  color: #7b879a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.value-candidate-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.value-candidate-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 11px;
+}
+.value-mapping-relations-title {
+  margin: 2px 0 6px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+}
+.value-mapping-empty {
+  padding: 8px 0;
+  color: #8a94a6;
+  font-size: 11px;
+}
+.value-mapping-row {
+  display: grid;
+  grid-template-columns: minmax(72px, .8fr) 20px minmax(180px, 1.7fr) 42px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.source-enum-value {
+  overflow: hidden;
+  color: #334155;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.value-arrow {
+  color: #8290a3;
+  text-align: center;
+}
+:global(.value-mapping-popover.el-popper) {
+  padding: 14px;
+  border-color: #dbe4ee;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 12%);
+}
+@media (max-width: 1100px) {
+  .rules-table :deep(.cell) {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .side-mode-select {
+    flex-basis: 76px;
+    width: 76px;
+  }
+}
 </style>
