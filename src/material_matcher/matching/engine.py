@@ -38,6 +38,11 @@ class CandidateResult:
     compared_field_count: int = 0
     compared_weight_coverage: float = 0.0
     auto_match_safe: bool = True
+    child_profile_id: str | None = None
+    child_profile_version: int | None = None
+    child_profile_name: str | None = None
+    target_file_id: str | None = None
+    target_file_name: str | None = None
 
 
 @dataclass(frozen=True)
