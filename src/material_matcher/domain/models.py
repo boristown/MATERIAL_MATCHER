@@ -14,10 +14,21 @@ class ProcessingStep(BaseModel):
 
 
 class FieldSide(BaseModel):
-    fields: list[str] = Field(min_length=1)
+    fields: list[str] = Field(default_factory=list)
+    fixed_value: str | None = None
     combine: CombineMode = "concat"
     separator: str = " "
     pipeline: list[ProcessingStep] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def require_field_or_fixed_value(self) -> "FieldSide":
+        fixed = None if self.fixed_value is None else str(self.fixed_value)
+        has_fixed = fixed is not None and fixed.strip() != ""
+        if has_fixed and self.fields:
+            raise ValueError("字段侧不能同时配置字段和固定值")
+        if not has_fixed and not self.fields:
+            raise ValueError("字段侧至少选择一个字段或设置一个固定值")
+        return self
 
 
 class FieldRule(BaseModel):
