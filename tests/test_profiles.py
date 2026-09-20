@@ -34,6 +34,7 @@ def test_profile_publish_and_rollback_create_immutable_versions(tmp_path: Path) 
     service = ProfileService(meta)
     profile = service.create("通用物料方案", _document())
     profile_id = str(profile["profile_id"])
+    assert "review_threshold" not in profile["draft"]["document"]["decision"]
 
     validated = service.validate(profile_id)
     assert validated["ok"] is True
@@ -41,6 +42,7 @@ def test_profile_publish_and_rollback_create_immutable_versions(tmp_path: Path) 
     v1 = service.publish(profile_id)
     assert v1["version_no"] == 1
     assert v1["status"] == "PUBLISHED"
+    assert "review_threshold" not in v1["document"]["decision"]
     v1_sha = v1["sha256"]
 
     service.save_draft(profile_id, _document(weight=60))
@@ -118,6 +120,7 @@ def test_profile_template_source_is_preserved_into_task_snapshot(tmp_path: Path)
     assert task["profile_id"] == profile_id
     assert task["profile_version"] == 1
     assert task["config_snapshot"]["rules"][0]["weight"] == 72
+    assert "review_threshold" not in task["config_snapshot"]["decision"]
     assert task["config_snapshot"]["advanced"]["template_source"] == {"profile_id": profile_id, "version_no": 1}
 
 
