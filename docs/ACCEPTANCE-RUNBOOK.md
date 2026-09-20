@@ -1,10 +1,10 @@
 # MATERIAL_MATCHER · 人工断网离线部署验证手册（模拟麒麟 V10 实机体验）
 
-更新：2026-09-19　介质：**1.2.8（短路径版：mm-x.y.z / d / n / win7）**　状态：**双轨一键预演通过，环境已就绪**
+更新：2026-09-20　介质：**1.2.9（短路径版：mm-x.y.z / d / n / win7）**　状态：**双轨全新 + 客户机 1.2.8→1.2.9 增量升级全部通过，环境已就绪**
 
 ## 0. 一句话结论
 
-已在本运维服务器上搭建一台**完全断网**（容器 `mm-customer`，银河麒麟 V10 Lance 用户空间 + systemd）的模拟客户机，介质（1.24 GB tar.gz）已放入 `/root/mm/（内有 mm-1.2.8-x86_64.tar.gz 与 sha.txt）`；通过 frp 公网隧道可直接 SSH 登录，人工执行与原厂验收完全相同的"一键"流程。原厂已用一次性容器按本手册全流程预演两遍，结果见第 6 节。
+已在本运维服务器上搭建一台**完全断网**（容器 `mm-customer`，银河麒麟 V10 Lance 用户空间 + systemd）的模拟客户机，介质已放入 `/root/d`（1.2.9 Docker 轨解包目录，已完成 1.2.8→1.2.9 实机增量升级）；通过 frp 公网隧道可直接 SSH 登录，人工执行与原厂验收完全相同的"一键"流程。原厂已用一次性容器按本手册全流程预演两遍，结果见第 6 节。
 
 ## 1. 介质位置
 
@@ -12,7 +12,7 @@
 |---|---|
 | 宿主机（打包件） | `/oracle/codex/work/MATERIAL/release-build/output/MATERIAL_MATCHER-1.2.5-KylinV10-x86_64-双轨最终交付介质.tar.gz` |
 | 宿主机（解压版） | `/oracle/codex/work/MATERIAL/release-build/output/MATERIAL_MATCHER-最终离线交付介质-1.2.5-x86_64/` |
-| **模拟机内（U盘替身）** | `root@mm-customer:/root/mm/（内有 mm-1.2.8-x86_64.tar.gz 与 sha.txt）`（tar.gz + 介质SHA256SUMS.txt，仅此两文件，未解包=干净客户态） |
+| **模拟机内（U盘替身）** | `root@mm-customer:/root/d`（1.2.9 Docker 轨介质，一键入口 `./run.sh`；升级自动检测已装版本） |
 
 大小 1,238,273,556 B（≈1.24 GB）；SHA256 `e16f97ae24585a28d910fc96bab74e1c34549d7ce14e91c2ba3e2e8abd256e16`；冻结 commit `e76b87f9`。
 
@@ -33,8 +33,7 @@ root 密码由运维现场提供（一次性沙箱凭据，不入仓库）。隧
 
 ```bash
 # ① 校验并解包（10 秒）
-cd /root/mm && sha256sum -c sha.txt && tar -xzf mm-1.2.8-x86_64.tar.gz
-cd mm-1.2.8 && sha256sum -c all.sha256 | grep -v ': OK$' | wc -l      # 应为 0
+cd /root/d && sha256sum -c all.sha256 | grep -v ': OK$' | wc -l      # 应为 0
 
 # ② 一键安装（全部命令只有 6 个短名：run/stop/rst/bk/del/menu）
 cd d && ./run.sh
