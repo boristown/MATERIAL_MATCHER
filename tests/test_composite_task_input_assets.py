@@ -3,7 +3,6 @@ from __future__ import annotations
 from hashlib import sha256
 from io import BytesIO
 import json
-import time
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
@@ -305,8 +304,9 @@ def test_composite_draft_freezes_three_heterogeneous_targets_and_keeps_history(
     assert assets["source"]["original_name"] == "SAP_A007.xlsx"
     assert [item["profile_id"] for item in assets["targets"]] == ["P1", "P2", "P3"]
     assert [item["profile_name"] for item in assets["targets"]] == ["电气类方案", "标准件方案", "辅材方案"]
-    assert "file_id" not in json.dumps(assets, ensure_ascii=False)
-    assert "stored_path" not in json.dumps(assets, ensure_ascii=False)
+    exposed = json.dumps(assets, ensure_ascii=False)
+    assert '"file_id"' not in exposed
+    assert '"stored_path"' not in exposed
 
     assert authed.get(f"/api/tasks/{task_id}/input-files/source").content == source_bytes
     for profile_id, original_payload in target_payloads.items():
