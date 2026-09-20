@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import { adaptRulesFromApi, adaptRulesToApi, setBusinessMatchMode } from '../matchMode'
 import DualExcelUploadPanel from '../components/DualExcelUploadPanel.vue'
 import CompositeProfilePanel from '../components/CompositeProfilePanel.vue'
 import CompositeTaskUploadPanel from '../components/CompositeTaskUploadPanel.vue'
@@ -22,7 +23,7 @@ type FileRecord = { file_id: string; original_name: string; sha256?: string; rol
 type ColumnInfo = { header: string; business_hint?: string | null; datatype?: string | null; unique_count?: number | null; samples?: string[]; sample_values?: unknown[]; top_values?: unknown[]; enum_candidate?: boolean }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
 type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
-type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown>; value_mapping: Record<string, string>; value_mapping_source_values: string[]; value_mapping_target_values: string[] }
+type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; __apiMatcher?: string; weight: number; critical: boolean; matcher_options: Record<string, unknown>; value_mapping: Record<string, string>; value_mapping_source_values: string[]; value_mapping_target_values: string[] }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
 type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion | null; latest_published?: ProfileVersion | null }
@@ -215,7 +216,7 @@ function makeRule(sourceFields: string[], targetFields: string[], matcher: strin
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     source: { fields: sourceFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
     target: { fields: targetFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
-    matcher, weight, critical, matcher_options: {}, value_mapping: {}, value_mapping_source_values: [], value_mapping_target_values: [],
+    matcher, __apiMatcher: matcher, weight, critical, matcher_options: {}, value_mapping: {}, value_mapping_source_values: [], value_mapping_target_values: [],
   }
 }
 
@@ -232,10 +233,10 @@ function normalizeWeights(): void {
 
 function autoMap(): void {
   const pairs: Array<[string, string, string, number]> = [
-    ['material_name', 'material_name', 'hybrid', 40],
-    ['model', 'model', 'hybrid', 25],
-    ['specification', 'specification', 'fuzzy', 15],
-    ['manufacturer', 'manufacturer', 'fuzzy', 10],
+    ['material_name', 'material_name', 'semantic', 40],
+    ['model', 'model', 'semantic', 25],
+    ['specification', 'specification', 'semantic', 15],
+    ['manufacturer', 'manufacturer', 'semantic', 10],
     ['material_group', 'material_group', 'exact', 10],
   ]
   const usedTargets = new Set<string>()
@@ -249,7 +250,7 @@ function autoMap(): void {
     if (out.some(rule => rule.source.fields.includes(sCol.header))) continue
     if (sCol.header === sourceIdColumn.value) continue
     const tCol = targetColumns.value.find(column => column.header === sCol.header && !usedTargets.has(column.header) && column.header !== groupCodeColumn.value)
-    if (tCol) { out.push(makeRule([sCol.header], [tCol.header], 'fuzzy', 12)); usedTargets.add(tCol.header) }
+    if (tCol) { out.push(makeRule([sCol.header], [tCol.header], 'semantic', 12)); usedTargets.add(tCol.header) }
   }
   if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
   rules.value = out
@@ -260,10 +261,10 @@ function autoMap(): void {
 function defaultRule(): Rule {
   const sField = sourceColumns.value.find(column => column.header !== sourceIdColumn.value)?.header ?? srcHeaders.value[0] ?? ''
   const tField = targetColumns.value.find(column => column.header !== groupCodeColumn.value)?.header ?? tgtHeaders.value[0] ?? ''
-  return makeRule(sField ? [sField] : [], tField ? [tField] : [], 'hybrid', 100)
+  return makeRule(sField ? [sField] : [], tField ? [tField] : [], 'semantic', 100)
 }
 function addProfileRule(): void {
-  rules.value.push(makeRule([], [], 'hybrid', rules.value.length ? 20 : 100))
+  rules.value.push(makeRule([], [], 'semantic', rules.value.length ? 20 : 100))
 }
 
 function onSourceChip(header: string): void {
@@ -274,13 +275,16 @@ function onTargetChip(header: string): void {
   if (!sourceField) { ElMessage.info('请先点击左侧源字段，再点击右侧目标字段完成连线'); return }
   const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(header))
   if (existing) { ElMessage.warning('该连线已存在'); pendingSource.value = null; return }
-  rules.value.push(makeRule([sourceField], [header], 'hybrid', rules.value.length ? 20 : 100))
+  rules.value.push(makeRule([sourceField], [header], 'semantic', rules.value.length ? 20 : 100))
   normalizeWeights()
   pendingSource.value = null
 }
 function removeRule(ruleId: string): void {
   const index = rules.value.findIndex(rule => rule.id === ruleId)
   if (index >= 0) rules.value.splice(index, 1)
+}
+function onRuleMatcherChange(rule: Rule, value: string): void {
+  setBusinessMatchMode(rule, value)
 }
 function ruleSideLabel(side: FieldSide): string {
   if (side.fixed_value !== null && side.fixed_value !== undefined) return `固定值：${side.fixed_value}`
@@ -568,7 +572,7 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules)
-    ? cloneDocument(value.rules).map((rule: Rule) => ({
+    ? adaptRulesFromApi(cloneDocument(value.rules)).map((rule: Rule) => ({
         ...rule,
         value_mapping: { ...(rule.value_mapping ?? {}) },
         value_mapping_source_values: Array.isArray(rule.value_mapping_source_values) ? rule.value_mapping_source_values.map(String) : [],
@@ -678,7 +682,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
       ? { ...baseScope, source_field: null, target_field: null }
       : { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
     source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: filterMatch.value } : null,
-    rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
+    rules: isCompositeProfile.value ? [] : adaptRulesToApi(rules.value),
     decision: {
       ...baseDecision,
       success_threshold: successThreshold.value,
@@ -1443,8 +1447,9 @@ onBeforeUnmount(() => {
             </div>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
-            <el-select v-model="scope.row.matcher" size="small">
-              <el-option label="完全一致" value="exact"/><el-option label="包含" value="contains"/><el-option label="模糊相似" value="fuzzy"/><el-option label="综合(字符+语义)" value="hybrid"/><el-option :label="embeddingReady?'语义相似(bge)':'语义(模型未就绪)'" value="semantic" :disabled="!embeddingReady"/>
+            <el-select v-model="scope.row.matcher" size="small" @change="onRuleMatcherChange(scope.row, $event)">
+              <el-option label="精确匹配" value="exact"/>
+              <el-option label="智能匹配" value="semantic" :disabled="!embeddingReady"/>
             </el-select>
           </template></el-table-column>
           <el-table-column label="权重" width="130"><template #default="scope"><el-input-number v-model="scope.row.weight" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
