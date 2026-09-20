@@ -17,7 +17,7 @@ if (workspace.includes('v-if="!isProfileEditorMode" class="panel step1-data-pane
 if (!workspace.includes('...srcHeaders.value')) throw new Error('Recognized source template headers must feed profile source field options')
 if (!workspace.includes('...tgtHeaders.value')) throw new Error('Recognized target template headers must feed profile target field options')
 if (!workspace.includes('baseAdvanced.template_schema')) throw new Error('Recognized template schema must be persisted in the profile document')
-if (!workspace.includes('group_code_field: groupCodeColumn.value || null')) throw new Error('Template schema must remember the group-code field selection')
+if (!workspace.includes('group_code_field: isCompositeProfile.value ? null : (groupCodeColumn.value || null)') && !workspace.includes('group_code_field: groupCodeColumn.value || null')) throw new Error('Template schema must remember the group-code field selection')
 if (!workspace.includes('rememberedSourceFields') || !workspace.includes('rememberedTargetFields')) throw new Error('Saved template schema must be restored when the profile is edited again')
 if (workspace.includes('<label><span>客户物料标识字段</span><el-select v-model="sourceIdColumn"')) throw new Error('Do not duplicate the source identifier selector next to the scheme name')
 if (!workspace.includes('placeholder="选择客户模板字段"') || !workspace.includes('placeholder="选择集团码模板字段"')) throw new Error('Profile mapping should prefer recognized template fields over free-text entry')
