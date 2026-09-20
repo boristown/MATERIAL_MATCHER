@@ -317,12 +317,16 @@ def test_composite_draft_freezes_three_heterogeneous_targets_and_keeps_history(
     # Later uploads/catalog versions and even editing the old draft must not change
     # the exact bytes frozen into the historical task.
     replacement_catalogs: dict[str, dict[str, object]] = {}
-    group_code_columns = {"P1": "集团码", "P2": "CODE", "P3": "GC"}
+    replacement_specs = {
+        "P1": (["集团码", "名称"], [["NEW-P1", "后来上传的六角螺栓"]], "集团码"),
+        "P2": (["CODE", "规格", "品牌"], [["NEW-P2", "M10×40", "新版标准件厂"]], "CODE"),
+        "P3": (["GC", "描述", "类别", "单位"], [["NEW-P3", "新版绝缘胶带", "辅材新版", "卷"]], "GC"),
+    }
     for profile_id, catalog in catalogs.items():
-        group_code_column = group_code_columns[profile_id]
+        headers, replacement_rows, group_code_column = replacement_specs[profile_id]
         replacement = _xlsx(
-            [group_code_column, "新版字段", "额外列"],
-            [[f"NEW-{profile_id}", "后来上传的数据", "x"]],
+            headers,
+            replacement_rows,
             f"新版_{profile_id}",
         )
         replacement_file = _upload(authed, f"{profile_id}_集团目录.xlsx", replacement)
