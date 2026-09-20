@@ -52,6 +52,8 @@ class Repo:
     def __init__(self, path: Path):
         self.path = path
         self.connect_count = 0
+        self.trace_sql = False
+        self.statements: list[str] = []
         with sqlite3.connect(path) as c:
             c.executescript(SCHEMA)
             c.execute("INSERT INTO tasks VALUES('t1')")
@@ -61,6 +63,8 @@ class Repo:
         self.connect_count += 1
         c = sqlite3.connect(self.path, timeout=30)
         c.row_factory = sqlite3.Row
+        if self.trace_sql:
+            c.set_trace_callback(self.statements.append)
         try:
             yield c
             c.commit()
@@ -157,8 +161,47 @@ def test_filtered_10000_bulk_confirm_uses_one_transaction_connection(tmp_path):
         assert c.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 10_000
 
 
-def test_100000_filter_and_select_all_contract(tmp_path):
-    repo, svc=service(tmp_path,100_000,("MATCHED","REVIEW","UNMATCHED","REVIEW"),0)
+def test_100000_server_side_status_paging_search_and_select_all_contract(tmp_path):
+    statuses=(
+        ("MATCHED",) * 70
+        + ("REVIEW",) * 12
+        + ("CONFIRMED",) * 10
+        + ("UNMATCHED",) * 8
+    )
+    expected={"MATCHED":70_000,"REVIEW":12_000,"CONFIRMED":10_000,"UNMATCHED":8_000}
+    repo, svc=service(tmp_path,100_000,statuses,0)
+    repo.trace_sql=True
+
+    all_page_1=svc.list_items("t1",status="ALL",page=1,page_size=50)
+    all_page_100=svc.list_items("t1",status="ALL",page=100,page_size=50)
+    assert all_page_1["total"] == 100_000
+    assert all_page_100["total"] == 100_000
+    assert len(all_page_1["items"]) == 50
+    assert len(all_page_100["items"]) == 50
+    assert all_page_1["include_candidates"] == 0
+    assert all("candidates" not in row for row in all_page_1["items"])
+
+    for status,total in expected.items():
+        page_1=svc.list_items("t1",status=status,page=1,page_size=50)
+        page_100=svc.list_items("t1",status=status,page=100,page_size=50)
+        assert page_1["total"] == total
+        assert page_100["total"] == total
+        assert len(page_1["items"]) == 50
+        assert len(page_100["items"]) == 50
+        assert all(row["current_status"] == status for row in page_1["items"])
+        assert svc.selection_count("t1", {"mode":"filter","filter":{"status":status}})["count"] == total
+
+    source_id=svc.list_items("t1",status="ALL",q="SRC-099970",page=1,page_size=50)
+    source_payload=svc.list_items("t1",status="ALL",q="material-99970",page=1,page_size=50)
+    group_code=svc.list_items("t1",status="ALL",q="G099970-1",page=1,page_size=50)
+    review_search=svc.list_items("t1",status="REVIEW",q="SRC-099970",page=1,page_size=50)
+    matched_search=svc.list_items("t1",status="MATCHED",q="SRC-099970",page=1,page_size=50)
+    for result in (source_id,source_payload,group_code,review_search):
+        assert result["total"] == 1
+        assert result["items"][0]["source_row_id"] == "99970"
+    assert matched_search["total"] == 0
+    assert matched_search["items"] == []
+
     start=time.monotonic()
     page=svc.list_items("t1",status="REVIEW",first_score_min=60,first_score_max=80,page=3,page_size=100)
     preview=svc.selection_count("t1", {"mode":"filter","filter":{"status":"REVIEW","first_score_min":60,"first_score_max":80}})
@@ -167,6 +210,13 @@ def test_100000_filter_and_select_all_contract(tmp_path):
     assert 0 < preview["count"] < 100_000
     assert len(page["items"]) == 100
     assert elapsed < 10.0
+
+    normalized_sql=[" ".join(statement.split()) for statement in repo.statements]
+    assert any(
+        "FROM match_items m WHERE" in statement
+        and "LIMIT 50 OFFSET 4950" in statement
+        for statement in normalized_sql
+    )
 
 
 def workbook_for(task_id: str, rows: list[tuple[str,str]]) -> BytesIO:

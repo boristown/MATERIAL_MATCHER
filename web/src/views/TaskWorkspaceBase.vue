@@ -18,6 +18,7 @@ import {
 } from '../compositeProfile'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 import { formatDurationMs, formatTimePoint } from '../taskTime'
+import { selectOneToOneAutoMapPairs } from '../utils/autoMap'
 
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; datatype?: string | null; unique_count?: number | null; samples?: string[]; sample_values?: unknown[]; top_values?: unknown[]; enum_candidate?: boolean }
@@ -231,33 +232,36 @@ function normalizeWeights(): void {
   }
 }
 
-function autoMap(): void {
-  const pairs: Array<[string, string, string, number]> = [
-    ['material_name', 'material_name', 'semantic', 40],
-    ['model', 'model', 'semantic', 25],
-    ['specification', 'specification', 'semantic', 15],
-    ['manufacturer', 'manufacturer', 'semantic', 10],
-    ['material_group', 'material_group', 'exact', 10],
-  ]
-  const usedTargets = new Set<string>()
-  const out: Rule[] = []
-  for (const [sourceHint, targetHint, matcher, weight] of pairs) {
-    const sCol = sourceColumns.value.find(column => column.business_hint === sourceHint && column.header !== sourceIdColumn.value)
-    const tCol = targetColumns.value.find(column => column.business_hint === targetHint && column.header !== groupCodeColumn.value && !usedTargets.has(column.header))
-    if (sCol && tCol) { out.push(makeRule([sCol.header], [tCol.header], matcher, weight)); usedTargets.add(tCol.header) }
-  }
-  for (const sCol of sourceColumns.value) {
-    if (out.some(rule => rule.source.fields.includes(sCol.header))) continue
-    if (sCol.header === sourceIdColumn.value) continue
-    const tCol = targetColumns.value.find(column => column.header === sCol.header && !usedTargets.has(column.header) && column.header !== groupCodeColumn.value)
-    if (tCol) { out.push(makeRule([sCol.header], [tCol.header], 'semantic', 12)); usedTargets.add(tCol.header) }
-  }
-  if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
-  rules.value = out
-  normalizeWeights()
-  ElMessage.success(`已根据字段语义自动生成 ${out.length} 条映射，可继续人工调整`)
+function autoMapRuleDefaults(sourceColumn: ColumnInfo, targetColumn: ColumnInfo): { matcher: string; weight: number } {
+  const hint = sourceColumn.business_hint === targetColumn.business_hint ? sourceColumn.business_hint : null
+  if (hint === 'material_name') return { matcher: 'semantic', weight: 40 }
+  if (hint === 'model') return { matcher: 'semantic', weight: 25 }
+  if (hint === 'specification') return { matcher: 'semantic', weight: 15 }
+  if (hint === 'manufacturer') return { matcher: 'semantic', weight: 10 }
+  if (hint === 'material_group' || hint === 'unit') return { matcher: 'exact', weight: 10 }
+  return { matcher: 'semantic', weight: 12 }
 }
 
+function autoMap(): void {
+  const sourceCandidates = sourceColumns.value.filter(column => column.header !== sourceIdColumn.value)
+  const targetCandidates = targetColumns.value.filter(column => column.header !== groupCodeColumn.value)
+  const selectedPairs = selectOneToOneAutoMapPairs(sourceCandidates, targetCandidates)
+
+  const out = selectedPairs.map(item => {
+    const defaults = autoMapRuleDefaults(item.sourceColumn, item.targetColumn)
+    return makeRule([item.sourceColumn.header], [item.targetColumn.header], defaults.matcher, defaults.weight)
+  })
+
+  rules.value = out
+  normalizeWeights()
+  pendingSource.value = null
+
+  if (out.length) {
+    ElMessage.success(`已自动生成 ${out.length} 条高置信一对一字段映射；多字段组合映射可按需人工添加`)
+  } else {
+    ElMessage.info('未发现足够明确的一对一字段映射，请人工连线确认')
+  }
+}
 function defaultRule(): Rule {
   const sField = sourceColumns.value.find(column => column.header !== sourceIdColumn.value)?.header ?? srcHeaders.value[0] ?? ''
   const tField = targetColumns.value.find(column => column.header !== groupCodeColumn.value)?.header ?? tgtHeaders.value[0] ?? ''
@@ -270,14 +274,45 @@ function addProfileRule(): void {
 function onSourceChip(header: string): void {
   pendingSource.value = pendingSource.value === header ? null : header
 }
-function onTargetChip(header: string): void {
-  const sourceField = pendingSource.value
-  if (!sourceField) { ElMessage.info('请先点击左侧源字段，再点击右侧目标字段完成连线'); return }
-  const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(header))
-  if (existing) { ElMessage.warning('该连线已存在'); pendingSource.value = null; return }
-  rules.value.push(makeRule([sourceField], [header], 'semantic', rules.value.length ? 20 : 100))
+function connectFieldPair(sourceField: string, targetField: string): void {
+  if (!sourceField || !targetField) return
+  if (sourceField === sourceIdColumn.value || targetField === groupCodeColumn.value) return
+  const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(targetField))
+  if (existing) {
+    ElMessage.warning('该连线已存在')
+    pendingSource.value = null
+    return
+  }
+  rules.value.push(makeRule([sourceField], [targetField], 'semantic', rules.value.length ? 20 : 100))
   normalizeWeights()
   pendingSource.value = null
+}
+function onTargetChip(header: string): void {
+  const sourceField = pendingSource.value
+  if (!sourceField) { ElMessage.info('请先点击左侧源字段，再点击右侧目标字段完成连线，也可以直接拖拽'); return }
+  connectFieldPair(sourceField, header)
+}
+function onCanvasConnect(sourceField: string, targetField: string): void {
+  connectFieldPair(sourceField, targetField)
+}
+async function onCanvasRemoveLine(payload: { ruleId: string; sourceField: string; targetField: string }): Promise<void> {
+  const rule = rules.value.find(item => item.id === payload.ruleId)
+  if (!rule) return
+  if (rule.source.fields.length !== 1 || rule.target.fields.length !== 1) {
+    ElMessage.warning('这条连线属于多字段组合规则，请在下方规则中编辑或删除整个组合规则')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除字段连线“${payload.sourceField} → ${payload.targetField}”吗？`,
+      '删除字段连线',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  removeRule(payload.ruleId)
+  ElMessage.success('字段连线已删除')
 }
 function removeRule(ruleId: string): void {
   const index = rules.value.findIndex(rule => rule.id === ruleId)
@@ -1367,8 +1402,8 @@ onBeforeUnmount(() => {
         <div v-if="!isCompositeProfile" class="section-head">
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
-            <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
-            <p v-else class="section-note">建议先上传两份模板自动识别字段。每一侧都可以选择 Excel 字段或固定值；固定值参与字段匹配规则，下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
+            <p v-if="!isProfileEditorMode" class="section-note">自动推荐仅生成一对一字段映射。多字段组合映射可按需人工添加。点击左侧字段再点击右侧字段可快速连线，也可以直接拖拽建立连线。</p>
+            <p v-else class="section-note">建议先上传两份模板自动识别字段。自动推荐仅生成一对一字段映射。多字段组合映射可按需人工添加。每一侧都可以选择 Excel 字段或固定值；固定值参与字段匹配规则，下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
           </div>
           <div>
             <template v-if="isProfileEditorMode">
@@ -1395,6 +1430,8 @@ onBeforeUnmount(() => {
             :pending-source="pendingSource"
             @source-click="onSourceChip"
             @target-click="onTargetChip"
+            @connect="onCanvasConnect"
+            @remove-line="onCanvasRemoveLine"
           />
         </template>
         <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>

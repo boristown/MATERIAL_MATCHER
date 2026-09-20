@@ -36,15 +36,27 @@ const requiredView = [
   'setComparisonPanelRef',
   'revealComparisonPanel',
   'await revealComparisonPanel(item.source_row_id)',
+  'const nextSelected: Record<string, string> = {}',
+  'if (selected === NONE_SELECTION) return null',
+  'critical_conflict: Boolean(candidate?.critical_conflict)',
+  '关键字段不一致',
+  '值映射未配置',
+  '方案中标记为关键字段的内容与候选不一致，因此该候选不会自动通过，需要人工确认；总相似度仍保留用于候选排序。',
+  "{ target_id: selected, comment: '' }",
   '一致',
   '部分一致',
   '不一致',
   '无数据',
   'server-side',
+  'ensureCandidates(item)',
+  'fetchCandidates(activeTaskId.value, item.source_row_id)',
 ]
 
 const requiredApi = [
+  'includeCandidates = 0',
   'include_candidates: includeCandidates',
+  'buildWorkbenchParams(filter, page, pageSize)',
+  'fetchCandidates',
   "mode: 'explicit'",
   "mode: 'filter'",
   "'confirm_top1'",
@@ -69,6 +81,8 @@ const requiredCss = [
   '.review-bulk-bar',
   '.review-data-table thead th',
   '.review-candidate-meta',
+  '.review-candidate-alert.is-critical',
+  '.review-candidate-alert.is-mapping',
   '.review-expanded-card { position: sticky',
   'max-height: 58vh',
   '.is-exact',
@@ -89,13 +103,21 @@ for (const token of requiredCss) {
 }
 
 if (view.includes('hydrateCandidates')) throw new Error('ReviewView must not eager-load candidates for every row')
+if (api.includes('buildWorkbenchParams(filter, page, pageSize, 5)')) throw new Error('Workbench list must not preload Top5 candidates; use fetchCandidates lazily')
+if (!/function onFilterChanged\(\): void \{[\s\S]*?page\.value = 1[\s\S]*?loadItems\(false\)/.test(view)) throw new Error('Status/search filter changes must reset server-side paging to page 1')
+if (!/function onPageSizeChange\(next: number\): void \{[\s\S]*?page\.value = 1[\s\S]*?loadItems\(false\)/.test(view)) throw new Error('Page-size changes must reset server-side paging to page 1')
 if (view.includes('PAGE_SIZE_OPTIONS = [10') || view.includes('PAGE_SIZE_OPTIONS = [20')) throw new Error('STEP3 page size must be 50 / 100 / 200')
 if (view.includes('previewReDecision')) throw new Error('STEP3 UI must use the single-threshold adapter, not expose the legacy dual-threshold call')
 if (api.includes('review_threshold') || api.includes('single_threshold')) throw new Error('STEP3 API adapter must send automatic threshold only')
 if (view.includes("candidate.target_payload['") || view.includes('candidate.target_payload["')) throw new Error('Candidate cards must choose display fields generically instead of hard-coding one material schema')
 if (view.includes('Z001') || view.includes('Z006')) throw new Error('STEP3 candidate display must not hard-code material categories')
+if (!view.includes(":class=\"{ 'is-selected': selectedByRow[item.source_row_id] === candidate.target_group_code }\"")) throw new Error('Top1~Top5 cards must reflect the row selection immediately')
+if (!view.includes("@click=\"setSelectedValue(item, candidate.target_group_code)\"")) throw new Error('Top1~Top5 cards must be selectable inline')
+if (!view.includes("if (item.current_status === 'UNMATCHED') return NONE_SELECTION")) throw new Error('UNMATCHED rows must restore the no-match selection after refresh')
+if (!view.includes("if (item.final_group_code) return String(item.final_group_code)")) throw new Error('Confirmed rows must restore the persisted manual target after refresh')
+if (!view.includes("if (item.current_status === 'MATCHED' && item.top1_group_code) return String(item.top1_group_code)")) throw new Error('Automatic matches must restore Top1 after refresh')
 
-for (const banned of ['人工处理下限', '人工确认下限', '人工匹配下限', '双阈值', '关键字段', '关键字段冲突', '为什么系统犹豫', '风险分类', '扣分项', '原始数据摘要']) {
+for (const banned of ['人工处理下限', '人工确认下限', '人工匹配下限', '双阈值', '无冲突', '为什么系统犹豫', '风险分类', '扣分项', '原始数据摘要', '<el-drawer', '候选对比']) {
   if (view.includes(banned)) throw new Error(`Banned STEP3 wording found: ${banned}`)
 }
 

@@ -4,7 +4,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 type ColumnInfo = { header: string; business_hint?: string | null }
 type FieldSide = { fields: string[]; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
-type LinePosition = { id: string; ruleId: string; x1: number; y1: number; x2: number; y2: number }
+type LinePosition = { id: string; ruleId: string; sourceField: string; targetField: string; x1: number; y1: number; x2: number; y2: number }
+type RemoveLinePayload = { ruleId: string; sourceField: string; targetField: string }
 
 const props = defineProps<{
   sourceColumns: ColumnInfo[]
@@ -17,6 +18,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   sourceClick: [header: string]
   targetClick: [header: string]
+  connect: [sourceField: string, targetField: string]
+  removeLine: [payload: RemoveLinePayload]
 }>()
 
 const viewMode = ref<'all' | 'connected'>('all')
@@ -24,6 +27,8 @@ const canvasRef = ref<HTMLElement | null>(null)
 const chipRefs: Record<string, HTMLElement | null> = {}
 const linePositions = ref<LinePosition[]>([])
 const canvasSize = ref({ width: 0, height: 0 })
+const draggingSource = ref<string | null>(null)
+const dragOverTarget = ref<string | null>(null)
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))]
@@ -94,6 +99,8 @@ function updateLines(): void {
         positions.push({
           id: stableLineId(rule.id, sourceField, targetField),
           ruleId: rule.id,
+          sourceField,
+          targetField,
           x1: sourceBox.right - box.left + scrollLeft,
           y1: sourceBox.top + sourceBox.height / 2 - box.top + scrollTop,
           x2: targetBox.left - box.left + scrollLeft,
@@ -119,6 +126,43 @@ function linePath(line: LinePosition): string {
   return `M ${line.x1} ${line.y1} C ${line.x1 + bend} ${line.y1}, ${line.x2 - bend} ${line.y2}, ${line.x2} ${line.y2}`
 }
 
+function startSourceDrag(header: string, event: DragEvent): void {
+  if (header === props.sourceIdColumn) return
+  draggingSource.value = header
+  dragOverTarget.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'link'
+    event.dataTransfer.setData('text/plain', header)
+  }
+}
+function finishSourceDrag(): void {
+  draggingSource.value = null
+  dragOverTarget.value = null
+}
+function targetDragOver(header: string, event: DragEvent): void {
+  if (header === props.groupCodeColumn || !draggingSource.value) return
+  event.preventDefault()
+  dragOverTarget.value = header
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'link'
+}
+function targetDragLeave(header: string): void {
+  if (dragOverTarget.value === header) dragOverTarget.value = null
+}
+function dropOnTarget(header: string, event: DragEvent): void {
+  if (header === props.groupCodeColumn) return
+  event.preventDefault()
+  const sourceField = draggingSource.value || event.dataTransfer?.getData('text/plain') || ''
+  if (sourceField) emit('connect', sourceField, header)
+  finishSourceDrag()
+}
+function requestRemoveLine(line: LinePosition): void {
+  emit('removeLine', {
+    ruleId: line.ruleId,
+    sourceField: line.sourceField,
+    targetField: line.targetField,
+  })
+}
+
 watch(() => props.rules, scheduleLineUpdate, { deep: true })
 watch(() => [props.sourceColumns, props.targetColumns], scheduleLineUpdate, { deep: true })
 watch(viewMode, scheduleLineUpdate)
@@ -142,13 +186,20 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
   <div v-if="viewMode === 'connected' && !hasConnectedFields" class="mapping-connected-empty">还没有字段连线，切换到“全部字段”后可开始映射。</div>
   <div v-else ref="canvasRef" class="mapping-canvas mapping-canvas-scroll" @scroll="updateLines">
     <svg class="lines" :width="canvasSize.width" :height="canvasSize.height" :style="{ width: `${canvasSize.width}px`, height: `${canvasSize.height}px` }">
-      <path
-        v-for="line in linePositions"
-        :key="line.id"
-        :d="linePath(line)"
-        class="map-line"
-        :class="{ critical: criticalRuleIds.has(line.ruleId) }"
-      />
+      <g v-for="line in linePositions" :key="line.id" class="map-line-group">
+        <path
+          :d="linePath(line)"
+          class="map-line-hit"
+          @click.stop="requestRemoveLine(line)"
+        >
+          <title>点击删除：{{ line.sourceField }} → {{ line.targetField }}</title>
+        </path>
+        <path
+          :d="linePath(line)"
+          class="map-line"
+          :class="{ critical: criticalRuleIds.has(line.ruleId) }"
+        />
+      </g>
     </svg>
     <div class="field-col">
       <div class="field-col-title">源字段(SAP)</div>
@@ -161,7 +212,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
           selected: pendingSource === column.header,
           used: connectedSourceHeaders.includes(column.header),
           idcol: column.header === sourceIdColumn,
+          dragging: draggingSource === column.header,
         }"
+        :draggable="column.header !== sourceIdColumn"
+        :title="column.header === sourceIdColumn ? '源数据标识字段不参与字段映射' : '可点击选择，也可拖拽到右侧字段建立连线'"
+        @dragstart="startSourceDrag(column.header, $event)"
+        @dragend="finishSourceDrag"
         @click="column.header !== sourceIdColumn && emit('sourceClick', column.header)"
       >
         <span>{{ column.header }}</span><em v-if="column.business_hint" class="hint">{{ column.business_hint }}</em>
@@ -177,7 +233,13 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
         :class="{
           used: connectedTargetHeaders.includes(column.header),
           idcol: column.header === groupCodeColumn,
+          'drop-ready': Boolean(draggingSource) && column.header !== groupCodeColumn,
+          'drop-active': dragOverTarget === column.header,
         }"
+        :title="column.header === groupCodeColumn ? '集团编码字段不参与字段映射' : '将左侧字段拖到这里建立连线'"
+        @dragover="targetDragOver(column.header, $event)"
+        @dragleave="targetDragLeave(column.header)"
+        @drop="dropOnTarget(column.header, $event)"
         @click="column.header !== groupCodeColumn && emit('targetClick', column.header)"
       >
         <span>{{ column.header }}</span><em v-if="column.business_hint" class="hint">{{ column.business_hint }}</em>
@@ -231,5 +293,32 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
 }
 .map-line {
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.map-line-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.map-line-group:hover .map-line {
+  stroke: #ef4444;
+  stroke-width: 3;
+  opacity: 0.95;
+}
+.field-chip.dragging {
+  opacity: 0.55;
+  border-color: var(--mm-brand);
+}
+.field-chip.right.drop-ready {
+  border-style: dashed;
+  border-color: #93c5fd;
+}
+.field-chip.right.drop-active {
+  border-color: var(--mm-brand);
+  background: var(--el-color-primary-light-9);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
 }
 </style>

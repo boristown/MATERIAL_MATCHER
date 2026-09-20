@@ -73,6 +73,7 @@ type ProgressState = {
 type FieldScore = {
   rule_id: string
   score: number
+  unconfigured_source_values?: unknown[]
 }
 
 type Candidate = {
@@ -82,6 +83,7 @@ type Candidate = {
   score: number
   target_payload: Record<string, unknown>
   field_scores?: FieldScore[]
+  critical_conflict?: boolean
 }
 
 type CandidateDisplayField = {
@@ -102,6 +104,7 @@ type WorkbenchItem = {
   current_status?: string
   original_status?: string
   final_group_code?: string | null
+  critical_conflict?: boolean
   candidates?: Candidate[]
 }
 
@@ -411,8 +414,12 @@ function candidateDisplayFields(candidate: Candidate): CandidateDisplayField[] {
 }
 function selectedCandidate(item: WorkbenchItem): Candidate | null {
   const selected = selectedByRow.value[item.source_row_id]
-  if (!selected || selected === NONE_SELECTION) return candidatesFor(item)[0] ?? null
+  if (selected === NONE_SELECTION) return null
+  if (!selected) return candidatesFor(item)[0] ?? null
   return candidatesFor(item).find(candidate => candidate.target_group_code === selected) ?? candidatesFor(item)[0] ?? null
+}
+function candidateHasUnconfiguredValue(candidate: Candidate): boolean {
+  return Boolean(candidate.field_scores?.some(field => Array.isArray(field.unconfigured_source_values) && field.unconfigured_source_values.length > 0))
 }
 function selectedComparisonKind(item: WorkbenchItem, field: FieldDescriptor): ComparisonKind {
   const candidate = selectedCandidate(item)
@@ -543,6 +550,7 @@ function normalizeCandidate(candidate: any): Candidate {
     score: Number(candidate?.score ?? 0),
     target_payload: candidate?.target_payload && typeof candidate.target_payload === 'object' ? candidate.target_payload : {},
     field_scores: Array.isArray(candidate?.field_scores) ? candidate.field_scores : [],
+    critical_conflict: Boolean(candidate?.critical_conflict),
   }
 }
 function normalizeWorkbenchItem(item: any): WorkbenchItem {
@@ -558,6 +566,7 @@ function normalizeWorkbenchItem(item: any): WorkbenchItem {
     current_status: String(item?.current_status ?? item?.status ?? 'REVIEW'),
     original_status: item?.original_status ? String(item.original_status) : undefined,
     final_group_code: item?.final_group_code ? String(item.final_group_code) : null,
+    critical_conflict: Boolean(item?.critical_conflict),
     candidates: Array.isArray(item?.candidates) ? item.candidates.map(normalizeCandidate).slice(0, 5) : undefined,
   }
 }
@@ -667,10 +676,10 @@ async function loadItems(resetPage = false, version = contextVersion): Promise<v
     workbenchItems.value = items
     workbenchTotal.value = Number(response.total ?? 0)
     const nextMap: Record<string, Candidate[]> = {}
-    const nextSelected = { ...selectedByRow.value }
+    const nextSelected: Record<string, string> = {}
     for (const item of items) {
       if (item.candidates?.length) nextMap[item.source_row_id] = item.candidates
-      if (!(item.source_row_id in nextSelected)) nextSelected[item.source_row_id] = initialSelection(item)
+      nextSelected[item.source_row_id] = initialSelection(item)
     }
     candidateMap.value = nextMap
     selectedByRow.value = nextSelected
@@ -1222,6 +1231,14 @@ onBeforeUnmount(() => {
                         <span class="review-candidate-topline"><span>Top {{ candidate.rank }}</span><small>{{ formatScore(candidate.score) }} 分</small></span>
                         <b class="review-candidate-code" :title="candidate.target_group_code">{{ candidate.target_group_code || '—' }}</b>
                         <span v-for="field in candidateDisplayFields(candidate)" :key="field.id" class="review-candidate-meta" :title="`${field.label}：${field.value}`"><em>{{ field.label }}</em><i>{{ field.value }}</i></span>
+                        <span v-if="candidate.critical_conflict || candidateHasUnconfiguredValue(candidate)" class="review-candidate-alerts">
+                          <el-tooltip v-if="candidate.critical_conflict" content="方案中标记为关键字段的内容与候选不一致，因此该候选不会自动通过，需要人工确认；总相似度仍保留用于候选排序。" placement="top">
+                            <span class="review-candidate-alert is-critical">关键字段不一致</span>
+                          </el-tooltip>
+                          <el-tooltip v-if="candidateHasUnconfiguredValue(candidate)" content="源数据中出现了方案尚未配置转换关系的值，请确认后再选择该候选。" placement="top">
+                            <span class="review-candidate-alert is-mapping">值映射未配置</span>
+                          </el-tooltip>
+                        </span>
                       </button>
                       <button type="button" class="is-none" :class="{ 'is-selected': selectedByRow[item.source_row_id] === NONE_SELECTION }" @click="setSelectedValue(item, NONE_SELECTION)"><span>无匹配</span><b>均不匹配</b><small>不选 Top5</small></button>
                     </div>
