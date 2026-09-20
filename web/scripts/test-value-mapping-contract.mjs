@@ -19,9 +19,10 @@ for (const token of [
   'valueMappingHasDetectedCandidates',
   'label="值映射"',
   'popper-class="value-mapping-popover"',
-  '配置候选',
-  '已配 {{ valueMappingConfiguredCount(scope.row) }} 项',
-  '添加映射',
+  '<span>值映射</span>',
+  '· 已配 {{ valueMappingConfiguredCount(scope.row) }} 项',
+  '· 有候选',
+  '发现候选值',
   '仅在编码或枚举值不一致时配置；系统不会自动建立对应关系。',
   '可手工新增，例如 10、11',
   '可手工新增，例如 国产、进口',
@@ -68,3 +69,7 @@ if (!workspace.includes('Object.keys(rule.value_mapping ?? {})') || !workspace.i
 }
 
 console.log('value mapping contract checks passed')
+
+if (workspace.includes('>配置候选<') || workspace.includes('>添加映射<')) {
+  throw new Error('value mapping entry must use one stable business label')
+}
