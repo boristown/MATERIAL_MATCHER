@@ -115,6 +115,7 @@ const downloadingOriginal = ref('')
 
 /* ---------- 连线画布 ---------- */
 const pendingSource = ref<string | null>(null)
+const expandedValueMappings = ref<Record<string, boolean>>({})
 
 const srcHeaders = computed(() => sourceColumns.value.map(column => column.header))
 const tgtHeaders = computed(() => targetColumns.value.map(column => column.header))
@@ -361,6 +362,21 @@ function ruleValueMappingVisible(rule: Rule): boolean {
     || ruleSourceEnumValues(rule).length > 0
     || ruleTargetEnumValues(rule).length > 0
     || Object.keys(rule.value_mapping ?? {}).length > 0
+}
+function valueMappingConfiguredCount(rule: Rule): number {
+  return Object.keys(rule.value_mapping ?? {}).length
+}
+function valueMappingHasDetectedCandidates(rule: Rule): boolean {
+  return ruleSourceEnumValues(rule).length > 0 || ruleTargetEnumValues(rule).length > 0
+}
+function isValueMappingExpanded(rule: Rule): boolean {
+  return expandedValueMappings.value[rule.id] === true
+}
+function toggleValueMapping(rule: Rule): void {
+  expandedValueMappings.value = {
+    ...expandedValueMappings.value,
+    [rule.id]: !isValueMappingExpanded(rule),
+  }
 }
 function normalizeManualValues(values: string[]): string[] {
   return uniqueValueOptions(values)
@@ -1390,54 +1406,71 @@ onBeforeUnmount(() => {
               <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
               <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
               <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
-              <div v-if="ruleValueMappingVisible(scope.row)" class="value-mapping-editor">
-                <div class="value-mapping-title">
-                  <b>值转换（可选）</b>
-                  <span>自动识别只提供候选值，必须手工确认对应关系</span>
-                </div>
-                <div class="value-candidate-editor">
-                  <label>
-                    <span>源值候选</span>
+              <div v-if="ruleValueMappingVisible(scope.row)" class="value-mapping-shell">
+                <button
+                  type="button"
+                  class="value-mapping-toggle"
+                  :aria-expanded="isValueMappingExpanded(scope.row)"
+                  @click="toggleValueMapping(scope.row)"
+                >
+                  <span class="value-mapping-toggle-label">
+                    <span>{{ valueMappingHasDetectedCandidates(scope.row) || valueMappingConfiguredCount(scope.row) ? '值转换' : '+ 值转换' }}</span>
+                    <span class="value-mapping-optional">可选</span>
+                  </span>
+                  <span class="value-mapping-toggle-meta">
+                    <el-tag v-if="valueMappingConfiguredCount(scope.row)" size="small" type="success">已配置 {{ valueMappingConfiguredCount(scope.row) }} 项</el-tag>
+                    <el-tag v-else-if="valueMappingHasDetectedCandidates(scope.row)" size="small" type="info">已识别候选值</el-tag>
+                    <span class="value-mapping-toggle-action">{{ isValueMappingExpanded(scope.row) ? '收起 ▲' : '展开 ▼' }}</span>
+                  </span>
+                </button>
+                <div v-if="isValueMappingExpanded(scope.row)" class="value-mapping-editor">
+                  <div class="value-mapping-title">
+                    <span>自动识别只提供候选值，必须手工确认对应关系</span>
+                  </div>
+                  <div class="value-candidate-editor">
+                    <label>
+                      <span>源值候选</span>
+                      <el-select
+                        v-model="scope.row.value_mapping_source_values"
+                        multiple
+                        filterable
+                        allow-create
+                        default-first-option
+                        placeholder="可手工新增，例如 10、11"
+                      >
+                        <el-option v-for="value in ruleSourceEnumValues(scope.row)" :key="value" :label="value" :value="value"/>
+                      </el-select>
+                    </label>
+                    <label>
+                      <span>目标值候选</span>
+                      <el-select
+                        v-model="scope.row.value_mapping_target_values"
+                        multiple
+                        filterable
+                        allow-create
+                        default-first-option
+                        placeholder="可手工新增，例如 国产、进口"
+                      >
+                        <el-option v-for="value in ruleTargetEnumValues(scope.row)" :key="value" :label="value" :value="value"/>
+                      </el-select>
+                    </label>
+                  </div>
+                  <div v-if="!ruleSourceValueOptions(scope.row).length" class="value-mapping-empty">暂无候选值，可直接在上方手工新增源值和目标值。</div>
+                  <div v-for="sourceValue in ruleSourceValueOptions(scope.row)" :key="sourceValue" class="value-mapping-row">
+                    <span class="source-enum-value">{{ sourceValue }}</span><span class="value-arrow">→</span>
                     <el-select
-                      v-model="scope.row.value_mapping_source_values"
-                      multiple
+                      :model-value="scope.row.value_mapping?.[sourceValue] ?? ''"
+                      clearable
                       filterable
                       allow-create
                       default-first-option
-                      placeholder="可手工新增，例如 10、11"
+                      placeholder="手工选择或输入目标值"
+                      @update:model-value="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))"
                     >
-                      <el-option v-for="value in ruleSourceEnumValues(scope.row)" :key="value" :label="value" :value="value"/>
+                      <el-option v-for="targetValue in ruleTargetValueOptions(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
                     </el-select>
-                  </label>
-                  <label>
-                    <span>目标值候选</span>
-                    <el-select
-                      v-model="scope.row.value_mapping_target_values"
-                      multiple
-                      filterable
-                      allow-create
-                      default-first-option
-                      placeholder="可手工新增，例如 国产、进口"
-                    >
-                      <el-option v-for="value in ruleTargetEnumValues(scope.row)" :key="value" :label="value" :value="value"/>
-                    </el-select>
-                  </label>
-                </div>
-                <div v-if="!ruleSourceValueOptions(scope.row).length" class="value-mapping-empty">暂无候选值，可直接在上方手工新增源值和目标值。</div>
-                <div v-for="sourceValue in ruleSourceValueOptions(scope.row)" :key="sourceValue" class="value-mapping-row">
-                  <span class="source-enum-value">{{ sourceValue }}</span><span class="value-arrow">→</span>
-                  <el-select
-                    :model-value="scope.row.value_mapping?.[sourceValue] ?? ''"
-                    clearable
-                    filterable
-                    allow-create
-                    default-first-option
-                    placeholder="手工选择或输入目标值"
-                    @update:model-value="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))"
-                  >
-                    <el-option v-for="targetValue in ruleTargetValueOptions(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
-                  </el-select>
-                  <el-button v-if="scope.row.value_mapping?.[sourceValue] !== undefined" link type="danger" size="small" @click="removeRuleValueMapping(scope.row, sourceValue)">清除</el-button>
+                    <el-button v-if="scope.row.value_mapping?.[sourceValue] !== undefined" link type="danger" size="small" @click="removeRuleValueMapping(scope.row, sourceValue)">清除</el-button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1831,9 +1864,30 @@ onBeforeUnmount(() => {
 </style>
 
 <style scoped>
-.value-mapping-editor { flex: 1 0 100%; width: 100%; margin-top: 8px; padding: 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
-.value-mapping-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:9px; font-size:11px; }
-.value-mapping-title span { color:#7b879a; font-weight:400; }
+.value-mapping-shell { flex: 1 0 100%; width: 100%; margin-top: 3px; }
+.value-mapping-toggle {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.value-mapping-toggle:hover { color: #2563eb; }
+.value-mapping-toggle-label,
+.value-mapping-toggle-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.value-mapping-toggle-label { font-size: 11px; font-weight: 600; }
+.value-mapping-optional { color: #94a3b8; font-size: 10px; font-weight: 400; }
+.value-mapping-toggle-action { color: #94a3b8; font-size: 10.5px; white-space: nowrap; }
+.value-mapping-editor { width: 100%; margin-top: 3px; padding: 8px 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
+.value-mapping-title { margin-bottom: 8px; color: #7b879a; font-size: 10.5px; line-height: 1.45; }
 .value-candidate-editor { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
 .value-candidate-editor label { display:flex; flex-direction:column; gap:4px; min-width:0; color:#64748b; font-size:10.5px; }
 .value-mapping-empty { padding:7px 0; color:#8a94a6; font-size:11px; }
