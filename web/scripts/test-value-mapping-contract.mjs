@@ -7,12 +7,19 @@ const workspace = fs.readFileSync(path.join(root, 'src/views/TaskWorkspaceBase.v
 
 for (const token of [
   'value_mapping: Record<string, string>',
+  'value_mapping_source_values: string[]',
+  'value_mapping_target_values: string[]',
   'enum_candidate?: boolean',
   'ruleSourceEnumValues',
   'ruleTargetEnumValues',
-  'ruleValueMappingEligible',
-  '手工确认，不自动转换',
-  '选择目标 Excel 已有值',
+  'ruleSourceValueOptions',
+  'ruleTargetValueOptions',
+  'ruleValueMappingVisible',
+  '自动识别只提供候选值，必须手工确认对应关系',
+  '可手工新增，例如 10、11',
+  '可手工新增，例如 国产、进口',
+  '手工选择或输入目标值',
+  '未配置值：',
   'source_columns: cloneDocument(sourceColumns.value)',
   'target_columns: cloneDocument(targetColumns.value)',
 ]) {
@@ -28,9 +35,14 @@ if (!workspace.includes('if (targetValue) rule.value_mapping[sourceValue] = targ
 if (!workspace.includes('else delete rule.value_mapping[sourceValue]')) {
   throw new Error('mapping must be clearable')
 }
-const enumGuards = workspace.match(/column\?\.enum_candidate === true \? enumValues\(column\) : \[\]/g) ?? []
-if (enumGuards.length < 2) {
-  throw new Error('value mapping UI must require enum profiling metadata on both source and target fields')
+if (!workspace.includes('return isProfileEditorMode.value')) {
+  throw new Error('existing profiles must expose manual value mapping even without column-profile metadata')
+}
+if (!workspace.includes('allow-create')) {
+  throw new Error('manual source/target values must be creatable')
+}
+if (!workspace.includes('Object.keys(rule.value_mapping ?? {})') || !workspace.includes('Object.values(rule.value_mapping ?? {})')) {
+  throw new Error('saved mappings must remain editable when original enum candidates are unavailable')
 }
 
 console.log('value mapping contract checks passed')
