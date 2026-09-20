@@ -229,7 +229,7 @@ def _build_fixture(tmp_path: Path):
         settings,
         name="target-b.xlsx",
         role="target",
-        headers=["code_b", "spec_b"],
+        headers=["集团编码B", "规格型号B"],
         rows=[["G-DUP", "M100X"], ["G-B", "M10"]],
     )
     target_c = _save(
@@ -237,13 +237,13 @@ def _build_fixture(tmp_path: Path):
         settings,
         name="target-c.xlsx",
         role="target",
-        headers=["gc_c", "BRAND_C"],
+        headers=["统一编码C", "品牌名称C"],
         rows=[["G-C", "ACM"], ["G-D", "ACME LTD"]],
     )
 
     catalog_a = catalogs.create("目录A", str(target_a["file_id"]), "集团码A")
-    catalog_b = catalogs.create("目录B", str(target_b["file_id"]), "code_b")
-    catalog_c = catalogs.create("目录C", str(target_c["file_id"]), "gc_c")
+    catalog_b = catalogs.create("目录B", str(target_b["file_id"]), "集团编码B")
+    catalog_c = catalogs.create("目录C", str(target_c["file_id"]), "统一编码C")
 
     child_a = _publish(
         profiles,
@@ -256,14 +256,14 @@ def _build_fixture(tmp_path: Path):
         profiles,
         name="普通方案B",
         source_field="MODEL",
-        target_field="spec_b",
+        target_field="规格型号B",
         child_type="Z002",
     )
     child_c = _publish(
         profiles,
         name="普通方案C",
         source_field="BRAND",
-        target_field="BRAND_C",
+        target_field="品牌名称C",
         child_type="Z003",
     )
 
@@ -321,9 +321,9 @@ def test_composite_pipeline_runs_three_heterogeneous_children_without_merging_ex
     from_a = next(candidate for candidate in row.candidates if candidate.child_profile_name == "普通方案A")
     from_b = next(candidate for candidate in row.candidates if candidate.child_profile_name == "普通方案B")
     from_c = next(candidate for candidate in row.candidates if candidate.child_profile_name == "普通方案C")
-    assert "名称A" in from_a.target_payload and "spec_b" not in from_a.target_payload
-    assert "spec_b" in from_b.target_payload and "BRAND_C" not in from_b.target_payload
-    assert "BRAND_C" in from_c.target_payload and "名称A" not in from_c.target_payload
+    assert "名称A" in from_a.target_payload and "规格型号B" not in from_a.target_payload
+    assert "规格型号B" in from_b.target_payload and "品牌名称C" not in from_b.target_payload
+    assert "品牌名称C" in from_c.target_payload and "名称A" not in from_c.target_payload
 
     # Parent threshold controls the final decision. Child thresholds are 50, but
     # setting the parent threshold to 100 makes a score of exactly 100 REVIEW
