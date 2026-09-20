@@ -19,10 +19,10 @@ import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 import { formatDurationMs, formatTimePoint } from '../taskTime'
 
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
-type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
+type ColumnInfo = { header: string; business_hint?: string | null; datatype?: string | null; unique_count?: number | null; samples?: string[]; sample_values?: unknown[]; top_values?: unknown[]; enum_candidate?: boolean }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
 type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
-type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
+type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown>; value_mapping: Record<string, string> }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
 type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion | null; latest_published?: ProfileVersion | null }
@@ -215,7 +215,7 @@ function makeRule(sourceFields: string[], targetFields: string[], matcher: strin
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     source: { fields: sourceFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
     target: { fields: targetFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
-    matcher, weight, critical, matcher_options: {},
+    matcher, weight, critical, matcher_options: {}, value_mapping: {},
   }
 }
 
@@ -289,13 +289,43 @@ function ruleSideLabel(side: FieldSide): string {
 function sideMode(side: FieldSide): 'field' | 'fixed' {
   return side.fixed_value !== null && side.fixed_value !== undefined ? 'fixed' : 'field'
 }
-function setSideMode(side: FieldSide, mode: string): void {
+function setSideMode(side: FieldSide, mode: string, rule?: Rule): void {
   if (mode === 'fixed') {
     side.fields = []
     side.fixed_value = ''
   } else {
     side.fixed_value = null
   }
+  if (rule) rule.value_mapping = {}
+}
+function clearRuleValueMapping(rule: Rule): void {
+  rule.value_mapping = {}
+}
+function enumValues(column: ColumnInfo | undefined): string[] {
+  if (!column) return []
+  const raw = Array.isArray(column.top_values) && column.top_values.length
+    ? column.top_values
+    : Array.isArray(column.sample_values) && column.sample_values.length
+      ? column.sample_values
+      : (column.samples ?? [])
+  return [...new Set(raw.map(value => String(value ?? '').trim()).filter(Boolean))]
+}
+function ruleSourceEnumValues(rule: Rule): string[] {
+  if (sideMode(rule.source) !== 'field' || rule.source.fields.length !== 1) return []
+  const column = sourceColumns.value.find(item => item.header === rule.source.fields[0])
+  return column?.enum_candidate === true ? enumValues(column) : []
+}
+function ruleTargetEnumValues(rule: Rule): string[] {
+  if (sideMode(rule.target) !== 'field' || rule.target.fields.length !== 1) return []
+  return enumValues(targetColumns.value.find(item => item.header === rule.target.fields[0]))
+}
+function ruleValueMappingEligible(rule: Rule): boolean {
+  return ruleSourceEnumValues(rule).length > 0 && ruleTargetEnumValues(rule).length > 0
+}
+function setRuleValueMapping(rule: Rule, sourceValue: string, targetValue: string): void {
+  if (!rule.value_mapping) rule.value_mapping = {}
+  if (targetValue) rule.value_mapping[sourceValue] = targetValue
+  else delete rule.value_mapping[sourceValue]
 }
 
 /* ---------- 数据加载 ---------- */
@@ -487,7 +517,9 @@ async function loadPublishedProfileForTask(profileId: string): Promise<void> {
 function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
-  rules.value = Array.isArray(value.rules) ? cloneDocument(value.rules) : []
+  rules.value = Array.isArray(value.rules)
+    ? cloneDocument(value.rules).map((rule: Rule) => ({ ...rule, value_mapping: { ...(rule.value_mapping ?? {}) } }))
+    : []
   const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
   profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
   compositeTargetBindings.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
@@ -495,8 +527,12 @@ function loadDocument(document: any): void {
     const templateSchema = advancedDocument.template_schema
     const rememberedSourceFields = Array.isArray(templateSchema?.source_fields) ? templateSchema.source_fields.map(String) : []
     const rememberedTargetFields = Array.isArray(templateSchema?.target_fields) ? templateSchema.target_fields.map(String) : []
-    if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map((header: string) => ({ header }))
-    if (!isCompositeProfile.value && !targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map((header: string) => ({ header }))
+    const rememberedSourceColumns = Array.isArray(templateSchema?.source_columns) ? cloneDocument(templateSchema.source_columns) : []
+    const rememberedTargetColumns = Array.isArray(templateSchema?.target_columns) ? cloneDocument(templateSchema.target_columns) : []
+    if (!sourceColumns.value.length && rememberedSourceColumns.length) sourceColumns.value = rememberedSourceColumns
+    else if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map((header: string) => ({ header }))
+    if (!isCompositeProfile.value && !targetColumns.value.length && rememberedTargetColumns.length) targetColumns.value = rememberedTargetColumns
+    else if (!isCompositeProfile.value && !targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map((header: string) => ({ header }))
     if (!isCompositeProfile.value) groupCodeColumn.value = String(templateSchema?.group_code_field ?? '')
   }
   if (!isCompositeProfile.value) {
@@ -550,6 +586,8 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
         ...(baseAdvanced.template_schema && typeof baseAdvanced.template_schema === 'object' ? baseAdvanced.template_schema : {}),
         source_fields: [...srcHeaders.value],
         target_fields: [],
+        source_columns: cloneDocument(sourceColumns.value),
+        target_columns: [],
         group_code_field: null,
       }
     }
@@ -559,6 +597,8 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
       baseAdvanced.template_schema = {
         source_fields: [...srcHeaders.value],
         target_fields: [...tgtHeaders.value],
+        source_columns: cloneDocument(sourceColumns.value),
+        target_columns: cloneDocument(targetColumns.value),
         group_code_field: groupCodeColumn.value || null,
       }
     }
@@ -1278,23 +1318,32 @@ onBeforeUnmount(() => {
         <el-table v-if="!isCompositeProfile && rules.length" :data="rules" row-key="id" size="small" class="rules-table">
           <el-table-column label="源侧" min-width="280"><template #default="scope">
             <div class="field-side-editor">
-              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event))">
+              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event), scope.row)">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
               </el-select>
               <el-input v-if="sideMode(scope.row.source) === 'fixed'" v-model="scope.row.source.fixed_value" clearable placeholder="例如：Z001"/>
-              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable :allow-create="!sourceColumns.length" default-first-option placeholder="选择客户模板字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
-              <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable :allow-create="!sourceColumns.length" default-first-option placeholder="选择客户模板字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
             </div>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
           <el-table-column label="目标侧" min-width="280"><template #default="scope">
             <div class="field-side-editor">
-              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event))">
+              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event), scope.row)">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
               </el-select>
               <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
-              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
-              <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+              <div v-if="ruleValueMappingEligible(scope.row)" class="value-mapping-editor">
+                <div class="value-mapping-title"><b>枚举值对应关系</b><span>手工确认，不自动转换</span></div>
+                <div v-for="sourceValue in ruleSourceEnumValues(scope.row)" :key="sourceValue" class="value-mapping-row">
+                  <span class="source-enum-value">{{ sourceValue }}</span><span class="value-arrow">→</span>
+                  <el-select :model-value="scope.row.value_mapping?.[sourceValue] ?? ''" clearable filterable placeholder="选择目标 Excel 已有值" @update:model-value="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))">
+                    <el-option v-for="targetValue in ruleTargetEnumValues(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
+                  </el-select>
+                </div>
+              </div>
             </div>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
@@ -1679,4 +1728,13 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 }
+</style>
+
+<style scoped>
+.value-mapping-editor { margin-top: 8px; padding: 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
+.value-mapping-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:7px; font-size:11px; }
+.value-mapping-title span { color:#7b879a; font-weight:400; }
+.value-mapping-row { display:grid; grid-template-columns:minmax(54px, .7fr) 20px minmax(120px, 1.6fr); align-items:center; gap:5px; margin-top:5px; }
+.source-enum-value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; color:#334155; }
+.value-arrow { text-align:center; color:#8290a3; }
 </style>
