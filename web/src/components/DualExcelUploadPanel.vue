@@ -32,17 +32,21 @@ const props = withDefaults(defineProps<{
   targetColumns: ColumnInfo[]
   sourceIdColumn: string
   groupCodeColumn: string
+  targetFiles?: FileRecord[]
   mode?: 'data' | 'template'
 }>(), {
+  targetFiles: () => [],
   mode: 'data',
 })
 
 const isTemplateMode = computed(() => props.mode === 'template')
+const selectedTargetFiles = computed(() => props.targetFiles.length ? props.targetFiles : (props.target ? [props.target] : []))
 
 const emit = defineEmits<{
   parsed: [payload: ParsedPayload]
   'update:sourceIdColumn': [value: string]
   'update:groupCodeColumn': [value: string]
+  'remove-target': [fileId: string]
 }>()
 
 const uploading = ref<'source' | 'target' | ''>('')
@@ -194,26 +198,36 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
         <div>
           <span class="side-badge">右侧</span>
           <h4>{{ isTemplateMode ? '集团码模板' : '集团码标准数据' }}</h4>
-          <p>{{ isTemplateMode ? '上传集团码侧 Excel 模板，系统自动识别字段' : '上传作为匹配目标的集团码 Excel' }}</p>
+          <p>{{ isTemplateMode ? '上传集团码侧 Excel 模板，系统自动识别字段' : '可上传一个或多个集团码 Excel；多个文件会合并为同一候选池参与匹配' }}</p>
         </div>
-        <el-tag v-if="target" type="success" size="small">已解析</el-tag>
+        <el-tag v-if="selectedTargetFiles.length" type="success" size="small">{{ selectedTargetFiles.length > 1 ? `已选择 ${selectedTargetFiles.length} 个文件` : '已解析' }}</el-tag>
       </div>
       <el-upload
         drag
         :auto-upload="false"
         :show-file-list="false"
         :on-change="(file:any) => upload('target', file)"
+        multiple
         accept=".xlsx,.xlsm,.csv"
         :disabled="Boolean(uploading)"
       >
         <div class="drop-content">
           <span class="upload-icon">⬆</span>
-          <b>{{ target ? (isTemplateMode ? '重新上传集团码模板' : '重新上传集团码 Excel') : (isTemplateMode ? '拖入集团码模板' : '拖入集团码标准 Excel') }}</b>
-          <small>{{ isTemplateMode ? '只需保留真实表头即可；上传后系统会自动识别可映射字段' : '无需提前维护基础数据，上传后系统会自动完成后续准备' }}</small>
+          <b>{{ selectedTargetFiles.length ? (isTemplateMode ? '继续添加 / 更换集团码模板' : '继续添加集团码 Excel') : (isTemplateMode ? '拖入集团码模板' : '拖入一个或多个集团码标准 Excel') }}</b>
+          <small>{{ isTemplateMode ? '只需保留真实表头即可；上传后系统会自动识别可映射字段' : '普通方案上传 1 个文件；A007 等跨类目方案可同时选择多个文件，系统统一参与候选匹配' }}</small>
         </div>
       </el-upload>
       <div v-if="target" class="parsed-block">
-        <div class="file-name" :title="target.original_name">{{ target.original_name }}</div>
+        <div v-if="selectedTargetFiles.length > 1" class="target-file-list">
+          <el-tag
+            v-for="file in selectedTargetFiles"
+            :key="file.file_id"
+            closable
+            effect="plain"
+            @close="emit('remove-target', file.file_id)"
+          >{{ file.original_name }}</el-tag>
+        </div>
+        <div v-else class="file-name" :title="selectedTargetFiles[0]?.original_name ?? target.original_name">{{ selectedTargetFiles[0]?.original_name ?? target.original_name }}</div>
         <div class="inspection-metrics">
           <span><em>工作表</em><b>{{ targetSheet?.sheet_name ?? '—' }}</b></span>
           <span><em>表头</em><b>第 {{ targetSheet?.recommended_header_row ?? '—' }} 行</b></span>
@@ -318,6 +332,14 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
   flex-direction: column;
   gap: 12px;
   padding-top: 14px;
+}
+.target-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.target-file-list :deep(.el-tag) {
+  max-width: 100%;
 }
 .file-name {
   overflow: hidden;
