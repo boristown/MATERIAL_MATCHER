@@ -15,7 +15,11 @@ MAX_TEXT_BYTES = 5 * 1024 * 1024
 
 # origin_data.zip is the project's canonical, intentionally versioned seed-data package.
 # Keep the exception path-specific so arbitrary ZIP/binary artifacts remain rejected.
-ALLOWED_BINARY_PATHS = {Path("origin_data.zip")}
+ALLOWED_BINARY_PATHS = {
+    Path("origin_data.zip"),
+    Path("installer/docs/user-guide.docx"),
+    Path("installer/docs/test-report.docx"),
+}
 
 
 def tracked_files() -> list[Path]:
