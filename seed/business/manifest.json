@@ -1,87 +1,89 @@
 {
-  "dictionaries": [
-    {
-      "dictionary_id": "c9b8a92a48374e1b96b14ac7bddb956a",
-      "name": "物料同义词表(名称/厂家)",
-      "rule_counts": {
-        "1": 20,
-        "2": 25,
-        "3": 35
-      },
-      "versions": [
-        1,
-        2,
-        3
-      ]
-    }
-  ],
-  "exported_at": "2026-09-18T01:16:43.712389+00:00",
-  "format_version": 1,
-  "product": "MATERIAL_MATCHER_BUSINESS_SEED",
-  "profiles": [
-    {
-      "latest_document_sha256": "da08fc81acf393a50cec308d38e29d4978a266061be04feb24cca0c584d4f0af",
-      "name": "A001 元器件",
-      "profile_id": "b86b6d7058e0463ba3ed8cf7d28445d9",
-      "published_versions": [
-        1,
-        2,
-        3,
-        4,
-        5
-      ]
-    },
-    {
-      "latest_document_sha256": "a2a8c097b5d328436882227fb0f30fcc3aa4f45b5740e861a7a7606f4bf717b5",
-      "name": "A006 复合材料",
-      "profile_id": "caa2593e64894b96ac1784ba508fcdee",
-      "published_versions": [
-        1,
-        2,
-        3
-      ]
-    },
-    {
-      "latest_document_sha256": "7b3e289171beb97dfb053883bfa792843c4ed80431604fb1da25ae682dc08eec",
-      "name": "A002 标准紧固件",
-      "profile_id": "2440b4cb755a40aa8d60aeefd1d4e51e",
-      "published_versions": [
-        1,
-        2,
-        3
-      ]
-    },
-    {
-      "latest_document_sha256": "9b3b930b83123c7b0d8e5dbaea54e11978f3b2e7c907dc6ec0046706ee04a328",
-      "name": "A003 金属材料",
-      "profile_id": "25bb6c055d294e749123cce3766e79d6",
-      "published_versions": [
-        1,
-        2,
-        3
-      ]
-    },
-    {
-      "latest_document_sha256": "af8d8667e57eda2ca4a3dc4740d86aecc642dd821eb07ff292972f55e66f68e3",
-      "name": "A005 非金属材料",
-      "profile_id": "dcb520bbdf874c74afdfa0eec3111fd4",
-      "published_versions": [
-        1,
-        2,
-        3
-      ]
-    },
-    {
-      "latest_document_sha256": "01ea3370ef0ff001cbd63c22d9bd4c6218698f67443af754e40f24326d2cf39b",
-      "name": "A007 物资类其他(跨类目)",
-      "profile_id": "54f3d066daba4bfc848785398fc4fb70",
-      "published_versions": [
-        1,
-        2,
-        3
-      ]
-    }
-  ],
-  "source": "mat.bjlzc.cn 生产部署 (1.1.15, host /opt/material_matcher/current)，2026-09-18 验证配置",
-  "source_db_sha256": "ddb4c32400e7b50161e7b0c20e02d6c2d17327a50bf0b8859f27bccef856e20b"
+ "dictionaries": [
+  {
+   "dictionary_id": "c9b8a92a48374e1b96b14ac7bddb956a",
+   "name": "物料同义词表(名称/厂家)",
+   "rule_counts": {
+    "1": 20,
+    "2": 25,
+    "3": 35
+   },
+   "versions": [
+    1,
+    2,
+    3
+   ]
+  }
+ ],
+ "exported_at": "2026-09-18T01:16:43.712389+00:00",
+ "format_version": 1,
+ "product": "MATERIAL_MATCHER_BUSINESS_SEED",
+ "profiles": [
+  {
+   "latest_document_sha256": "da08fc81acf393a50cec308d38e29d4978a266061be04feb24cca0c584d4f0af",
+   "name": "A001 元器件",
+   "profile_id": "b86b6d7058e0463ba3ed8cf7d28445d9",
+   "published_versions": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ]
+  },
+  {
+   "latest_document_sha256": "a2a8c097b5d328436882227fb0f30fcc3aa4f45b5740e861a7a7606f4bf717b5",
+   "name": "A006 复合材料",
+   "profile_id": "caa2593e64894b96ac1784ba508fcdee",
+   "published_versions": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "latest_document_sha256": "7b3e289171beb97dfb053883bfa792843c4ed80431604fb1da25ae682dc08eec",
+   "name": "A002 标准紧固件",
+   "profile_id": "2440b4cb755a40aa8d60aeefd1d4e51e",
+   "published_versions": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "latest_document_sha256": "9b3b930b83123c7b0d8e5dbaea54e11978f3b2e7c907dc6ec0046706ee04a328",
+   "name": "A003 金属材料",
+   "profile_id": "25bb6c055d294e749123cce3766e79d6",
+   "published_versions": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "latest_document_sha256": "af8d8667e57eda2ca4a3dc4740d86aecc642dd821eb07ff292972f55e66f68e3",
+   "name": "A005 非金属材料",
+   "profile_id": "dcb520bbdf874c74afdfa0eec3111fd4",
+   "published_versions": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "latest_document_sha256": "01ea3370ef0ff001cbd63c22d9bd4c6218698f67443af754e40f24326d2cf39b",
+   "name": "A007 物资类其他(跨类目)",
+   "profile_id": "54f3d066daba4bfc848785398fc4fb70",
+   "published_versions": [
+    1,
+    2,
+    3
+   ]
+  }
+ ],
+ "source": "mat.bjlzc.cn 生产部署 (1.1.15, host /opt/material_matcher/current)，2026-09-18 验证配置",
+ "source_db_sha256": "ddb4c32400e7b50161e7b0c20e02d6c2d17327a50bf0b8859f27bccef856e20b",
+ "notes": " | 1.3.4: 六方案预置国产进口值映射(10→国产/11→进口, 权重0可改)；A007 预置为跨类目组合方案（冻结 5 子方案版本）",
+ "updated_at": "2026-09-20"
 }
