@@ -324,7 +324,8 @@ function ruleSourceEnumValues(rule: Rule): string[] {
 }
 function ruleTargetEnumValues(rule: Rule): string[] {
   if (sideMode(rule.target) !== 'field' || rule.target.fields.length !== 1) return []
-  return enumValues(targetColumns.value.find(item => item.header === rule.target.fields[0]))
+  const column = targetColumns.value.find(item => item.header === rule.target.fields[0])
+  return column?.enum_candidate === true ? enumValues(column) : []
 }
 function ruleValueMappingEligible(rule: Rule): boolean {
   return ruleSourceEnumValues(rule).length > 0 && ruleTargetEnumValues(rule).length > 0
