@@ -160,7 +160,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
           <span><em>数据</em><b>{{ Number(sourceSheet?.row_count_estimate ?? 0).toLocaleString() }} 行</b></span>
         </div>
         <label class="column-picker">
-          <span>{{ isTemplateMode ? '客户物料标识字段' : '客户物料编码列' }}</span>
+          <span>
+            {{ isTemplateMode ? '客户物料编码字段' : '客户物料编码列' }}
+            <small v-if="isTemplateMode">用于唯一识别每条客户物料。系统会自动识别；未识别时只需在这里确认一次。</small>
+          </span>
           <el-select
             :model-value="sourceIdColumn"
             filterable
@@ -218,7 +221,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
           <span><em>数据</em><b>{{ Number(targetSheet?.row_count_estimate ?? 0).toLocaleString() }} 行</b></span>
         </div>
         <label class="column-picker">
-          <span>集团码列</span>
+          <span>
+            {{ isTemplateMode ? '集团码字段' : '集团码列' }}
+            <small v-if="isTemplateMode">最终返回给客户的集团码所在列。系统会自动识别；未识别时只需在这里确认一次。</small>
+          </span>
           <el-select
             :model-value="groupCodeColumn"
             filterable
@@ -351,12 +357,20 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
 }
 .column-picker {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   font-size: 12px;
   font-weight: 600;
   color: #475569;
+}
+.column-picker > span small {
+  display: block;
+  margin-top: 3px;
+  color: #8a94a6;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 .sample-preview {
   padding: 10px;
