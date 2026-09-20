@@ -125,6 +125,7 @@ INSTALL_RC=1
 run_install() {
   local args=()
   [[ -n "${MM_ADMIN_PASSWORD_SET:-}" ]] && args+=("MM_ADMIN_PASSWORD=$MM_ADMIN_PASSWORD_SET")
+  rm -f '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true
   TMP_OUT="$(mktemp /tmp/mm_docker_install.XXXXXX)"
   if [[ -n "$GUI" ]]; then
     FIFO="$(mktemp -u /tmp/mm_docker_prog.XXXXXX)"; mkfifo "$FIFO"
@@ -231,7 +232,8 @@ main() {
 
   run_install
   local err result_json
-  result_json="$(grep -m1 '^@@RESULT@@|' "$TMP_OUT" | sed 's/^@@RESULT@@|//' || true)"
+  result_json="$(cat '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true)"
+  [[ -z "$result_json" ]] && result_json="$(grep -m1 '^@@RESULT@@|' "$TMP_OUT" | sed 's/^@@RESULT@@|//' || true)"
   err="$(grep -m1 '^安装失败：' "$TMP_OUT" | sed 's/^安装失败：//' || true)"
   [[ -n "$err" ]] || err="安装程序异常退出（详见日志）"
   if [[ "$INSTALL_RC" != "0" ]]; then
@@ -262,7 +264,7 @@ d = json.loads(sys.stdin.read() or "{}")
 print("\n".join("http://{}:{}".format(a, d.get("port")) for a in d.get("addresses", [])))
 PYE
 )"
-  seed="$(printf '%s' "$result_json" | "$PY" - <<'PYE' 2>/dev/null || true
+  seed=  seed="$(printf '%s' "$result_json" | "$PY" - <<'PYE' 2>/dev/null || true
 import json, sys
 print(json.loads(sys.stdin.read() or "{}").get("seed_summary", ""))
 PYE
@@ -274,7 +276,7 @@ PYE
 )"
   report="$(grep -m1 '安装报告：' "$TMP_OUT" | sed 's/^安装报告：//' || true)"
   local text="【安装成功】物料集团码智能匹配平台 $BUNDLE_VERSION（Docker 方式）\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
-  [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && text="$text\n· 数据与镜像磁盘：$MM_DATA_MOUNT_SET（经 /var/lib/material_matcher、/var/log/material_matcher 统一访问）"
+  [[ -n "${MM_DATA_MOUNT:-${MM_DATA_MOUNT_SET:-}}" ]] && text="$text\n· 数据与镜像磁盘：${MM_DATA_MOUNT:-$MM_DATA_MOUNT_SET}（经 /var/lib/material_matcher、/var/log/material_matcher 统一访问）"
   [[ -n "$addrs" ]] && text="$text\n· 局域网访问：\n$addrs" || text="$text\n· 未检测到局域网 IPv4 地址：仅本机可访问，请确认网络后查看"
   text="$text\n· 管理员账号：admin$pw_line\n· 默认业务数据：${seed:-已导入}\n· 安装报告：${report:-$WIZARD_LOG}\n\n业务数据保存在宿主机 /etc、/var/lib、/var/log/material_matcher —— 删除或重建容器都不会丢数据。\n\n后续维护：以 root 运行本目录 ./menu.sh\n客户电脑若是 Windows 7 且页面异常，请安装介质根目录《win7》中的 Firefox ESR。"
   [[ -n "$fw" ]] && text="$text\n\n注意：$fw"

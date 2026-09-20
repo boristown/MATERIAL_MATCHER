@@ -254,6 +254,7 @@ exec_install_with_progress() {
   [[ -n "${MM_DATA_DIR_SET:-}" ]] && args+=("MM_DATA_DIR=$MM_DATA_DIR_SET")
   [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && args+=("MM_DATA_MOUNT=$MM_DATA_MOUNT_SET")
   [[ -n "${MM_ADMIN_PASSWORD_SET:-}" ]] && args+=("MM_ADMIN_PASSWORD=$MM_ADMIN_PASSWORD_SET")
+  rm -f '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true
   TMP_OUT="$(mktemp /tmp/mm_install.XXXXXX)"
   : >"$WIZARD_LOG" 2>/dev/null || true
 
@@ -412,7 +413,8 @@ main() {
   exec_install_with_progress
 
   local install_err result_json
-  result_json="$(grep -m1 '^@@RESULT@@|' "$TMP_OUT" 2>/dev/null | sed 's/^@@RESULT@@|//' || true)"
+  result_json="$(cat '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true)"
+  [[ -z "$result_json" ]] && result_json="$(grep -m1 '^@@RESULT@@|' "$TMP_OUT" 2>/dev/null | sed 's/^@@RESULT@@|//' || true)"
   install_err="$(grep -m1 '^安装失败：' "$TMP_OUT" 2>/dev/null | sed 's/^安装失败：//' || true)"
   [[ -n "$install_err" ]] || install_err="安装程序异常退出（详见日志）"
 

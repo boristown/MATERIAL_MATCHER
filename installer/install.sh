@@ -660,6 +660,8 @@ PY
 else
   SUMMARY_JSON="{\"ok\": true, \"mode\": \"$MODE_TEXT\", \"version\": \"${RELEASE_VERSION:-}\", \"port\": ${MATERIAL_MATCHER_PORT:-0}}"
 fi
+mkdir -p '/var/lib/material_matcher/install' 2>/dev/null || true
+printf '%s' "$SUMMARY_JSON" > '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true
 echo "@@RESULT@@|$SUMMARY_JSON"
 [[ -n "$RELEASE_VERSION" ]] && echo "MATERIAL_MATCHER ${MODE_TEXT}完成：版本 $RELEASE_VERSION，端口 ${MATERIAL_MATCHER_PORT}。"
 for addr in $MAP_ADDRESSES; do echo "局域网访问地址：http://${addr}:${MATERIAL_MATCHER_PORT}"; done
