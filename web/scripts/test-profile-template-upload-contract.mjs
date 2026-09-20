@@ -24,7 +24,7 @@ if (!workspace.includes('placeholder="选择客户模板字段"') || !workspace.
 
 /* 两侧模板准备好后可自动生成映射，新方案无需逐条手工添加。 */
 if (!workspace.includes('@click="autoMap">自动推荐映射</el-button>')) throw new Error('Profile editor must expose automatic mapping after template recognition')
-if (!workspace.includes('if (source.value && target.value && !rules.value.length) autoMap()')) throw new Error('Fresh profile should auto-map once both template schemas are parsed')
+if (!workspace.includes('if (!isCompositeProfile.value && source.value && target.value && !rules.value.length) autoMap()') && !workspace.includes('if (source.value && target.value && !rules.value.length) autoMap()')) throw new Error('Fresh single profile should auto-map once both template schemas are parsed')
 
 /* 上传组件在模板模式使用业务可理解文案，同时保留数据上传模式。 */
 if (!upload.includes("mode?: 'data' | 'template'")) throw new Error('DualExcelUploadPanel must support template mode')
