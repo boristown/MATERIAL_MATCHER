@@ -44,3 +44,6 @@ tmp/
 *.rar
 web/src/**/*.js
 web/**/*.tsbuildinfo
+
+# 交付介质图文文档为刻意的二进制交付物
+!installer/docs/*.docx
