@@ -276,7 +276,7 @@ PYE
 )"
   report="$(grep -m1 '安装报告：' "$TMP_OUT" | sed 's/^安装报告：//' || true)"
   local text="【安装成功】物料集团码智能匹配平台 $BUNDLE_VERSION（Docker 方式）\n\n· 服务器地址：http://127.0.0.1:$CHOSEN_PORT"
-  [[ -n "${MM_DATA_MOUNT_SET:-}" ]] && text="$text\n· 数据与镜像磁盘：$MM_DATA_MOUNT_SET（经 /var/lib/material_matcher、/var/log/material_matcher 统一访问）"
+  [[ -n "${MM_DATA_MOUNT:-${MM_DATA_MOUNT_SET:-}}" ]] && text="$text\n· 数据与镜像磁盘：${MM_DATA_MOUNT:-$MM_DATA_MOUNT_SET}（经 /var/lib/material_matcher、/var/log/material_matcher 统一访问）"
   [[ -n "$addrs" ]] && text="$text\n· 局域网访问：\n$addrs" || text="$text\n· 未检测到局域网 IPv4 地址：仅本机可访问，请确认网络后查看"
   text="$text\n· 管理员账号：admin$pw_line\n· 默认业务数据：${seed:-已导入}\n· 安装报告：${report:-$WIZARD_LOG}\n\n业务数据保存在宿主机 /etc、/var/lib、/var/log/material_matcher —— 删除或重建容器都不会丢数据。\n\n后续维护：以 root 运行本目录 ./menu.sh\n客户电脑若是 Windows 7 且页面异常，请安装介质根目录《win7》中的 Firefox ESR。"
   [[ -n "$fw" ]] && text="$text\n\n注意：$fw"

@@ -395,6 +395,7 @@ if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>
   FIREWALL_HINT="检测到 firewalld：如其它电脑无法访问，请网络管理员放行端口 $FINAL_PORT（本安装器不自动改防火墙）。"
 fi
 GIT_COMMIT="$("$PY" -c "import json;print(json.load(open('$MEDIA/docker-manifest.json',encoding='utf-8')).get('git_commit','unknown'))" 2>/dev/null || echo unknown)"
+mkdir -p "$REPORT_DIR" 2>/dev/null || true
 REPORT_FILE="$REPORT_DIR/docker-install-$(date +%Y%m%d-%H%M%S).txt"
 {
   echo "物料集团码智能匹配平台（Docker 方式）安装报告"
