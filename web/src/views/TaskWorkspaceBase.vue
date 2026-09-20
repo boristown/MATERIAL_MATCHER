@@ -11,7 +11,7 @@ import { formatDurationMs, formatTimePoint } from '../taskTime'
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
-type FieldSide = { fields: string[]; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
+type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
@@ -46,6 +46,7 @@ const sourceColumns = ref<ColumnInfo[]>([])
 const sourceIdColumn = ref('')
 const targetMode = ref<'existing' | 'upload'>('upload')
 const target = ref<FileRecord | null>(null)
+const targetFiles = ref<FileRecord[]>([])
 const targetColumns = ref<ColumnInfo[]>([])
 const groupCodeColumn = ref('')
 const catalogs = ref<any[]>([])
@@ -174,8 +175,8 @@ function hintOf(columns: ColumnInfo[], header: string): string {
 function makeRule(sourceFields: string[], targetFields: string[], matcher: string, weight: number, critical = false): Rule {
   return {
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    source: { fields: sourceFields, combine: 'concat', separator: ' ', pipeline: [] },
-    target: { fields: targetFields, combine: 'concat', separator: ' ', pipeline: [] },
+    source: { fields: sourceFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
+    target: { fields: targetFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
     matcher, weight, critical, matcher_options: {},
   }
 }
@@ -244,7 +245,19 @@ function removeRule(ruleId: string): void {
   if (index >= 0) rules.value.splice(index, 1)
 }
 function ruleSideLabel(side: FieldSide): string {
+  if (side.fixed_value !== null && side.fixed_value !== undefined) return `固定值：${side.fixed_value}`
   return side.fields.join(side.combine === 'coalesce' ? ' / ' : ' + ')
+}
+function sideMode(side: FieldSide): 'field' | 'fixed' {
+  return side.fixed_value !== null && side.fixed_value !== undefined ? 'fixed' : 'field'
+}
+function setSideMode(side: FieldSide, mode: 'field' | 'fixed'): void {
+  if (mode === 'fixed') {
+    side.fields = []
+    side.fixed_value = ''
+  } else {
+    side.fixed_value = null
+  }
 }
 
 /* ---------- 数据加载 ---------- */
