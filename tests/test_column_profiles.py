@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
 from material_matcher.ingestion.column_profile import profile_tabular_columns
 
@@ -60,6 +61,25 @@ def test_profile_preserves_leading_zero_codes_as_text(tmp_path: Path) -> None:
     assert column["datatype"] == "TEXT"
     assert column["sample_values"] == ["001", "002", "003"]
 
+
+
+def test_profile_tabular_columns_supports_xlsx(tmp_path: Path) -> None:
+    path = tmp_path / "template.xlsx"
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "模板"
+    worksheet.append(["物料编码", "来源类型"])
+    for index, value in enumerate([10, 11, 10, 11], start=1):
+        worksheet.append([f"M{index:03d}", value])
+    workbook.save(path)
+
+    profile = profile_tabular_columns(path)
+    by_name = {item["field_name"]: item for item in profile["columns"]}
+
+    assert profile["sheet_name"] == "模板"
+    assert by_name["来源类型"]["datatype"] == "INTEGER"
+    assert by_name["来源类型"]["unique_count"] == 2
+    assert by_name["来源类型"]["enum_candidate"] is True
 
 def test_upload_and_column_values_api_expose_column_profile(authed: TestClient) -> None:
     uploaded = _upload_csv(
