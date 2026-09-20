@@ -28,8 +28,9 @@ if (!workspace.includes('if (targetValue) rule.value_mapping[sourceValue] = targ
 if (!workspace.includes('else delete rule.value_mapping[sourceValue]')) {
   throw new Error('mapping must be clearable')
 }
-if (!workspace.includes('column?.enum_candidate === true ? enumValues(column) : []')) {
-  throw new Error('value mapping UI must depend on enum profiling metadata')
+const enumGuards = workspace.match(/column\?\.enum_candidate === true \? enumValues\(column\) : \[\]/g) ?? []
+if (enumGuards.length < 2) {
+  throw new Error('value mapping UI must require enum profiling metadata on both source and target fields')
 }
 
 console.log('value mapping contract checks passed')
