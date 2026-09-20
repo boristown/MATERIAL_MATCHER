@@ -22,12 +22,12 @@ type FileRecord = { file_id: string; original_name: string; sha256?: string; rol
 type ColumnInfo = { header: string; business_hint?: string | null; datatype?: string | null; unique_count?: number | null; samples?: string[]; sample_values?: unknown[]; top_values?: unknown[]; enum_candidate?: boolean }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
 type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
-type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown>; value_mapping: Record<string, string> }
+type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown>; value_mapping: Record<string, string>; value_mapping_source_values: string[]; value_mapping_target_values: string[] }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
 type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion | null; latest_published?: ProfileVersion | null }
 type WorkbenchItem = { source_row_id: string; source_id: string; source_payload: Record<string, unknown>; top1_group_code?: string | null; top1_score: number; second_score: number; score_gap: number; critical_conflict: boolean; current_status?: string }
-type FieldScore = { rule_id: string; score: number; weight: number; source_value: string; target_value: string; critical: boolean; conflict: boolean }
+type FieldScore = { rule_id: string; score: number; weight: number; source_value: string; target_value: string; critical: boolean; conflict: boolean; source_value_before_mapping?: string; value_mapping_applied?: boolean; unconfigured_source_values?: string[] }
 type Candidate = { rank: number; target_group_code: string; score: number; critical_conflict: boolean; target_payload: Record<string, unknown>; field_scores: FieldScore[] }
 type TaskInputAsset = { kind: 'source' | 'target'; label: string; original_name?: string | null; uploaded_at?: string | null; available: boolean; download_url?: string | null; message?: string | null; profile_id?: string | null; profile_name?: string | null; profile_version?: number | null; catalog_version_id?: string | null }
 type TaskInputAssets = { composite?: boolean; source?: TaskInputAsset | null; target?: TaskInputAsset | null; targets?: TaskInputAsset[] }
@@ -215,7 +215,7 @@ function makeRule(sourceFields: string[], targetFields: string[], matcher: strin
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     source: { fields: sourceFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
     target: { fields: targetFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
-    matcher, weight, critical, matcher_options: {}, value_mapping: {},
+    matcher, weight, critical, matcher_options: {}, value_mapping: {}, value_mapping_source_values: [], value_mapping_target_values: [],
   }
 }
 
@@ -296,10 +296,16 @@ function setSideMode(side: FieldSide, mode: string, rule?: Rule): void {
   } else {
     side.fixed_value = null
   }
-  if (rule) rule.value_mapping = {}
+  if (rule) {
+    rule.value_mapping = {}
+    rule.value_mapping_source_values = []
+    rule.value_mapping_target_values = []
+  }
 }
 function clearRuleValueMapping(rule: Rule): void {
   rule.value_mapping = {}
+  rule.value_mapping_source_values = []
+  rule.value_mapping_target_values = []
 }
 function enumValueText(value: unknown): string {
   if (value && typeof value === 'object') {
@@ -308,6 +314,9 @@ function enumValueText(value: unknown): string {
   }
   return String(value ?? '').trim()
 }
+function uniqueValueOptions(values: unknown[]): string[] {
+  return [...new Set(values.map(enumValueText).filter(Boolean))]
+}
 function enumValues(column: ColumnInfo | undefined): string[] {
   if (!column) return []
   const raw = Array.isArray(column.top_values) && column.top_values.length
@@ -315,7 +324,7 @@ function enumValues(column: ColumnInfo | undefined): string[] {
     : Array.isArray(column.sample_values) && column.sample_values.length
       ? column.sample_values
       : (column.samples ?? [])
-  return [...new Set(raw.map(enumValueText).filter(Boolean))]
+  return uniqueValueOptions(raw)
 }
 function ruleSourceEnumValues(rule: Rule): string[] {
   if (sideMode(rule.source) !== 'field' || rule.source.fields.length !== 1) return []
@@ -327,13 +336,46 @@ function ruleTargetEnumValues(rule: Rule): string[] {
   const column = targetColumns.value.find(item => item.header === rule.target.fields[0])
   return column?.enum_candidate === true ? enumValues(column) : []
 }
-function ruleValueMappingEligible(rule: Rule): boolean {
-  return ruleSourceEnumValues(rule).length > 0 && ruleTargetEnumValues(rule).length > 0
+function ruleSourceValueOptions(rule: Rule): string[] {
+  return uniqueValueOptions([
+    ...ruleSourceEnumValues(rule),
+    ...(rule.value_mapping_source_values ?? []),
+    ...Object.keys(rule.value_mapping ?? {}),
+  ])
+}
+function ruleTargetValueOptions(rule: Rule): string[] {
+  return uniqueValueOptions([
+    ...ruleTargetEnumValues(rule),
+    ...(rule.value_mapping_target_values ?? []),
+    ...Object.values(rule.value_mapping ?? {}),
+  ])
+}
+function ruleValueMappingVisible(rule: Rule): boolean {
+  if (sideMode(rule.source) !== 'field' || sideMode(rule.target) !== 'field') return false
+  if (rule.source.fields.length !== 1 || rule.target.fields.length !== 1) return false
+  return isProfileEditorMode.value
+    || ruleSourceEnumValues(rule).length > 0
+    || ruleTargetEnumValues(rule).length > 0
+    || Object.keys(rule.value_mapping ?? {}).length > 0
+}
+function normalizeManualValues(values: string[]): string[] {
+  return uniqueValueOptions(values)
 }
 function setRuleValueMapping(rule: Rule, sourceValue: string, targetValue: string): void {
+  const source = String(sourceValue ?? '').trim()
+  const target = String(targetValue ?? '').trim()
+  if (!source) return
   if (!rule.value_mapping) rule.value_mapping = {}
-  if (targetValue) rule.value_mapping[sourceValue] = targetValue
-  else delete rule.value_mapping[sourceValue]
+  if (target) {
+    rule.value_mapping[source] = target
+    rule.value_mapping_source_values = normalizeManualValues([...(rule.value_mapping_source_values ?? []), source])
+    rule.value_mapping_target_values = normalizeManualValues([...(rule.value_mapping_target_values ?? []), target])
+  } else {
+    delete rule.value_mapping[source]
+  }
+}
+function removeRuleValueMapping(rule: Rule, sourceValue: string): void {
+  delete rule.value_mapping[sourceValue]
 }
 
 /* ---------- 数据加载 ---------- */
@@ -526,7 +568,12 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules)
-    ? cloneDocument(value.rules).map((rule: Rule) => ({ ...rule, value_mapping: { ...(rule.value_mapping ?? {}) } }))
+    ? cloneDocument(value.rules).map((rule: Rule) => ({
+        ...rule,
+        value_mapping: { ...(rule.value_mapping ?? {}) },
+        value_mapping_source_values: Array.isArray(rule.value_mapping_source_values) ? rule.value_mapping_source_values.map(String) : [],
+        value_mapping_target_values: Array.isArray(rule.value_mapping_target_values) ? rule.value_mapping_target_values.map(String) : [],
+      }))
     : []
   const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
   profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
@@ -1343,13 +1390,54 @@ onBeforeUnmount(() => {
               <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
               <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
               <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段" @change="clearRuleValueMapping(scope.row)"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
-              <div v-if="ruleValueMappingEligible(scope.row)" class="value-mapping-editor">
-                <div class="value-mapping-title"><b>枚举值对应关系</b><span>手工确认，不自动转换</span></div>
-                <div v-for="sourceValue in ruleSourceEnumValues(scope.row)" :key="sourceValue" class="value-mapping-row">
+              <div v-if="ruleValueMappingVisible(scope.row)" class="value-mapping-editor">
+                <div class="value-mapping-title">
+                  <b>值转换（可选）</b>
+                  <span>自动识别只提供候选值，必须手工确认对应关系</span>
+                </div>
+                <div class="value-candidate-editor">
+                  <label>
+                    <span>源值候选</span>
+                    <el-select
+                      v-model="scope.row.value_mapping_source_values"
+                      multiple
+                      filterable
+                      allow-create
+                      default-first-option
+                      placeholder="可手工新增，例如 10、11"
+                    >
+                      <el-option v-for="value in ruleSourceEnumValues(scope.row)" :key="value" :label="value" :value="value"/>
+                    </el-select>
+                  </label>
+                  <label>
+                    <span>目标值候选</span>
+                    <el-select
+                      v-model="scope.row.value_mapping_target_values"
+                      multiple
+                      filterable
+                      allow-create
+                      default-first-option
+                      placeholder="可手工新增，例如 国产、进口"
+                    >
+                      <el-option v-for="value in ruleTargetEnumValues(scope.row)" :key="value" :label="value" :value="value"/>
+                    </el-select>
+                  </label>
+                </div>
+                <div v-if="!ruleSourceValueOptions(scope.row).length" class="value-mapping-empty">暂无候选值，可直接在上方手工新增源值和目标值。</div>
+                <div v-for="sourceValue in ruleSourceValueOptions(scope.row)" :key="sourceValue" class="value-mapping-row">
                   <span class="source-enum-value">{{ sourceValue }}</span><span class="value-arrow">→</span>
-                  <el-select :model-value="scope.row.value_mapping?.[sourceValue] ?? ''" clearable filterable placeholder="选择目标 Excel 已有值" @update:model-value="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))">
-                    <el-option v-for="targetValue in ruleTargetEnumValues(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
+                  <el-select
+                    :model-value="scope.row.value_mapping?.[sourceValue] ?? ''"
+                    clearable
+                    filterable
+                    allow-create
+                    default-first-option
+                    placeholder="手工选择或输入目标值"
+                    @update:model-value="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))"
+                  >
+                    <el-option v-for="targetValue in ruleTargetValueOptions(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
                   </el-select>
+                  <el-button v-if="scope.row.value_mapping?.[sourceValue] !== undefined" link type="danger" size="small" @click="removeRuleValueMapping(scope.row, sourceValue)">清除</el-button>
                 </div>
               </div>
             </div>
@@ -1583,10 +1671,14 @@ onBeforeUnmount(() => {
           <p><b>集团码:</b>{{ currentCandidate.target_group_code }}</p>
           <el-table :data="currentCandidate.field_scores" size="small">
             <el-table-column prop="rule_id" label="规则" width="120"/>
-            <el-table-column prop="source_value" label="源值" min-width="150"/>
+            <el-table-column label="源值" min-width="180"><template #default="scope">
+              <div>{{ scope.row.source_value }}</div>
+              <div v-if="scope.row.value_mapping_applied && scope.row.source_value_before_mapping" class="muted">原值 {{ scope.row.source_value_before_mapping }}</div>
+              <el-tag v-if="scope.row.unconfigured_source_values?.length" size="small" type="warning">未配置值：{{ scope.row.unconfigured_source_values.join('、') }}</el-tag>
+            </template></el-table-column>
             <el-table-column prop="target_value" label="目标值" min-width="150"/>
             <el-table-column label="得分" width="80"><template #default="scope">{{ (scope.row.score*100).toFixed(0) }}</template></el-table-column>
-            <el-table-column label="状态" width="80"><template #default="scope"><el-tag size="small" :type="scope.row.conflict?'danger':'success'">{{ scope.row.conflict?'冲突':'正常' }}</el-tag></template></el-table-column>
+            <el-table-column label="状态" width="100"><template #default="scope"><el-tag size="small" :type="scope.row.conflict?'danger':scope.row.unconfigured_source_values?.length?'warning':'success'">{{ scope.row.conflict?'冲突':scope.row.unconfigured_source_values?.length?'未配置值':'正常' }}</el-tag></template></el-table-column>
           </el-table>
           <el-descriptions :column="2" size="small" border style="margin-top:10px">
             <el-descriptions-item v-for="(value,key) in currentCandidate.target_payload" :key="key" :label="String(key)">{{ value }}</el-descriptions-item>
@@ -1740,9 +1832,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .value-mapping-editor { margin-top: 8px; padding: 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
-.value-mapping-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:7px; font-size:11px; }
+.value-mapping-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:9px; font-size:11px; }
 .value-mapping-title span { color:#7b879a; font-weight:400; }
-.value-mapping-row { display:grid; grid-template-columns:minmax(54px, .7fr) 20px minmax(120px, 1.6fr); align-items:center; gap:5px; margin-top:5px; }
+.value-candidate-editor { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+.value-candidate-editor label { display:flex; flex-direction:column; gap:4px; min-width:0; color:#64748b; font-size:10.5px; }
+.value-mapping-empty { padding:7px 0; color:#8a94a6; font-size:11px; }
+.value-mapping-row { display:grid; grid-template-columns:minmax(54px, .7fr) 20px minmax(120px, 1.6fr) 42px; align-items:center; gap:5px; margin-top:5px; }
 .source-enum-value { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700; color:#334155; }
 .value-arrow { text-align:center; color:#8290a3; }
 </style>
