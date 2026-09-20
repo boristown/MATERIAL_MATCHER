@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
-from typing import Literal
 
 from material_matcher.domain.errors import DomainError
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
 
 
-AssetRole = Literal["source", "target"]
+AssetRole = str
 _UNAVAILABLE_MESSAGE = "该历史任务的原始文件已无法确认"
 _UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _MEDIA_TYPES = {
@@ -63,7 +63,7 @@ class TaskInputAssetService:
             )
         return stored_path
 
-    def _validated_record(self, file_id: object, expected_role: AssetRole) -> dict[str, object]:
+    def _validated_record(self, file_id: object, expected_role: str) -> dict[str, object]:
         try:
             record = self.files.get(str(file_id))
         except DomainError as exc:
@@ -97,7 +97,7 @@ class TaskInputAssetService:
     def freeze_draft(self, draft_id: str) -> dict[str, dict[str, object]]:
         with self.meta.connect() as connection:
             draft = connection.execute(
-                "SELECT source_file_id,catalog_version_id FROM task_drafts WHERE draft_id=?",
+                "SELECT source_file_id,catalog_version_id,config_document FROM task_drafts WHERE draft_id=?",
                 (draft_id,),
             ).fetchone()
         if draft is None:
@@ -123,10 +123,43 @@ class TaskInputAssetService:
 
         source = self._validated_record(source_file_id, "source")
         target = self._validated_record(catalog["source_file_id"], "target")
-        return {
+        frozen: dict[str, dict[str, object]] = {
             "source": self._snapshot(source),
             "target": self._snapshot(target, catalog_version_id=str(catalog_version_id)),
         }
+
+        try:
+            document = json.loads(str(draft["config_document"] or "{}"))
+        except (TypeError, ValueError):
+            document = {}
+        advanced = document.get("advanced") if isinstance(document, dict) else {}
+        composite_run = advanced.get("composite_run") if isinstance(advanced, dict) else None
+        if isinstance(composite_run, list):
+            for item in composite_run:
+                if not isinstance(item, dict):
+                    continue
+                child_catalog_id = str(item.get("catalog_version_id") or "")
+                profile_id = str(item.get("profile_id") or "")
+                if not child_catalog_id or not profile_id:
+                    continue
+                with self.meta.connect() as connection:
+                    child_catalog = connection.execute(
+                        "SELECT source_file_id,status FROM catalog_versions WHERE version_id=?",
+                        (child_catalog_id,),
+                    ).fetchone()
+                if child_catalog is None or str(child_catalog["status"] or "") != "READY":
+                    raise DomainError(
+                        "CATALOG_NOT_READY",
+                        "组合方案引用的集团码文件不可用于正式计算",
+                        status_code=409,
+                    )
+                child_target = self._validated_record(child_catalog["source_file_id"], "target")
+                snapshot = self._snapshot(child_target, catalog_version_id=child_catalog_id)
+                snapshot["profile_id"] = profile_id
+                if item.get("version_no") is not None:
+                    snapshot["profile_version"] = int(item["version_no"])
+                frozen["target." + profile_id] = snapshot
+        return frozen
 
     def _task_row(self, task_id: str) -> dict[str, object]:
         with self.meta.connect() as connection:
