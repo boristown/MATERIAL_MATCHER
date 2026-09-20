@@ -231,31 +231,78 @@ function normalizeWeights(): void {
   }
 }
 
+function normalizeAutoMapHeader(value: string): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^(清洗后|清洗前|标准化后|标准化|源侧|目标侧|源|目标)/, '')
+    .replace(/[\s_\-—–/（）()【】\[\]:：]+/g, '')
+}
+
+function autoMapPairScore(sourceColumn: ColumnInfo, targetColumn: ColumnInfo): number {
+  const sourceHeader = normalizeAutoMapHeader(sourceColumn.header)
+  const targetHeader = normalizeAutoMapHeader(targetColumn.header)
+  if (!sourceHeader || !targetHeader) return 0
+
+  let score = 0
+  if (sourceHeader === targetHeader) {
+    score = 100
+  } else if (sourceHeader.includes(targetHeader) || targetHeader.includes(sourceHeader)) {
+    const shorter = Math.min(sourceHeader.length, targetHeader.length)
+    const longer = Math.max(sourceHeader.length, targetHeader.length)
+    score = 20 + (shorter / Math.max(longer, 1)) * 70
+  }
+
+  if (sourceColumn.business_hint && sourceColumn.business_hint === targetColumn.business_hint) {
+    score += 20
+  }
+
+  return score
+}
+
+function autoMapRuleDefaults(sourceColumn: ColumnInfo, targetColumn: ColumnInfo): { matcher: string; weight: number } {
+  const hint = sourceColumn.business_hint === targetColumn.business_hint ? sourceColumn.business_hint : null
+  if (hint === 'material_name') return { matcher: 'semantic', weight: 40 }
+  if (hint === 'model') return { matcher: 'semantic', weight: 25 }
+  if (hint === 'specification') return { matcher: 'semantic', weight: 15 }
+  if (hint === 'manufacturer') return { matcher: 'semantic', weight: 10 }
+  if (hint === 'material_group' || hint === 'unit') return { matcher: 'exact', weight: 10 }
+  return { matcher: 'semantic', weight: 12 }
+}
+
 function autoMap(): void {
-  const pairs: Array<[string, string, string, number]> = [
-    ['material_name', 'material_name', 'semantic', 40],
-    ['model', 'model', 'semantic', 25],
-    ['specification', 'specification', 'semantic', 15],
-    ['manufacturer', 'manufacturer', 'semantic', 10],
-    ['material_group', 'material_group', 'exact', 10],
-  ]
+  const sourceCandidates = sourceColumns.value.filter(column => column.header !== sourceIdColumn.value)
+  const targetCandidates = targetColumns.value.filter(column => column.header !== groupCodeColumn.value)
+
+  const scoredPairs = sourceCandidates
+    .flatMap(sourceColumn => targetCandidates.map(targetColumn => ({
+      sourceColumn,
+      targetColumn,
+      score: autoMapPairScore(sourceColumn, targetColumn),
+    })))
+    .filter(item => item.score >= 55)
+    .sort((left, right) =>
+      right.score - left.score
+      || sourceCandidates.indexOf(left.sourceColumn) - sourceCandidates.indexOf(right.sourceColumn)
+      || targetCandidates.indexOf(left.targetColumn) - targetCandidates.indexOf(right.targetColumn),
+    )
+
+  const usedSources = new Set<string>()
   const usedTargets = new Set<string>()
   const out: Rule[] = []
-  for (const [sourceHint, targetHint, matcher, weight] of pairs) {
-    const sCol = sourceColumns.value.find(column => column.business_hint === sourceHint && column.header !== sourceIdColumn.value)
-    const tCol = targetColumns.value.find(column => column.business_hint === targetHint && column.header !== groupCodeColumn.value && !usedTargets.has(column.header))
-    if (sCol && tCol) { out.push(makeRule([sCol.header], [tCol.header], matcher, weight)); usedTargets.add(tCol.header) }
+  for (const item of scoredPairs) {
+    if (usedSources.has(item.sourceColumn.header) || usedTargets.has(item.targetColumn.header)) continue
+    const defaults = autoMapRuleDefaults(item.sourceColumn, item.targetColumn)
+    out.push(makeRule([item.sourceColumn.header], [item.targetColumn.header], defaults.matcher, defaults.weight))
+    usedSources.add(item.sourceColumn.header)
+    usedTargets.add(item.targetColumn.header)
   }
-  for (const sCol of sourceColumns.value) {
-    if (out.some(rule => rule.source.fields.includes(sCol.header))) continue
-    if (sCol.header === sourceIdColumn.value) continue
-    const tCol = targetColumns.value.find(column => column.header === sCol.header && !usedTargets.has(column.header) && column.header !== groupCodeColumn.value)
-    if (tCol) { out.push(makeRule([sCol.header], [tCol.header], 'semantic', 12)); usedTargets.add(tCol.header) }
-  }
+
   if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
   rules.value = out
   normalizeWeights()
-  ElMessage.success(`已根据字段语义自动生成 ${out.length} 条映射，可继续人工调整`)
+  pendingSource.value = null
+  ElMessage.success(`已自动生成 ${out.length} 条一对一字段映射；多字段组合请按需手工添加`)
 }
 
 function defaultRule(): Rule {
@@ -270,14 +317,45 @@ function addProfileRule(): void {
 function onSourceChip(header: string): void {
   pendingSource.value = pendingSource.value === header ? null : header
 }
-function onTargetChip(header: string): void {
-  const sourceField = pendingSource.value
-  if (!sourceField) { ElMessage.info('请先点击左侧源字段，再点击右侧目标字段完成连线'); return }
-  const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(header))
-  if (existing) { ElMessage.warning('该连线已存在'); pendingSource.value = null; return }
-  rules.value.push(makeRule([sourceField], [header], 'semantic', rules.value.length ? 20 : 100))
+function connectFieldPair(sourceField: string, targetField: string): void {
+  if (!sourceField || !targetField) return
+  if (sourceField === sourceIdColumn.value || targetField === groupCodeColumn.value) return
+  const existing = rules.value.find(rule => rule.source.fields.includes(sourceField) && rule.target.fields.includes(targetField))
+  if (existing) {
+    ElMessage.warning('该连线已存在')
+    pendingSource.value = null
+    return
+  }
+  rules.value.push(makeRule([sourceField], [targetField], 'semantic', rules.value.length ? 20 : 100))
   normalizeWeights()
   pendingSource.value = null
+}
+function onTargetChip(header: string): void {
+  const sourceField = pendingSource.value
+  if (!sourceField) { ElMessage.info('请先点击左侧源字段，再点击右侧目标字段完成连线，也可以直接拖拽'); return }
+  connectFieldPair(sourceField, header)
+}
+function onCanvasConnect(sourceField: string, targetField: string): void {
+  connectFieldPair(sourceField, targetField)
+}
+async function onCanvasRemoveLine(payload: { ruleId: string; sourceField: string; targetField: string }): Promise<void> {
+  const rule = rules.value.find(item => item.id === payload.ruleId)
+  if (!rule) return
+  if (rule.source.fields.length !== 1 || rule.target.fields.length !== 1) {
+    ElMessage.warning('这条连线属于多字段组合规则，请在下方规则中编辑或删除整个组合规则')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除字段连线“${payload.sourceField} → ${payload.targetField}”吗？`,
+      '删除字段连线',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  removeRule(payload.ruleId)
+  ElMessage.success('字段连线已删除')
 }
 function removeRule(ruleId: string): void {
   const index = rules.value.findIndex(rule => rule.id === ruleId)
@@ -1359,8 +1437,8 @@ onBeforeUnmount(() => {
         <div v-if="!isCompositeProfile" class="section-head">
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
-            <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
-            <p v-else class="section-note">建议先上传两份模板自动识别字段。每一侧都可以选择 Excel 字段或固定值；固定值参与字段匹配规则，下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
+            <p v-if="!isProfileEditorMode" class="section-note">系统自动推荐只生成一对一字段映射；点击左侧字段再点击右侧字段可快速连线。多对一 / 一对多等组合映射作为扩展能力，需要时可在下方规则中手工配置。</p>
+            <p v-else class="section-note">建议先上传两份模板自动识别字段。自动推荐只生成一对一字段映射；多字段组合映射可按需手工添加。每一侧都可以选择 Excel 字段或固定值；下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
           </div>
           <div>
             <template v-if="isProfileEditorMode">
@@ -1387,6 +1465,8 @@ onBeforeUnmount(() => {
             :pending-source="pendingSource"
             @source-click="onSourceChip"
             @target-click="onTargetChip"
+            @connect="onCanvasConnect"
+            @remove-line="onCanvasRemoveLine"
           />
         </template>
         <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>
