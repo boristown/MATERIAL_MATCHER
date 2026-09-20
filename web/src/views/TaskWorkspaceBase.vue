@@ -4,7 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import DualExcelUploadPanel from '../components/DualExcelUploadPanel.vue'
+import CompositeProfilePanel from '../components/CompositeProfilePanel.vue'
+import CompositeTaskUploadPanel from '../components/CompositeTaskUploadPanel.vue'
 import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
+import {
+  compositeRefsFromDocument,
+  hydrateCompositeChildren,
+  resolveCompositeTargetBindings,
+  type CompositeAssignment,
+  type CompositeChildView,
+  type CompositeTargetInput,
+} from '../compositeProfile'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 import { formatDurationMs, formatTimePoint } from '../taskTime'
 
@@ -48,6 +58,11 @@ const targetMode = ref<'existing' | 'upload'>('upload')
 const target = ref<FileRecord | null>(null)
 const targetColumns = ref<ColumnInfo[]>([])
 const groupCodeColumn = ref('')
+const profileKind = ref<'single' | 'composite'>('single')
+const compositeChildren = ref<CompositeChildView[]>([])
+const compositeTargetInputs = ref<CompositeTargetInput[]>([])
+const compositeAssignments = ref<Record<string, CompositeAssignment>>({})
+const compositeTargetBindings = ref<Array<{ profile_id: string; version_no: number; catalog_version_id: string | null }>>([])
 const catalogs = ref<any[]>([])
 const catalogVersionId = ref('')
 const draftId = ref('')
@@ -102,17 +117,20 @@ const pendingSource = ref<string | null>(null)
 const srcHeaders = computed(() => sourceColumns.value.map(column => column.header))
 const tgtHeaders = computed(() => targetColumns.value.map(column => column.header))
 const idCandidateColumns = computed(() => srcHeaders.value.filter(header => header !== sourceIdColumn.value))
+const isCompositeProfile = computed(() => profileKind.value === 'composite')
 
 function uniqueFields(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map(value => String(value ?? '').trim()).filter(Boolean))]
 }
 const profileSourceFields = computed(() => uniqueFields([
+  ...srcHeaders.value,
   sourceIdColumn.value,
   filterField.value,
   scopeSourceField.value,
   ...rules.value.flatMap(rule => rule.source.fields),
 ]))
 const profileTargetFields = computed(() => uniqueFields([
+  ...tgtHeaders.value,
   scopeTargetField.value,
   ...rules.value.flatMap(rule => rule.target.fields),
 ]))
@@ -120,29 +138,41 @@ const profileTaskIssues = computed(() => {
   if (!isProfileTaskCreateMode.value) return [] as string[]
   const issues: string[] = []
   if (!source.value) issues.push('请先上传本次待匹配数据')
-  if (!target.value) issues.push('请上传本次集团码标准数据')
-  if (target.value && !groupCodeColumn.value) issues.push('请确认集团码所在列')
   if (source.value) {
     const sourceSet = new Set(srcHeaders.value)
     const requiredSource = uniqueFields([
       sourceIdColumn.value,
       filterEnabled.value ? filterField.value : '',
       scopeMode.value !== 'GLOBAL' ? scopeSourceField.value : '',
-      ...rules.value.flatMap(rule => rule.source.fields),
+      ...(isCompositeProfile.value
+        ? compositeChildren.value.flatMap(child => child.source_fields)
+        : rules.value.flatMap(rule => rule.source.fields)),
     ])
     const missing = requiredSource.filter(field => !sourceSet.has(field))
     if (missing.length) issues.push(`待匹配数据缺少方案字段: ${missing.join('、')}`)
   }
-  if (target.value && targetColumns.value.length) {
-    const targetSet = new Set(tgtHeaders.value)
-    const requiredTarget = uniqueFields([
-      scopeMode.value !== 'GLOBAL' ? scopeTargetField.value : '',
-      ...rules.value.flatMap(rule => rule.target.fields),
-    ])
-    const missing = requiredTarget.filter(field => !targetSet.has(field))
-    if (missing.length) issues.push(`集团码标准数据缺少方案字段: ${missing.join('、')}`)
+
+  if (isCompositeProfile.value) {
+    if (compositeChildren.value.length < 2) issues.push('跨类目组合方案至少需要两个已发布子方案')
+    for (const child of compositeChildren.value) {
+      const assignment = compositeAssignments.value[child.profile_id]
+      if (!assignment?.file_id) issues.push(`请为子方案「${child.name}」分配本次集团文件`)
+      else if (!assignment.group_code_column) issues.push(`请确认子方案「${child.name}」对应文件的集团码字段`)
+    }
+  } else {
+    if (!target.value) issues.push('请上传本次集团码标准数据')
+    if (target.value && !groupCodeColumn.value) issues.push('请确认集团码所在列')
+    if (target.value && targetColumns.value.length) {
+      const targetSet = new Set(tgtHeaders.value)
+      const requiredTarget = uniqueFields([
+        scopeMode.value !== 'GLOBAL' ? scopeTargetField.value : '',
+        ...rules.value.flatMap(rule => rule.target.fields),
+      ])
+      const missing = requiredTarget.filter(field => !targetSet.has(field))
+      if (missing.length) issues.push(`集团码标准数据缺少方案字段: ${missing.join('、')}`)
+    }
+    if (!rules.value.length) issues.push('已发布方案没有字段映射规则')
   }
-  if (!rules.value.length) issues.push('已发布方案没有字段映射规则')
   if (!sourceIdColumn.value) issues.push('已发布方案未配置源数据标识字段')
   return [...new Set(issues)]
 })
@@ -153,6 +183,13 @@ const schemeTitle = computed((): string => {
   const viaProfile = profiles.value.find(item => item.profile_id === profileId)?.name ?? ''
   return explicit || profileTaskMeta.value?.name || viaProfile || (draftId.value ? '匹配草稿' : '未命名方案')
 })
+const compositeAssignmentsComplete = computed(() =>
+  compositeChildren.value.length >= 2
+  && compositeChildren.value.every(child => {
+    const assignment = compositeAssignments.value[child.profile_id]
+    return Boolean(assignment?.file_id && assignment?.group_code_column)
+  }),
+)
 const profileTaskValid = computed(() => Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
 const profileFilterSummary = computed(() => {
   if (!filterEnabled.value || !filterField.value || !filterValues.value.length) return '不过滤'
@@ -296,6 +333,28 @@ function onGroupCodeColumnChange(value: string): void {
   targetMode.value = 'upload'
   catalogVersionId.value = ''
 }
+function onCompositeProfileSourceParsed(payload: { file: FileRecord; columns: ColumnInfo[] }): void {
+  source.value = payload.file
+  sourceColumns.value = payload.columns
+  if (!sourceIdColumn.value || !payload.columns.some(column => column.header === sourceIdColumn.value)) {
+    sourceIdColumn.value = findHint(payload.columns, 'source_id')
+  }
+}
+function onCompositeTaskSourceParsed(payload: { file: FileRecord; columns: ColumnInfo[] }): void {
+  source.value = payload.file
+  sourceColumns.value = payload.columns
+  if (!sourceIdColumn.value || !payload.columns.some(column => column.header === sourceIdColumn.value)) {
+    sourceIdColumn.value = findHint(payload.columns, 'source_id') || payload.columns[0]?.header || ''
+  }
+}
+function onCompositeTargetInputsUpdate(value: CompositeTargetInput[]): void {
+  compositeTargetInputs.value = value
+  compositeTargetBindings.value = []
+}
+function onCompositeAssignmentsUpdate(value: Record<string, CompositeAssignment>): void {
+  compositeAssignments.value = value
+  compositeTargetBindings.value = []
+}
 async function loadCatalogs(selectCurrent = false): Promise<void> {
   catalogs.value = ((await api.get('/catalogs')).data ?? []).filter((item: any) => item.status === 'READY')
     .sort((a: any, b: any) => Number(b.active) - Number(a.active) || String(b.created_at).localeCompare(String(a.created_at)))
@@ -321,12 +380,58 @@ async function loadProfiles(): Promise<void> {
 async function getProfileDetail(profileId: string): Promise<ProfileDetail> {
   return (await api.get(`/profiles/${profileId}`)).data as ProfileDetail
 }
+async function hydrateCompositeDocument(document: Record<string, any>): Promise<void> {
+  if (!isCompositeProfile.value) {
+    compositeChildren.value = []
+    compositeTargetInputs.value = []
+    compositeAssignments.value = {}
+    compositeTargetBindings.value = []
+    return
+  }
+  compositeChildren.value = await hydrateCompositeChildren(compositeRefsFromDocument(document))
+}
+async function restoreCompositeTargets(
+  document: Record<string, any>,
+  draftBindings?: Array<Record<string, any>>,
+): Promise<void> {
+  if (!isCompositeProfile.value) return
+  await hydrateCompositeDocument(document)
+  const bindings = Array.isArray(draftBindings) && draftBindings.length
+    ? draftBindings
+    : (Array.isArray(document?.advanced?.composite_run) ? document.advanced.composite_run : [])
+  const inputs = new Map<string, CompositeTargetInput>()
+  const assignments: Record<string, CompositeAssignment> = {}
+  for (const item of bindings) {
+    const profileId = String(item?.profile_id ?? '')
+    const catalogVersionId = String(item?.catalog_version_id ?? '')
+    if (!profileId || !catalogVersionId) continue
+    try {
+      const catalog = (await api.get(`/catalogs/versions/${catalogVersionId}`)).data
+      const fileId = String(catalog?.source_file_id ?? '')
+      if (!fileId) continue
+      const response = (await api.get(`/files/${fileId}/inspection`)).data
+      const columns = columnsFromInspection(response.inspection)
+      inputs.set(fileId, { file: response.file, columns, inspection: response.inspection })
+      assignments[profileId] = {
+        file_id: fileId,
+        group_code_column: String(catalog?.group_code_column ?? ''),
+        catalog_version_id: catalogVersionId,
+      }
+    } catch {
+      // 历史任务中单个输入已不可用时，保留其余可恢复映射；最终页面仍由 input-assets 给出追溯提示。
+    }
+  }
+  compositeTargetInputs.value = [...inputs.values()]
+  compositeAssignments.value = assignments
+  compositeTargetBindings.value = bindings
+}
 async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
   const detail = await getProfileDetail(profileId)
   const published = detail.latest_published
   if (!published) { ElMessage.warning('该方案尚未发布，不能用于开始匹配'); return }
   loadDocument(published.document ?? {})
+  await hydrateCompositeDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   ElMessage.success(`已应用方案「${detail.name}」v${published.version_no}，字段映射与阈值已载入`)
 }
@@ -339,6 +444,7 @@ async function loadProfileForEdit(profileId: string): Promise<void> {
   name.value = detail.name
   const editable = detail.draft ?? detail.latest_published
   loadDocument(editable?.document ?? {})
+  await hydrateCompositeDocument(editable?.document ?? {})
 }
 async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
@@ -346,6 +452,7 @@ async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   if (!published) throw new Error('该方案尚未发布，请先在匹配方案配置中发布后再开始匹配')
   profilePicker.value = profileId
   loadDocument(published.document ?? {})
+  await hydrateCompositeDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   profileTaskMeta.value = { name: detail.name, version: Number(published.version_no), sha256: String(published.sha256 ?? '') }
 }
@@ -353,6 +460,21 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules) ? cloneDocument(value.rules) : []
+  const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
+  profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
+  compositeTargetBindings.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
+  if (isProfileEditorMode.value && isCompositeProfile.value) {
+    const remembered = Array.isArray(advancedDocument.template_schema?.source_fields)
+      ? advancedDocument.template_schema.source_fields.map(String)
+      : []
+    if (!sourceColumns.value.length && remembered.length) sourceColumns.value = remembered.map((header: string) => ({ header }))
+  }
+  if (!isCompositeProfile.value) {
+    compositeChildren.value = []
+    compositeTargetInputs.value = []
+    compositeAssignments.value = {}
+    compositeTargetBindings.value = []
+  }
   sourceIdColumn.value = String(value.source_id_column ?? '')
   scopeMode.value = value.scope_mode ?? 'GLOBAL'
   scopeSourceField.value = String(value.scope?.source_field ?? '')
@@ -385,10 +507,28 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
   const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
   delete baseAdvanced.workspace_target
-  if (includeWorkspaceTarget && target.value) {
-    baseAdvanced.workspace_target = {
-      file_id: target.value.file_id,
-      group_code_column: groupCodeColumn.value || null,
+  delete baseAdvanced.composite_run
+  baseAdvanced.profile_kind = profileKind.value
+  if (isCompositeProfile.value) {
+    baseAdvanced.composite_children = compositeChildren.value.map(child => ({
+      profile_id: child.profile_id,
+      version_no: child.version_no,
+    }))
+    if (isProfileEditorMode.value && srcHeaders.value.length) {
+      baseAdvanced.template_schema = {
+        ...(baseAdvanced.template_schema && typeof baseAdvanced.template_schema === 'object' ? baseAdvanced.template_schema : {}),
+        source_fields: [...srcHeaders.value],
+        target_fields: [],
+        group_code_field: null,
+      }
+    }
+  } else {
+    delete baseAdvanced.composite_children
+    if (includeWorkspaceTarget && target.value) {
+      baseAdvanced.workspace_target = {
+        file_id: target.value.file_id,
+        group_code_column: groupCodeColumn.value || null,
+      }
     }
   }
   const retrieval = {
@@ -400,10 +540,12 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   return {
     ...base,
     source_id_column: sourceIdColumn.value || null,
-    scope_mode: scopeMode.value,
-    scope: { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
+    scope_mode: isCompositeProfile.value ? 'GLOBAL' : scopeMode.value,
+    scope: isCompositeProfile.value
+      ? { ...baseScope, source_field: null, target_field: null }
+      : { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
     source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: 'exact' } : null,
-    rules: cloneDocument(rules.value),
+    rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
     decision: {
       ...baseDecision,
       success_threshold: successThreshold.value,
@@ -415,7 +557,11 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     advanced: baseAdvanced,
   }
 }
-const configValid = computed(() => Boolean(source.value) && Boolean(sourceIdColumn.value) && Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0 && reviewThreshold.value < successThreshold.value)
+const configValid = computed(() => {
+  if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
+  if (isCompositeProfile.value) return compositeAssignmentsComplete.value
+  return Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0
+})
 
 async function persistProfileDraft(showMessage = true): Promise<string | null> {
   const profileName = name.value.trim()
@@ -458,12 +604,26 @@ async function publishProfileChanges(): Promise<void> {
   } catch (error) { ElMessage.error((error as Error).message ?? '发布失败') } finally { busy.value = false }
 }
 
+function draftCompositeTargets(): Array<{ profile_id: string; version_no: number; catalog_version_id: string | null }> {
+  if (!isCompositeProfile.value) return []
+  return compositeChildren.value.map(child => {
+    const resolved = compositeTargetBindings.value.find(item =>
+      item.profile_id === child.profile_id && Number(item.version_no) === child.version_no,
+    )
+    return {
+      profile_id: child.profile_id,
+      version_no: child.version_no,
+      catalog_version_id: resolved?.catalog_version_id ?? compositeAssignments.value[child.profile_id]?.catalog_version_id ?? null,
+    }
+  })
+}
 function buildDraftPayload(catalogVersion: string | null = catalogVersionId.value || null): Record<string, unknown> {
   return {
     source_file_id: source.value?.file_id ?? null,
-    catalog_version_id: catalogVersion,
+    catalog_version_id: isCompositeProfile.value ? null : catalogVersion,
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
+    ...(isCompositeProfile.value ? { composite_targets: draftCompositeTargets() } : {}),
     config_document: documentBody(true),
   }
 }
@@ -477,7 +637,19 @@ async function ensureDraft(): Promise<void> {
   }
 }
 
-async function resolveCatalogVersionForDraft(): Promise<string | null> {
+async function resolveCatalogVersionForDraft(requireComplete = true): Promise<string | null> {
+  if (isCompositeProfile.value) {
+    const resolved = await resolveCompositeTargetBindings(
+      compositeChildren.value,
+      compositeTargetInputs.value,
+      compositeAssignments.value,
+      schemeTitle.value,
+      requireComplete,
+    )
+    compositeAssignments.value = resolved.assignments
+    compositeTargetBindings.value = resolved.bindings
+    return resolved.bindings.find(item => item.catalog_version_id)?.catalog_version_id ?? null
+  }
   if (!target.value || !groupCodeColumn.value) return null
   await loadCatalogs(false)
   let existing = catalogs.value.find((item: any) => item.source_file_id === target.value!.file_id && item.group_code_column === groupCodeColumn.value)
@@ -512,7 +684,7 @@ async function persistWorkspaceDraft(): Promise<void> {
   draftSaveInFlight = true
   try {
     await ensureDraft()
-    const versionId = await resolveCatalogVersionForDraft()
+    const versionId = await resolveCatalogVersionForDraft(false)
     const payload = buildDraftPayload(versionId)
     const signature = JSON.stringify(payload)
     if (signature === lastDraftSignature) {
@@ -544,21 +716,24 @@ function scheduleDraftPersist(): void {
 async function saveConfig(): Promise<void> {
   await ensureDraft()
   const versionId = await resolveCatalogVersionForDraft()
-  if (!source.value || !target.value || !versionId) throw new Error('请先上传左侧待匹配 Excel 和右侧集团码标准 Excel')
+  if (!source.value || !versionId || (!isCompositeProfile.value && !target.value)) {
+    throw new Error(isCompositeProfile.value ? '请上传 SAP 待匹配文件，并为每个子方案分配集团文件' : '请先上传左侧待匹配 Excel 和右侧集团码标准 Excel')
+  }
   const payload = buildDraftPayload(versionId)
   await api.patch(`/task-drafts/${draftId.value}`, payload)
   await api.put(`/task-drafts/${draftId.value}/data`, {
     source_file_id: source.value.file_id,
-    catalog_version_id: versionId,
+    catalog_version_id: isCompositeProfile.value ? null : versionId,
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
+    ...(isCompositeProfile.value ? { composite_targets: draftCompositeTargets() } : {}),
   })
   await api.put(`/task-drafts/${draftId.value}/rules`, documentBody(true))
   lastDraftSignature = JSON.stringify(payload)
   draftSaveState.value = 'saved'
 }
 async function saveAsProfile(): Promise<void> {
-  if (!rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
+  if (!isCompositeProfile.value && !rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
   try {
     const { value } = await ElMessageBox.prompt('方案名称(发布后不可变,后续匹配可直接复用)', '存为匹配方案', { inputValue: name.value || '', confirmButtonText: '校验并发布', cancelButtonText: '取消' })
     const created = (await api.post('/profiles', { name: value.trim() || `方案-${Date.now()}`, document: documentBody(false) })).data
@@ -774,14 +949,15 @@ async function restoreDraft(id: string): Promise<void> {
   draftTemplateProfileId.value = String(draft.template_profile_id ?? '')
   const configDocument = draft.config_document ?? {}
   loadDocument(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument, draft.composite_targets)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (draft.source_file_id) await loadFileColumns(String(draft.source_file_id), 'source')
-  if (draft.catalog_version_id) {
+  if (!isCompositeProfile.value && draft.catalog_version_id) {
     catalogVersionId.value = String(draft.catalog_version_id)
     targetMode.value = 'upload'
     if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
     await selectCatalog(catalogVersionId.value, workspaceTarget.fileId)
-  } else if (workspaceTarget.fileId) {
+  } else if (!isCompositeProfile.value && workspaceTarget.fileId) {
     if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
     await loadFileColumns(workspaceTarget.fileId, 'target')
   }
@@ -803,9 +979,10 @@ async function restoreTask(taskId: string): Promise<void> {
   task.value = (await api.get(`/tasks/${taskId}`)).data
   const configDocument = task.value.config_snapshot ?? {}
   loadDocument(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (task.value.source_file_id) await loadFileColumns(String(task.value.source_file_id), 'source').catch(() => undefined)
-  if (task.value.catalog_version_id) {
+  if (!isCompositeProfile.value && task.value.catalog_version_id) {
     catalogVersionId.value = String(task.value.catalog_version_id)
     if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
     await selectCatalog(catalogVersionId.value, workspaceTarget.fileId).catch(() => undefined)
@@ -843,6 +1020,10 @@ watch([
   retrievalMaxLength,
   retrievalDocument,
   documentBase,
+  profileKind,
+  compositeChildren,
+  compositeTargetInputs,
+  compositeAssignments,
 ], scheduleDraftPersist, { deep: true })
 
 onMounted(async () => {
@@ -894,8 +1075,8 @@ onBeforeUnmount(() => {
     <div class="toolbar workspace-toolbar">
       <div>
         <h2>{{ stage === 0 ? '第一步 · 数据上传' : stage === 1 ? '第二步 · 进度监控' : stage === 2 ? '第三步 · 人工调整' : '第四步 · 输出结果' }}</h2>
-        <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；这里只维护字段映射、匹配规则和默认参数，不会启动匹配。</p>
-        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。</p>
+        <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；{{ isCompositeProfile ? '这里只维护源数据条件、阈值和子方案集合，不重复维护子方案字段规则。' : '这里只维护字段映射、匹配规则和默认参数，不会启动匹配。' }}</p>
+        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；{{ isCompositeProfile ? '上传一份 SAP 源文件与各子方案对应的集团文件，并确认文件对应关系。' : '上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。' }}</p>
         <p v-else-if="stage === 0"><b>数据上传与匹配设置</b>：上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始匹配</p>
         <p v-else><b>{{ task?.scheme_name || profileTaskMeta?.name || '未命名方案' }}</b> · {{ stage === 1 ? '匹配计算进行中，进度与中间结果实时更新。' : stage === 2 ? '集中处理需要人工确认的记录。' : '确认无误后生成并下载最终结果 Excel。' }}</p>
       </div>
@@ -934,10 +1115,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="profile-summary-grid">
-          <div><span>字段规则</span><b>{{ rules.length }} 条</b></div>
+          <div><span>{{ isCompositeProfile ? '子方案' : '字段规则' }}</span><b>{{ isCompositeProfile ? compositeChildren.length + ' 个' : rules.length + ' 条' }}</b></div>
           <div><span>自动匹配阈值</span><b>{{ successThreshold }} 分</b></div>
           <div><span>人工确认下限</span><b>{{ reviewThreshold }} 分</b></div>
-          <div><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
+          <div v-if="!isCompositeProfile"><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
           <div class="wide"><span>源数据过滤</span><b>{{ profileFilterSummary }}</b></div>
         </div>
         <el-alert type="info" :closable="false" title="这是本次匹配的初始配置；后续调整只作用于本次匹配，不会修改已发布方案。"/>
@@ -947,10 +1128,24 @@ onBeforeUnmount(() => {
         <div class="section-head step1-heading">
           <div>
             <h3 style="margin:0">数据上传</h3>
-            <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
+            <p class="step1-subtitle">{{ isCompositeProfile ? '上传一个 SAP 待匹配文件与多份集团文件；集团文件可以使用不同字段结构，系统会按子方案自动推荐对应关系。' : '只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。' }}</p>
           </div>
         </div>
+        <CompositeTaskUploadPanel
+          v-if="isCompositeProfile"
+          :source="source"
+          :source-columns="sourceColumns"
+          :source-id-column="sourceIdColumn"
+          :children="compositeChildren"
+          :target-inputs="compositeTargetInputs"
+          :assignments="compositeAssignments"
+          @source-parsed="onCompositeTaskSourceParsed"
+          @update:sourceIdColumn="onSourceIdColumnChange"
+          @update:targetInputs="onCompositeTargetInputsUpdate"
+          @update:assignments="onCompositeAssignmentsUpdate"
+        />
         <DualExcelUploadPanel
+          v-else
           :source="source"
           :target="target"
           :source-columns="sourceColumns"
@@ -962,19 +1157,37 @@ onBeforeUnmount(() => {
           @update:groupCodeColumn="onGroupCodeColumnChange"
         />
         <template v-if="isProfileTaskCreateMode">
-          <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前两份数据与方案配置还需要确认">
+          <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前数据与方案配置还需要确认">
             <div class="compatibility-list"><div v-for="issue in profileTaskIssues" :key="issue">• {{ issue }}</div></div>
           </el-alert>
-          <el-alert v-else-if="source && target" class="profile-compatibility-alert" type="success" :closable="false" title="字段兼容检查通过，可继续确认映射和匹配设置。"/>
+          <el-alert v-else-if="source && (isCompositeProfile ? compositeAssignmentsComplete : target)" class="profile-compatibility-alert" type="success" :closable="false" :title="isCompositeProfile ? '子方案与集团文件对应关系完整，可开始匹配。' : '字段兼容检查通过，可继续确认映射和匹配设置。'"/>
         </template>
       </div>
 
-      <div class="panel">
+      <div class="panel" :class="{ 'composite-profile-panel': isCompositeProfile }">
         <div v-if="isProfileEditorMode" class="profile-editor-meta">
           <label><span>方案名称</span><el-input v-model="name" maxlength="120" show-word-limit placeholder="输入可复用方案名称"/></label>
-          <label><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
+          <label><span>方案类型</span>
+            <el-radio-group v-model="profileKind">
+              <el-radio-button value="single">普通匹配方案</el-radio-button>
+              <el-radio-button value="composite">跨类目组合方案</el-radio-button>
+            </el-radio-group>
+          </label>
+          <label v-if="!isCompositeProfile"><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
         </div>
-        <div class="section-head">
+        <CompositeProfilePanel
+          v-if="isProfileEditorMode && isCompositeProfile"
+          :profiles="profiles"
+          :children="compositeChildren"
+          :source="source"
+          :source-columns="sourceColumns"
+          :source-id-column="sourceIdColumn"
+          :editing-profile-id="editingProfileId"
+          @update:children="compositeChildren = $event"
+          @source-parsed="onCompositeProfileSourceParsed"
+          @update:sourceIdColumn="onSourceIdColumnChange"
+        />
+        <div v-if="!isCompositeProfile" class="section-head">
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
             <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
@@ -987,7 +1200,7 @@ onBeforeUnmount(() => {
             </template>
           </div>
         </div>
-        <template v-if="!isProfileEditorMode">
+        <template v-if="!isCompositeProfile && !isProfileEditorMode">
           <div v-if="!sourceColumns.length || !targetColumns.length" class="canvas-empty">
             <el-empty description="先在上方上传左右两份 Excel，字段清单会自动解析到这里" :image-size="70"/>
           </div>
@@ -1003,8 +1216,8 @@ onBeforeUnmount(() => {
             @target-click="onTargetChip"
           />
         </template>
-        <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
-        <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
+        <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
+        <el-table v-if="!isCompositeProfile && rules.length" :data="rules" row-key="id" size="small" class="rules-table">
           <el-table-column label="源字段" min-width="200"><template #default="scope">
             <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
             <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
@@ -1026,7 +1239,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="panel">
-        <h3>{{ isProfileEditorMode ? '过滤、匹配范围与阈值' : '③ 匹配设置' }}</h3>
+        <h3>{{ isProfileEditorMode ? (isCompositeProfile ? '源数据过滤与匹配阈值' : '过滤、匹配范围与阈值') : '③ 匹配设置' }}</h3>
         <div class="filter-row">
           <el-switch v-model="filterEnabled"/><span>仅处理满足条件的源数据行</span>
           <template v-if="filterEnabled">
@@ -1034,10 +1247,10 @@ onBeforeUnmount(() => {
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
             </el-select>
             <el-radio-group v-model="filterMode" size="small"><el-radio-button value="include">等于其中之一</el-radio-button><el-radio-button value="exclude">排除</el-radio-button></el-radio-group>
-            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="输入值后回车,如 Z001" style="width:320px">
+            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="输入值后回车" style="width:320px">
               <el-option v-for="value in filterValues" :key="value" :label="value" :value="value"/>
             </el-select>
-            <span class="muted">例:物料类型只匹配 Z001;或本次仅处理 A006</span>
+            <span class="muted">按所选源字段和值限定本方案需要处理的数据范围。</span>
           </template>
         </div>
         <div class="threshold">
@@ -1045,7 +1258,7 @@ onBeforeUnmount(() => {
           <span>人工确认下限 ≥</span><el-slider v-model="reviewThreshold" :min="0" :max="99" style="width:180px"/>
           <span>候选 TopN</span><el-input-number v-model="topN" :min="1" :max="50" size="small"/>
         </div>
-        <template v-if="isProfileEditorMode">
+        <template v-if="isProfileEditorMode && !isCompositeProfile">
           <h4 class="click" @click="advanced=!advanced">高级配置{{ advanced ? ' ▲' : ' ▼' }}</h4>
           <div v-if="advanced" class="threshold">
             <span>max_length</span>
@@ -1064,7 +1277,7 @@ onBeforeUnmount(() => {
             <el-button type="primary" :loading="busy" :disabled="reviewThreshold >= successThreshold" @click="publishProfileChanges">{{ editingProfilePublishedVersion ? '校验并发布新版本' : '校验并发布' }}</el-button>
           </template>
           <template v-else>
-            <el-button :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
+            <el-button v-if="!isCompositeProfile" :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
             <el-button type="primary" :loading="busy" :disabled="!configValid" @click="start">开始匹配 →</el-button>
           </template>
         </div>
@@ -1349,6 +1562,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 7px;
   min-width: 0;
+}
+.composite-profile-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 .compatibility-list {
   padding-top: 6px;
