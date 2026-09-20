@@ -32,6 +32,13 @@ const emit = defineEmits<{
 
 const uploading = ref<'source' | 'target' | ''>('')
 const sourceInspection = ref<Inspection | null>(null)
+let targetInputCache: CompositeTargetInput[] = [...props.targetInputs]
+
+watch(
+  () => props.targetInputs,
+  value => { targetInputCache = [...value] },
+  { deep: true },
+)
 
 function columnsFromInspection(inspection: Inspection): ColumnInfo[] {
   const sheet = inspection.sheets?.find(item => item.sheet_name === inspection.recommended_sheet) ?? inspection.sheets?.[0]
@@ -54,7 +61,8 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
       ElMessage.success(`SAP 待匹配文件解析完成，共识别 ${columns.length} 个字段`)
     } else {
       const input: CompositeTargetInput = { file: response.file as FileRecord, columns, inspection }
-      const nextInputs = [...props.targetInputs.filter(item => item.file.file_id !== input.file.file_id), input]
+      const nextInputs = [...targetInputCache.filter(item => item.file.file_id !== input.file.file_id), input]
+      targetInputCache = nextInputs
       emit('update:targetInputs', nextInputs)
       emit('update:assignments', recommendCompositeAssignments(props.children, nextInputs, props.assignments))
       ElMessage.success(`集团文件「${input.file.original_name}」解析完成，共识别 ${columns.length} 个字段`)
@@ -67,7 +75,8 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
 }
 
 function removeTarget(fileId: string): void {
-  const nextInputs = props.targetInputs.filter(item => item.file.file_id !== fileId)
+  const nextInputs = targetInputCache.filter(item => item.file.file_id !== fileId)
+  targetInputCache = nextInputs
   const nextAssignments: Record<string, CompositeAssignment> = {}
   for (const [profileId, assignment] of Object.entries(props.assignments)) {
     if (assignment.file_id !== fileId) nextAssignments[profileId] = assignment
@@ -76,9 +85,19 @@ function removeTarget(fileId: string): void {
   emit('update:assignments', recommendCompositeAssignments(props.children, nextInputs, nextAssignments))
 }
 
+function fileUsedByOther(childId: string, fileId: string): boolean {
+  return Object.entries(props.assignments).some(([profileId, assignment]) =>
+    profileId !== childId && assignment.file_id === fileId,
+  )
+}
+
 function onFileChange(child: CompositeChildView, fileId: string): void {
   const input = props.targetInputs.find(item => item.file.file_id === fileId)
   if (!input) return
+  if (fileUsedByOther(child.profile_id, fileId)) {
+    ElMessage.warning('该集团文件已分配给其他子方案，请选择另一份文件')
+    return
+  }
   const headers = new Set(input.columns.map(column => column.header))
   const groupCode = child.group_code_field && headers.has(child.group_code_field)
     ? child.group_code_field
@@ -119,6 +138,14 @@ function coverageType(child: CompositeChildView): 'success' | 'warning' | 'dange
   if (result.ratio >= 0.9) return 'success'
   if (result.ratio >= 0.6) return 'warning'
   return 'danger'
+}
+function missingText(child: CompositeChildView): string {
+  const input = inputOf(child)
+  if (!input) return ''
+  const missing = targetCompatibility(child, input).missing
+  if (!missing.length) return ''
+  const visible = missing.slice(0, 3).join('、')
+  return `缺少：${visible}${missing.length > 3 ? ` 等 ${missing.length} 个字段` : ''}`
 }
 
 const allAssigned = computed(() => props.children.length >= 2 && props.children.every(child => {
@@ -183,11 +210,20 @@ watch(
           style="width:100%"
           @update:model-value="(value: unknown) => onFileChange(scope.row, String(value ?? ''))"
         >
-          <el-option v-for="input in targetInputs" :key="input.file.file_id" :label="input.file.original_name" :value="input.file.file_id"/>
+          <el-option
+            v-for="input in targetInputs"
+            :key="input.file.file_id"
+            :label="input.file.original_name"
+            :value="input.file.file_id"
+            :disabled="fileUsedByOther(scope.row.profile_id, input.file.file_id)"
+          />
         </el-select>
       </template></el-table-column>
-      <el-table-column label="字段兼容情况" min-width="150"><template #default="scope">
-        <el-tag :type="coverageType(scope.row)" size="small">{{ coverageText(scope.row) }}</el-tag>
+      <el-table-column label="字段兼容情况" min-width="210"><template #default="scope">
+        <div class="coverage-cell">
+          <el-tag :type="coverageType(scope.row)" size="small">{{ coverageText(scope.row) }}</el-tag>
+          <small v-if="missingText(scope.row)">{{ missingText(scope.row) }}</small>
+        </div>
       </template></el-table-column>
       <el-table-column label="集团码字段" min-width="180"><template #default="scope">
         <el-select
@@ -217,5 +253,7 @@ watch(
 .upload-card label { display:grid; grid-template-columns:130px 1fr; align-items:center; gap:10px; margin-top:12px; font-size:12px; font-weight:600; }
 .file-chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .mapping-head { margin:2px 0 -4px; }
+.coverage-cell { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
+.coverage-cell small { color:var(--mm-muted); line-height:1.35; }
 @media (max-width: 900px) { .upload-grid { grid-template-columns:1fr; } }
 </style>
