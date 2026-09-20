@@ -85,6 +85,7 @@ const filterEnabled = ref(false)
 const filterField = ref('')
 const filterValues = ref<string[]>([])
 const filterMode = ref<'include' | 'exclude'>('include')
+const filterMatch = ref<'exact' | 'contains'>('exact')
 const successThreshold = ref(88), reviewThreshold = ref(75), topN = ref(5)
 const retrievalMaxLength = ref(256)
 const retrievalDocument = ref<Record<string, unknown>>({})
@@ -183,7 +184,10 @@ const schemeTitle = computed((): string => {
 const profileTaskValid = computed(() => Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
 const profileFilterSummary = computed(() => {
   if (!filterEnabled.value || !filterField.value || !filterValues.value.length) return '不过滤'
-  return `${filterField.value} ${filterMode.value === 'exclude' ? '排除' : '包含'} ${filterValues.value.join('、')}`
+  const operator = filterMode.value === 'exclude'
+    ? (filterMatch.value === 'contains' ? '不包含' : '不等于')
+    : (filterMatch.value === 'contains' ? '包含' : '等于')
+  return `${filterField.value} ${operator} ${filterValues.value.join('、')}`
 })
 const profileScopeSummary = computed(() => ({ GLOBAL: '全库匹配', STRICT: '同组匹配', MAPPED: '分类映射' }[scopeMode.value] ?? scopeMode.value))
 const draftStateLabel = computed(() => ({ idle: '草稿待保存', saving: '草稿保存中…', saved: '草稿已保存', error: '草稿保存失败' }[draftSaveState.value]))
@@ -275,7 +279,7 @@ function ruleSideLabel(side: FieldSide): string {
 function sideMode(side: FieldSide): 'field' | 'fixed' {
   return side.fixed_value !== null && side.fixed_value !== undefined ? 'fixed' : 'field'
 }
-function setSideMode(side: FieldSide, mode: 'field' | 'fixed'): void {
+function setSideMode(side: FieldSide, mode: string): void {
   if (mode === 'fixed') {
     side.fields = []
     side.fixed_value = ''
@@ -587,6 +591,7 @@ function loadDocument(document: any): void {
   filterField.value = String(flt?.field ?? '')
   filterValues.value = Array.isArray(flt?.values) ? flt.values.map(String) : []
   filterMode.value = flt?.mode === 'exclude' ? 'exclude' : 'include'
+  filterMatch.value = flt?.match === 'contains' ? 'contains' : 'exact'
   advanced.value = false
 }
 function workspaceTargetFromDocument(document: any): { fileId: string; groupCodeColumn: string } {
@@ -643,7 +648,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     source_id_column: sourceIdColumn.value || null,
     scope_mode: scopeMode.value,
     scope: { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
-    source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: 'exact' } : null,
+    source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: filterMatch.value } : null,
     rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
     decision: {
       ...baseDecision,
@@ -1090,6 +1095,7 @@ watch([
   filterField,
   filterValues,
   filterMode,
+  filterMatch,
   successThreshold,
   reviewThreshold,
   topN,
@@ -1239,6 +1245,7 @@ onBeforeUnmount(() => {
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
             <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
+            <p v-else class="section-note">每一侧都可以选择 Excel 字段或固定值。固定值参与字段匹配规则；下方“源数据过滤”决定本方案实际处理哪些源数据行，两者用途不同。</p>
           </div>
           <div>
             <template v-if="isProfileEditorMode">
@@ -1269,14 +1276,26 @@ onBeforeUnmount(() => {
         </template>
         <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>
         <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
-          <el-table-column label="源字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable :allow-create="!sourceColumns.length" default-first-option placeholder="选择客户模板字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
-            <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+          <el-table-column label="源侧" min-width="280"><template #default="scope">
+            <div class="field-side-editor">
+              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="mode => setSideMode(scope.row.source, String(mode))">
+                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
+              </el-select>
+              <el-input v-if="sideMode(scope.row.source) === 'fixed'" v-model="scope.row.source.fixed_value" clearable placeholder="例如：Z001"/>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable :allow-create="!sourceColumns.length" default-first-option placeholder="选择客户模板字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+            </div>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
-          <el-table-column label="目标字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
-            <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+          <el-table-column label="目标侧" min-width="280"><template #default="scope">
+            <div class="field-side-editor">
+              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="mode => setSideMode(scope.row.target, String(mode))">
+                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
+              </el-select>
+              <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+            </div>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
             <el-select v-model="scope.row.matcher" size="small">
@@ -1297,11 +1316,13 @@ onBeforeUnmount(() => {
             <el-select v-model="filterField" placeholder="字段" style="width:180px" filterable :allow-create="isProfileEditorMode && !sourceColumns.length" default-first-option>
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
             </el-select>
-            <el-radio-group v-model="filterMode" size="small"><el-radio-button value="include">等于其中之一</el-radio-button><el-radio-button value="exclude">排除</el-radio-button></el-radio-group>
-            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="输入值后回车,如 Z001" style="width:320px">
+            <span class="muted">条件</span>
+            <el-select v-model="filterMatch" size="small" style="width:100px"><el-option label="等于" value="exact"/><el-option label="包含" value="contains"/></el-select>
+            <el-select v-model="filterMode" size="small" style="width:160px"><el-option label="保留满足条件的行" value="include"/><el-option label="排除满足条件的行" value="exclude"/></el-select>
+            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="默认值，例如：Z001" style="width:300px">
               <el-option v-for="value in filterValues" :key="value" :label="value" :value="value"/>
             </el-select>
-            <span class="muted">例:物料类型只匹配 Z001;或本次仅处理 A006</span>
+            <span class="muted">例：字段“物料类型” 等于 Z001，只处理该类源数据</span>
           </template>
         </div>
         <div class="threshold">
@@ -1591,6 +1612,20 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 7px;
   min-width: 0;
+}
+.field-side-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.field-side-editor > :last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.side-mode-select {
+  flex: 0 0 96px;
+  width: 96px;
 }
 .compatibility-list {
   padding-top: 6px;
