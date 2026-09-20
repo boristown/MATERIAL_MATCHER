@@ -5,4 +5,4 @@
   2. 终端执行：./run.sh
   3. 按中文向导提示操作即可，无需任何 Docker / Python 知识。
 
-详细步骤见：doc.md
+详细步骤见：doc.md；业务操作见：use.md
