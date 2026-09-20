@@ -13,6 +13,16 @@ type ColumnInfo = { header: string; business_hint?: string | null; samples?: str
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
 type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
+type CompositeChild = {
+  profile_id: string
+  version_no: number
+  name: string
+  source_fields: string[]
+  target_fields: string[]
+  group_code_field: string
+}
+type CompositeTargetInput = { file: FileRecord; columns: ColumnInfo[]; inspection: any }
+type CompositeAssignment = { file_id: string; group_code_column: string; catalog_version_id?: string }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
 type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion | null; latest_published?: ProfileVersion | null }
@@ -49,6 +59,12 @@ const target = ref<FileRecord | null>(null)
 const targetFiles = ref<FileRecord[]>([])
 const targetColumns = ref<ColumnInfo[]>([])
 const groupCodeColumn = ref('')
+const profileKind = ref<'single' | 'composite'>('single')
+const compositeChildren = ref<CompositeChild[]>([])
+const compositeChildIds = ref<string[]>([])
+const compositeTargetInputs = ref<CompositeTargetInput[]>([])
+const compositeAssignments = ref<Record<string, CompositeAssignment>>({})
+const compositeRunEntries = ref<Array<Record<string, unknown>>>([])
 const catalogs = ref<any[]>([])
 const catalogVersionId = ref('')
 const draftId = ref('')
@@ -103,6 +119,14 @@ const pendingSource = ref<string | null>(null)
 const srcHeaders = computed(() => sourceColumns.value.map(column => column.header))
 const tgtHeaders = computed(() => targetColumns.value.map(column => column.header))
 const idCandidateColumns = computed(() => srcHeaders.value.filter(header => header !== sourceIdColumn.value))
+const isCompositeProfile = computed(() => profileKind.value === 'composite')
+const compositeTargetFiles = computed(() => compositeTargetInputs.value.map(item => item.file))
+const ordinaryPublishedProfiles = computed(() =>
+  profiles.value.filter(item => item.profile_id !== editingProfileId.value && Number(item.latest_published_version ?? 0) > 0),
+)
+function compositeInput(fileId: string): CompositeTargetInput | undefined {
+  return compositeTargetInputs.value.find(item => item.file.file_id === fileId)
+}
 
 function uniqueFields(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map(value => String(value ?? '').trim()).filter(Boolean))]
