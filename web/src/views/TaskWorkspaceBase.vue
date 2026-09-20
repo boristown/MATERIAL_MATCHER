@@ -85,7 +85,7 @@ const filterField = ref('')
 const filterValues = ref<string[]>([])
 const filterMode = ref<'include' | 'exclude'>('include')
 const filterMatch = ref<'exact' | 'contains'>('exact')
-const successThreshold = ref(88), reviewThreshold = ref(75), topN = ref(5)
+const successThreshold = ref(88), topN = ref(5)
 const retrievalMaxLength = ref(256)
 const retrievalDocument = ref<Record<string, unknown>>({})
 const documentBase = ref<Record<string, any>>({})
@@ -105,7 +105,7 @@ const workbenchItems = ref<WorkbenchItem[]>([])
 const selectedRows = ref<WorkbenchItem[]>([])
 const searchQ = ref('')
 const filterMode2 = ref('all')
-const thrSuccess = ref(88), thrReview = ref(75)
+const thrSuccess = ref(88)
 const redecideBusy = ref(false)
 const drawerVisible = ref(false), drawerItem = ref<WorkbenchItem | null>(null)
 const candidates = ref<Candidate[]>([]), candidateIndex = ref(0)
@@ -572,7 +572,7 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules)
-    ? adaptRulesFromApi(cloneDocument(value.rules)).map((rule: Rule) => ({
+    ? (adaptRulesFromApi(cloneDocument(value.rules)) as Rule[]).map((rule: Rule) => ({
         ...rule,
         value_mapping: { ...(rule.value_mapping ?? {}) },
         value_mapping_source_values: Array.isArray(rule.value_mapping_source_values) ? rule.value_mapping_source_values.map(String) : [],
@@ -605,10 +605,8 @@ function loadDocument(document: any): void {
   scopeSourceField.value = String(value.scope?.source_field ?? '')
   scopeTargetField.value = String(value.scope?.target_field ?? '')
   successThreshold.value = Number(value.decision?.success_threshold ?? 88)
-  reviewThreshold.value = Number(value.decision?.review_threshold ?? 75)
   topN.value = Number(value.decision?.top_n ?? 5)
   thrSuccess.value = successThreshold.value
-  thrReview.value = reviewThreshold.value
   retrievalMaxLength.value = Number(value.retrieval?.max_length ?? 256)
   retrievalDocument.value = { ...(value.retrieval ?? {}) }
   const flt = value.source_filter
@@ -630,7 +628,8 @@ function workspaceTargetFromDocument(document: any): { fileId: string; groupCode
 function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const base = cloneDocument(documentBase.value)
   const baseScope = base.scope && typeof base.scope === 'object' ? base.scope : {}
-  const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
+  const rawDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
+  const baseDecision = Object.fromEntries(Object.entries(rawDecision).filter(([key]) => key !== 'review_threshold'))
   const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
   delete baseAdvanced.workspace_target
   delete baseAdvanced.composite_run
@@ -687,7 +686,6 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
       ...baseDecision,
       success_threshold: successThreshold.value,
       review_enabled: typeof baseDecision.review_enabled === 'boolean' ? baseDecision.review_enabled : true,
-      review_threshold: reviewThreshold.value,
       top_n: topN.value,
     },
     retrieval,
@@ -700,7 +698,7 @@ function sideReady(side: FieldSide): boolean {
     : side.fields.length > 0
 }
 const configValid = computed(() => {
-  if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
+  if (!source.value || !sourceIdColumn.value) return false
   if (isCompositeProfile.value) return compositeAssignmentsComplete.value
   return Boolean(target.value && groupCodeColumn.value)
     && rules.value.length > 0
@@ -1023,7 +1021,7 @@ async function batchReject(): Promise<void> {
 async function reDecide(): Promise<void> {
   redecideBusy.value = true
   try {
-    const response = (await api.post(`/tasks/${task.value.task_id}/re-decide`, { success_threshold: thrSuccess.value, review_threshold: thrReview.value })).data
+    const response = (await api.post(`/tasks/${task.value.task_id}/re-decide`, { success_threshold: thrSuccess.value })).data
     await loadWorkbench()
     ElMessage.success(`重判完成:自动匹配 ${response.summary.automatic_matched} · 待确认 ${response.summary.pending_review} · 未匹配 ${response.summary.unmatched}`)
   } catch (error) { ElMessage.error((error as Error).message) } finally { redecideBusy.value = false }
@@ -1160,7 +1158,6 @@ watch([
   filterMode,
   filterMatch,
   successThreshold,
-  reviewThreshold,
   topN,
   retrievalMaxLength,
   retrievalDocument,
@@ -1262,7 +1259,6 @@ onBeforeUnmount(() => {
         <div class="profile-summary-grid">
           <div><span>{{ isCompositeProfile ? '子方案' : '字段规则' }}</span><b>{{ isCompositeProfile ? compositeChildren.length + ' 个' : rules.length + ' 条' }}</b></div>
           <div><span>自动匹配阈值</span><b>{{ successThreshold }} 分</b></div>
-          <div><span>人工确认下限</span><b>{{ reviewThreshold }} 分</b></div>
           <div v-if="!isCompositeProfile"><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
           <div class="wide"><span>源数据过滤</span><b>{{ profileFilterSummary }}</b></div>
         </div>
@@ -1477,7 +1473,6 @@ onBeforeUnmount(() => {
         </div>
         <div class="threshold">
           <span>自动匹配阈值 ≥</span><el-slider v-model="successThreshold" :min="1" :max="100" style="width:180px"/>
-          <span>人工确认下限 ≥</span><el-slider v-model="reviewThreshold" :min="0" :max="99" style="width:180px"/>
           <span>候选 TopN</span><el-input-number v-model="topN" :min="1" :max="50" size="small"/>
         </div>
         <template v-if="isProfileEditorMode && !isCompositeProfile">
@@ -1496,7 +1491,7 @@ onBeforeUnmount(() => {
         <div class="actions">
           <template v-if="isProfileEditorMode">
             <el-button :loading="busy" @click="saveProfileDraft">保存草稿</el-button>
-            <el-button type="primary" :loading="busy" :disabled="reviewThreshold >= successThreshold" @click="publishProfileChanges">{{ editingProfilePublishedVersion ? '校验并发布新版本' : '校验并发布' }}</el-button>
+            <el-button type="primary" :loading="busy" @click="publishProfileChanges">{{ editingProfilePublishedVersion ? '校验并发布新版本' : '校验并发布' }}</el-button>
           </template>
           <template v-else>
             <el-button v-if="!isCompositeProfile" :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
@@ -1559,8 +1554,7 @@ onBeforeUnmount(() => {
       <div class="threshold-card">
         <span class="muted">调整阈值即时重判(不影响已人工处理行):</span>
         <span>自动 ≥</span><el-slider v-model="thrSuccess" :min="1" :max="100" style="width:150px" :disabled="finalized"/>
-        <span>复核 ≥</span><el-slider v-model="thrReview" :min="0" :max="99" style="width:150px" :disabled="finalized"/>
-        <el-button size="small" type="primary" plain :loading="redecideBusy" :disabled="finalized || thrReview >= thrSuccess" @click="reDecide">按新阈值重判</el-button>
+        <el-button size="small" type="primary" plain :loading="redecideBusy" :disabled="finalized" @click="reDecide">按新阈值重判</el-button>
         <el-tag v-if="finalized" type="info" size="small">结果已生成,阈值已锁定</el-tag>
       </div>
       <div class="quick">

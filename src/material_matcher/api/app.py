@@ -25,15 +25,12 @@ _ORIGINAL_REVIEWER_MUTATION_ALLOWED = _legacy_app._reviewer_mutation_allowed
 
 
 class ReDecideRequest(BaseModel):
-    success_threshold: float = Field(ge=0, le=100)
-    review_threshold: float = Field(ge=0, le=100)
-    single_threshold: bool = False
+    success_threshold: float = Field(gt=0, le=100)
     mode: Literal["preview", "apply"] = "apply"
 
 
 class CalibrationScenario(BaseModel):
-    success_threshold: float = Field(ge=0, le=100)
-    review_threshold: float = Field(ge=0, le=100)
+    success_threshold: float = Field(gt=0, le=100)
 
 
 class BatchCalibrationRequest(BaseModel):
@@ -149,6 +146,19 @@ def _legacy_summary(result: dict[str, object]) -> dict[str, int]:
         "unmatched": int(counts.get("unmatched", 0)),
         "confirmed": int(counts.get("confirmed", 0)),
     }
+
+
+def _single_threshold_payload(value: object) -> object:
+    """Hide removed dual-threshold compatibility fields from public APIs."""
+    if isinstance(value, dict):
+        return {
+            key: _single_threshold_payload(item)
+            for key, item in value.items()
+            if key not in {"review_threshold", "single_threshold"}
+        }
+    if isinstance(value, list):
+        return [_single_threshold_payload(item) for item in value]
+    return value
 
 
 def _reviewer_mutation_allowed(path: str) -> bool:
@@ -332,36 +342,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/tasks/{task_id}/calibration")
     def calibration_statistics(task_id: str) -> dict[str, object]:
-        return calibration.statistics(task_id)
+        return _single_threshold_payload(calibration.statistics(task_id))  # type: ignore[return-value]
 
     @app.post("/api/tasks/{task_id}/calibration/batch-preview")
     def calibration_batch_preview(task_id: str, payload: BatchCalibrationRequest) -> dict[str, object]:
-        return calibration.batch_preview(task_id, [scenario.model_dump() for scenario in payload.scenarios])
+        scenarios = [
+            {"success_threshold": scenario.success_threshold, "review_threshold": 0.0}
+            for scenario in payload.scenarios
+        ]
+        return _single_threshold_payload(calibration.batch_preview(task_id, scenarios))  # type: ignore[return-value]
 
     @app.post("/api/tasks/{task_id}/re-decide")
     def re_decide(task_id: str, payload: ReDecideRequest, request: Request) -> dict[str, object]:
         result = calibration.re_decide(
             task_id,
             payload.success_threshold,
-            payload.review_threshold,
+            0.0,
             payload.mode,
             operator=str(getattr(request.state, "username", "system")),
-            single_threshold=payload.single_threshold,
+            single_threshold=True,
         )
         result["summary"] = _legacy_summary(result)
-        return result
+        return _single_threshold_payload(result)  # type: ignore[return-value]
 
     @app.get("/api/tasks/{task_id}/decision-revisions")
     def decision_revisions(task_id: str) -> list[dict[str, object]]:
-        return calibration.revisions(task_id)
+        return _single_threshold_payload(calibration.revisions(task_id))  # type: ignore[return-value]
 
     @app.post("/api/tasks/{task_id}/decision-revisions/{revision_no}/rollback")
     def rollback_decision(task_id: str, revision_no: int, request: Request) -> dict[str, object]:
-        return calibration.rollback(
+        result = calibration.rollback(
             task_id,
             revision_no,
             operator=str(getattr(request.state, "username", "system")),
         )
+        return _single_threshold_payload(result)  # type: ignore[return-value]
 
     @app.get("/api/tasks/{task_id}/workbench/items")
     def workbench_items(

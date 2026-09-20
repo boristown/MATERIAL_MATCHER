@@ -79,12 +79,17 @@ def test_redecide_and_workbench_search_api(tmp_path: Path, authed) -> None:
 
     # 降低自动阈值 → 待确认行变为自动匹配
     before = client.get(f"/api/tasks/{task}/workbench/summary").json()
-    result = client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 55, "review_threshold": 40})
+    result = client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 55})
     assert result.status_code == 200, result.text
     after = result.json()["summary"]
     assert after["pending_review"] <= before["pending_review"]
-    # 非法阈值拒绝
-    assert client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 40, "review_threshold": 50}).status_code == 422
+    assert "review_threshold" not in result.json()
+    # 旧客户端多传 review_threshold 仍兼容，但该字段不再参与判定或出现在响应中。
+    legacy = client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 40, "review_threshold": 99})
+    assert legacy.status_code == 200
+    assert "review_threshold" not in legacy.json()
+    # 自动匹配阈值本身仍需合法。
+    assert client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 0}).status_code == 422
 
     # 正式结果生成后仍允许全局调参，但必须保留旧结果并形成新版本。
     fin_v1 = client.post(f"/api/tasks/{task}/finalize", json={"allow_unresolved_review": True})
@@ -93,7 +98,7 @@ def test_redecide_and_workbench_search_api(tmp_path: Path, authed) -> None:
     first_versions = client.get(f"/api/tasks/{task}/result-revisions").json()
     assert len(first_versions) == 1
 
-    redecide_v2 = client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 70, "review_threshold": 50})
+    redecide_v2 = client.post(f"/api/tasks/{task}/re-decide", json={"success_threshold": 70})
     assert redecide_v2.status_code == 200
     assert redecide_v2.json()["revision_no"] >= 2
     fin_v2 = client.post(f"/api/tasks/{task}/finalize", json={"allow_unresolved_review": True})

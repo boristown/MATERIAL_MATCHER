@@ -8,7 +8,7 @@ import uuid
 from pydantic import ValidationError
 
 from material_matcher.domain.errors import DomainError
-from material_matcher.domain.models import MatchingConfig
+from material_matcher.domain.models import MatchingConfig, strip_legacy_review_threshold
 from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -184,7 +184,7 @@ class ProfileService:
             raise DomainError("INVALID_PROFILE_NAME", "匹配方案名称不能为空", status_code=422)
         profile_id = uuid.uuid4().hex
         created_at = _now()
-        draft = document or {}
+        draft = strip_legacy_review_threshold(document or {})
         with self.meta.connect() as connection:
             connection.execute("INSERT INTO profiles VALUES(?,?,?)", (profile_id, name, created_at))
             connection.execute(
@@ -220,11 +220,12 @@ class ProfileService:
         if row is None:
             return None
         item = dict(row)
-        item["document"] = json.loads(str(item["document"]))
+        item["document"] = strip_legacy_review_threshold(json.loads(str(item["document"])))
         return item
 
     def save_draft(self, profile_id: str, document: dict[str, object]) -> dict[str, object]:
         self._profile(profile_id)
+        document = strip_legacy_review_threshold(document)
         now = _now()
         with self.meta.connect() as connection:
             existing = connection.execute("SELECT 1 FROM profile_versions WHERE profile_id=? AND status='DRAFT'", (profile_id,)).fetchone()
@@ -312,7 +313,7 @@ class ProfileService:
 
     def rollback(self, profile_id: str, version_no: int) -> dict[str, object]:
         source = self.version(profile_id, version_no)
-        document = dict(source["document"])
+        document = self._validate(dict(source["document"]), profile_id=profile_id).model_dump(mode="json")
         now = _now()
         with self.meta.connect() as connection:
             latest = connection.execute("SELECT COALESCE(MAX(version_no),0) AS version_no FROM profile_versions WHERE profile_id=? AND status='PUBLISHED'", (profile_id,)).fetchone()
