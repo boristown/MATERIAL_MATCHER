@@ -440,7 +440,16 @@ class TaskService:
             raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据和集团码目录", status_code=422)
         bound_document = self.dictionaries.bind_references(dict(draft.get("config_document") or {}))
         config = MatchingConfig.model_validate(bound_document)
-        if not config.rules:
+        advanced = config.advanced if isinstance(config.advanced, dict) else {}
+        profile_kind = str(advanced.get("profile_kind") or "single")
+        composite_run = advanced.get("composite_run")
+        if profile_kind == "composite":
+            if not isinstance(composite_run, list) or len(composite_run) < 2:
+                raise DomainError("TASK_DRAFT_INCOMPLETE", "跨类目组合方案需要为每个子方案选择对应的集团码文件", status_code=422)
+            for item in composite_run:
+                if not isinstance(item, dict) or not item.get("profile_id") or not item.get("version_no") or not item.get("catalog_version_id"):
+                    raise DomainError("TASK_DRAFT_INCOMPLETE", "组合方案的子方案与集团码文件映射不完整", status_code=422)
+        elif not config.rules:
             raise DomainError("INVALID_PROFILE", "至少配置一条字段对应关系后才能开始比对", status_code=422)
         snapshot = config.model_dump(mode="json")
         scheme_name = self._freeze_scheme_name(snapshot, draft)
@@ -449,11 +458,11 @@ class TaskService:
             advanced[INPUT_ASSET_SNAPSHOT_KEY] = {
                 role: {
                     key: asset.get(key)
-                    for key in ("file_id", "original_name", "uploaded_at", "catalog_version_id")
+                    for key in ("file_id", "original_name", "uploaded_at", "catalog_version_id", "profile_id", "profile_version")
                     if asset.get(key) is not None
                 }
                 for role, asset in input_assets.items()
-                if role in {"source", "target"}
+                if role == "source" or role == "target" or role.startswith("target.")
             }
             snapshot["advanced"] = advanced
         encoded = _canonical(snapshot)
@@ -488,8 +497,9 @@ class TaskService:
                 ),
             )
             if input_assets:
-                for role in ("source", "target"):
-                    asset = input_assets.get(role)
+                for role, asset in input_assets.items():
+                    if role != "source" and role != "target" and not role.startswith("target."):
+                        continue
                     if not asset:
                         continue
                     connection.execute(
