@@ -21,7 +21,7 @@ import { formatDurationMs, formatTimePoint } from '../taskTime'
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
-type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
+type FieldSide = { fields: string[]; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
@@ -279,24 +279,7 @@ function removeRule(ruleId: string): void {
   if (index >= 0) rules.value.splice(index, 1)
 }
 function ruleSideLabel(side: FieldSide): string {
-  if (side.fixed_value !== null && side.fixed_value !== undefined) return `固定值：${side.fixed_value}`
   return side.fields.join(side.combine === 'coalesce' ? ' / ' : ' + ')
-}
-function sideMode(side: FieldSide): 'field' | 'fixed' {
-  return side.fixed_value !== null && side.fixed_value !== undefined ? 'fixed' : 'field'
-}
-function setSideMode(side: FieldSide, mode: 'field' | 'fixed'): void {
-  if (mode === 'fixed') {
-    side.fields = []
-    side.fixed_value = ''
-  } else {
-    side.fixed_value = null
-  }
-}
-function sideReady(side: FieldSide): boolean {
-  return sideMode(side) === 'fixed'
-    ? String(side.fixed_value ?? '').trim().length > 0
-    : side.fields.length > 0
 }
 
 /* ---------- 数据加载 ---------- */
@@ -573,9 +556,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
 const configValid = computed(() => {
   if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
   if (isCompositeProfile.value) return compositeAssignmentsComplete.value
-  return Boolean(target.value && groupCodeColumn.value)
-    && rules.value.length > 0
-    && rules.value.every(rule => sideReady(rule.source) && sideReady(rule.target))
+  return Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0
 })
 
 async function persistProfileDraft(showMessage = true): Promise<string | null> {
@@ -1214,26 +1195,14 @@ onBeforeUnmount(() => {
         </template>
         <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
         <el-table v-if="!isCompositeProfile && rules.length" :data="rules" row-key="id" size="small" class="rules-table">
-          <el-table-column label="源字段" min-width="260"><template #default="scope">
-            <div class="rule-side-editor">
-              <el-select :model-value="sideMode(scope.row.source)" class="rule-side-mode" @update:model-value="(value: unknown) => setSideMode(scope.row.source, String(value) as 'field' | 'fixed')">
-                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
-              </el-select>
-              <el-input v-if="sideMode(scope.row.source)==='fixed'" v-model="scope.row.source.fixed_value" placeholder="输入固定值"/>
-              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
-              <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
-            </div>
+          <el-table-column label="源字段" min-width="200"><template #default="scope">
+            <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
+            <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
-          <el-table-column label="目标字段" min-width="260"><template #default="scope">
-            <div class="rule-side-editor">
-              <el-select :model-value="sideMode(scope.row.target)" class="rule-side-mode" @update:model-value="(value: unknown) => setSideMode(scope.row.target, String(value) as 'field' | 'fixed')">
-                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
-              </el-select>
-              <el-input v-if="sideMode(scope.row.target)==='fixed'" v-model="scope.row.target.fixed_value" placeholder="输入固定值"/>
-              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
-              <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
-            </div>
+          <el-table-column label="目标字段" min-width="200"><template #default="scope">
+            <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
+            <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
             <el-select v-model="scope.row.matcher" size="small">
@@ -1548,21 +1517,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 7px;
   min-width: 0;
-}
-.rule-side-editor {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.rule-side-editor > :deep(.el-select),
-.rule-side-editor > :deep(.el-input) {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.rule-side-editor > :deep(.rule-side-mode) {
-  flex: 0 0 88px;
-  width: 88px;
 }
 .composite-profile-panel {
   display: flex;
