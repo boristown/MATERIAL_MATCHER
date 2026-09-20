@@ -399,16 +399,32 @@ function onWorkbookParsed(payload: ParsedWorkbookPayload): void {
     }
     if (!filterField.value && !isProfileTaskCreateMode.value) filterField.value = findHint(columns, 'material_group') || findHint(columns, 'material_type') || ''
   } else {
-    target.value = payload.file
-    targetColumns.value = columns
-    const configuredGroupCodeStillExists = Boolean(groupCodeColumn.value) && columns.some(column => column.header === groupCodeColumn.value)
-    groupCodeColumn.value = configuredGroupCodeStillExists
-      ? groupCodeColumn.value
-      : (findHint(columns, 'group_code') || (isProfileEditorMode.value ? '' : columns[0]?.header || ''))
-    targetMode.value = 'upload'
-    catalogVersionId.value = ''
+    if (isCompositeProfile.value && !isProfileEditorMode.value) {
+      const existingIndex = compositeTargetInputs.value.findIndex(item => item.file.file_id === payload.file.file_id)
+      const item: CompositeTargetInput = { file: payload.file, columns, inspection: payload.inspection }
+      if (existingIndex >= 0) compositeTargetInputs.value.splice(existingIndex, 1, item)
+      else compositeTargetInputs.value.push(item)
+      targetFiles.value = compositeTargetInputs.value.map(entry => entry.file)
+      if (!target.value) {
+        target.value = payload.file
+        targetColumns.value = columns
+      }
+      autoAssignCompositeTargets()
+      targetMode.value = 'upload'
+      catalogVersionId.value = ''
+    } else {
+      target.value = payload.file
+      targetFiles.value = [payload.file]
+      targetColumns.value = columns
+      const configuredGroupCodeStillExists = Boolean(groupCodeColumn.value) && columns.some(column => column.header === groupCodeColumn.value)
+      groupCodeColumn.value = configuredGroupCodeStillExists
+        ? groupCodeColumn.value
+        : (findHint(columns, 'group_code') || (isProfileEditorMode.value ? '' : columns[0]?.header || ''))
+      targetMode.value = 'upload'
+      catalogVersionId.value = ''
+    }
   }
-  if (source.value && target.value && !rules.value.length) autoMap()
+  if (!isCompositeProfile.value && source.value && target.value && !rules.value.length) autoMap()
 }
 function onSourceIdColumnChange(value: string): void {
   sourceIdColumn.value = value
