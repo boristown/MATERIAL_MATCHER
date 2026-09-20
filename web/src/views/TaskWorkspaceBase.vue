@@ -62,7 +62,7 @@ const profileKind = ref<'single' | 'composite'>('single')
 const compositeChildren = ref<CompositeChildView[]>([])
 const compositeTargetInputs = ref<CompositeTargetInput[]>([])
 const compositeAssignments = ref<Record<string, CompositeAssignment>>({})
-const compositeTargetBindings = ref<Array<{ profile_id: string; version_no: number; catalog_version_id: string }>>([])
+const compositeTargetBindings = ref<Array<{ profile_id: string; version_no: number; catalog_version_id: string | null }>>([])
 const catalogs = ref<any[]>([])
 const catalogVersionId = ref('')
 const draftId = ref('')
@@ -635,17 +635,18 @@ async function ensureDraft(): Promise<void> {
   }
 }
 
-async function resolveCatalogVersionForDraft(): Promise<string | null> {
+async function resolveCatalogVersionForDraft(requireComplete = true): Promise<string | null> {
   if (isCompositeProfile.value) {
     const resolved = await resolveCompositeTargetBindings(
       compositeChildren.value,
       compositeTargetInputs.value,
       compositeAssignments.value,
       schemeTitle.value,
+      requireComplete,
     )
     compositeAssignments.value = resolved.assignments
     compositeTargetBindings.value = resolved.bindings
-    return resolved.bindings[0]?.catalog_version_id ?? null
+    return resolved.bindings.find(item => item.catalog_version_id)?.catalog_version_id ?? null
   }
   if (!target.value || !groupCodeColumn.value) return null
   await loadCatalogs(false)
@@ -681,9 +682,7 @@ async function persistWorkspaceDraft(): Promise<void> {
   draftSaveInFlight = true
   try {
     await ensureDraft()
-    const versionId = isCompositeProfile.value && !compositeAssignmentsComplete.value
-      ? null
-      : await resolveCatalogVersionForDraft()
+    const versionId = await resolveCatalogVersionForDraft(false)
     const payload = buildDraftPayload(versionId)
     const signature = JSON.stringify(payload)
     if (signature === lastDraftSignature) {
