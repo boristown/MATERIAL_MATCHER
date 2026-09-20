@@ -1421,9 +1421,9 @@ onBeforeUnmount(() => {
                   :type="valueMappingConfiguredCount(scope.row) ? 'success' : 'primary'"
                   class="value-mapping-entry"
                 >
-                  <span v-if="valueMappingConfiguredCount(scope.row)">已配 {{ valueMappingConfiguredCount(scope.row) }} 项</span>
-                  <span v-else-if="valueMappingHasDetectedCandidates(scope.row)">配置候选</span>
-                  <span v-else>添加映射</span>
+                  <span>值映射</span>
+                  <span v-if="valueMappingConfiguredCount(scope.row)" class="value-mapping-entry-status">· 已配 {{ valueMappingConfiguredCount(scope.row) }} 项</span>
+                  <span v-else-if="valueMappingHasDetectedCandidates(scope.row)" class="value-mapping-entry-status">· 有候选</span>
                 </el-button>
               </template>
               <div class="value-mapping-popover-content">
@@ -1433,7 +1433,7 @@ onBeforeUnmount(() => {
                     <p>仅在编码或枚举值不一致时配置；系统不会自动建立对应关系。</p>
                   </div>
                   <el-tag v-if="valueMappingConfiguredCount(scope.row)" size="small" type="success" effect="plain">{{ valueMappingConfiguredCount(scope.row) }} 项已配置</el-tag>
-                  <el-tag v-else-if="valueMappingHasDetectedCandidates(scope.row)" size="small" type="info" effect="plain">已识别候选值</el-tag>
+                  <el-tag v-else-if="valueMappingHasDetectedCandidates(scope.row)" size="small" type="info" effect="plain">发现候选值</el-tag>
                 </div>
                 <div class="value-candidate-editor">
                   <label>
@@ -1907,9 +1907,17 @@ onBeforeUnmount(() => {
   font-size: 16px;
 }
 .value-mapping-entry {
+  display: inline-flex;
+  align-items: center;
   padding: 0 2px;
   font-size: 12px;
   white-space: nowrap;
+}
+.value-mapping-entry-status {
+  margin-left: 2px;
+  color: #94a3b8;
+  font-size: 10.5px;
+  font-weight: 400;
 }
 .value-mapping-na {
   color: #cbd5e1;
