@@ -57,11 +57,7 @@ const requiredApi = [
   'RESTORE_ALGORITHM',
   'expected_version',
   'success_threshold: successThreshold',
-  'review_threshold: reviewThreshold',
-  'STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR = 0',
   'reDecideSingleThreshold',
-  'review_threshold: STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR',
-  'single_threshold: true',
   'manual-review.xlsx',
   'manual-review/import',
   '/calibration',
@@ -95,10 +91,11 @@ for (const token of requiredCss) {
 if (view.includes('hydrateCandidates')) throw new Error('ReviewView must not eager-load candidates for every row')
 if (view.includes('PAGE_SIZE_OPTIONS = [10') || view.includes('PAGE_SIZE_OPTIONS = [20')) throw new Error('STEP3 page size must be 50 / 100 / 200')
 if (view.includes('previewReDecision')) throw new Error('STEP3 UI must use the single-threshold adapter, not expose the legacy dual-threshold call')
+if (api.includes('review_threshold') || api.includes('single_threshold')) throw new Error('STEP3 API adapter must send automatic threshold only')
 if (view.includes("candidate.target_payload['") || view.includes('candidate.target_payload["')) throw new Error('Candidate cards must choose display fields generically instead of hard-coding one material schema')
 if (view.includes('Z001') || view.includes('Z006')) throw new Error('STEP3 candidate display must not hard-code material categories')
 
-for (const banned of ['人工处理下限', '双阈值', '关键字段', '关键字段冲突', '为什么系统犹豫', '风险分类', '扣分项', '原始数据摘要']) {
+for (const banned of ['人工处理下限', '人工确认下限', '人工匹配下限', '双阈值', '关键字段', '关键字段冲突', '为什么系统犹豫', '风险分类', '扣分项', '原始数据摘要']) {
   if (view.includes(banned)) throw new Error(`Banned STEP3 wording found: ${banned}`)
 }
 
