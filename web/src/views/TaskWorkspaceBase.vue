@@ -4,14 +4,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import DualExcelUploadPanel from '../components/DualExcelUploadPanel.vue'
+import CompositeProfilePanel from '../components/CompositeProfilePanel.vue'
+import CompositeTaskUploadPanel from '../components/CompositeTaskUploadPanel.vue'
 import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
+import {
+  compositeRefsFromDocument,
+  hydrateCompositeChildren,
+  resolveCompositeRun,
+  type CompositeAssignment,
+  type CompositeChildView,
+  type CompositeTargetInput,
+} from '../compositeProfile'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 import { formatDurationMs, formatTimePoint } from '../taskTime'
 
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; samples?: string[] }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
-type FieldSide = { fields: string[]; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
+type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
 type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; weight: number; critical: boolean; matcher_options: Record<string, unknown> }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
@@ -48,6 +58,11 @@ const targetMode = ref<'existing' | 'upload'>('upload')
 const target = ref<FileRecord | null>(null)
 const targetColumns = ref<ColumnInfo[]>([])
 const groupCodeColumn = ref('')
+const profileKind = ref<'single' | 'composite'>('single')
+const compositeChildren = ref<CompositeChildView[]>([])
+const compositeTargetInputs = ref<CompositeTargetInput[]>([])
+const compositeAssignments = ref<Record<string, CompositeAssignment>>({})
+const compositeRunEntries = ref<Array<{ profile_id: string; version_no: number; catalog_version_id: string }>>([])
 const catalogs = ref<any[]>([])
 const catalogVersionId = ref('')
 const draftId = ref('')
@@ -102,17 +117,20 @@ const pendingSource = ref<string | null>(null)
 const srcHeaders = computed(() => sourceColumns.value.map(column => column.header))
 const tgtHeaders = computed(() => targetColumns.value.map(column => column.header))
 const idCandidateColumns = computed(() => srcHeaders.value.filter(header => header !== sourceIdColumn.value))
+const isCompositeProfile = computed(() => profileKind.value === 'composite')
 
 function uniqueFields(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map(value => String(value ?? '').trim()).filter(Boolean))]
 }
 const profileSourceFields = computed(() => uniqueFields([
+  ...srcHeaders.value,
   sourceIdColumn.value,
   filterField.value,
   scopeSourceField.value,
   ...rules.value.flatMap(rule => rule.source.fields),
 ]))
 const profileTargetFields = computed(() => uniqueFields([
+  ...tgtHeaders.value,
   scopeTargetField.value,
   ...rules.value.flatMap(rule => rule.target.fields),
 ]))
@@ -120,29 +138,41 @@ const profileTaskIssues = computed(() => {
   if (!isProfileTaskCreateMode.value) return [] as string[]
   const issues: string[] = []
   if (!source.value) issues.push('请先上传本次待匹配数据')
-  if (!target.value) issues.push('请上传本次集团码标准数据')
-  if (target.value && !groupCodeColumn.value) issues.push('请确认集团码所在列')
   if (source.value) {
     const sourceSet = new Set(srcHeaders.value)
     const requiredSource = uniqueFields([
       sourceIdColumn.value,
       filterEnabled.value ? filterField.value : '',
       scopeMode.value !== 'GLOBAL' ? scopeSourceField.value : '',
-      ...rules.value.flatMap(rule => rule.source.fields),
+      ...(isCompositeProfile.value
+        ? compositeChildren.value.flatMap(child => child.source_fields)
+        : rules.value.flatMap(rule => rule.source.fields)),
     ])
     const missing = requiredSource.filter(field => !sourceSet.has(field))
     if (missing.length) issues.push(`待匹配数据缺少方案字段: ${missing.join('、')}`)
   }
-  if (target.value && targetColumns.value.length) {
-    const targetSet = new Set(tgtHeaders.value)
-    const requiredTarget = uniqueFields([
-      scopeMode.value !== 'GLOBAL' ? scopeTargetField.value : '',
-      ...rules.value.flatMap(rule => rule.target.fields),
-    ])
-    const missing = requiredTarget.filter(field => !targetSet.has(field))
-    if (missing.length) issues.push(`集团码标准数据缺少方案字段: ${missing.join('、')}`)
+
+  if (isCompositeProfile.value) {
+    if (compositeChildren.value.length < 2) issues.push('跨类目组合方案至少需要两个已发布子方案')
+    for (const child of compositeChildren.value) {
+      const assignment = compositeAssignments.value[child.profile_id]
+      if (!assignment?.file_id) issues.push(`请为子方案「${child.name}」分配本次集团文件`)
+      else if (!assignment.group_code_column) issues.push(`请确认子方案「${child.name}」对应文件的集团码字段`)
+    }
+  } else {
+    if (!target.value) issues.push('请上传本次集团码标准数据')
+    if (target.value && !groupCodeColumn.value) issues.push('请确认集团码所在列')
+    if (target.value && targetColumns.value.length) {
+      const targetSet = new Set(tgtHeaders.value)
+      const requiredTarget = uniqueFields([
+        scopeMode.value !== 'GLOBAL' ? scopeTargetField.value : '',
+        ...rules.value.flatMap(rule => rule.target.fields),
+      ])
+      const missing = requiredTarget.filter(field => !targetSet.has(field))
+      if (missing.length) issues.push(`集团码标准数据缺少方案字段: ${missing.join('、')}`)
+    }
+    if (!rules.value.length) issues.push('已发布方案没有字段映射规则')
   }
-  if (!rules.value.length) issues.push('已发布方案没有字段映射规则')
   if (!sourceIdColumn.value) issues.push('已发布方案未配置源数据标识字段')
   return [...new Set(issues)]
 })
@@ -242,7 +272,24 @@ function removeRule(ruleId: string): void {
   if (index >= 0) rules.value.splice(index, 1)
 }
 function ruleSideLabel(side: FieldSide): string {
+  if (side.fixed_value !== null && side.fixed_value !== undefined) return `固定值：${side.fixed_value}`
   return side.fields.join(side.combine === 'coalesce' ? ' / ' : ' + ')
+}
+function sideMode(side: FieldSide): 'field' | 'fixed' {
+  return side.fixed_value !== null && side.fixed_value !== undefined ? 'fixed' : 'field'
+}
+function setSideMode(side: FieldSide, mode: 'field' | 'fixed'): void {
+  if (mode === 'fixed') {
+    side.fields = []
+    side.fixed_value = ''
+  } else {
+    side.fixed_value = null
+  }
+}
+function sideReady(side: FieldSide): boolean {
+  return sideMode(side) === 'fixed'
+    ? String(side.fixed_value ?? '').trim().length > 0
+    : side.fields.length > 0
 }
 
 /* ---------- 数据加载 ---------- */
@@ -296,6 +343,20 @@ function onGroupCodeColumnChange(value: string): void {
   targetMode.value = 'upload'
   catalogVersionId.value = ''
 }
+function onCompositeProfileSourceParsed(payload: { file: FileRecord; columns: ColumnInfo[] }): void {
+  source.value = payload.file
+  sourceColumns.value = payload.columns
+  if (!sourceIdColumn.value || !payload.columns.some(column => column.header === sourceIdColumn.value)) {
+    sourceIdColumn.value = findHint(payload.columns, 'source_id')
+  }
+}
+function onCompositeTaskSourceParsed(payload: { file: FileRecord; columns: ColumnInfo[] }): void {
+  source.value = payload.file
+  sourceColumns.value = payload.columns
+  if (!sourceIdColumn.value || !payload.columns.some(column => column.header === sourceIdColumn.value)) {
+    sourceIdColumn.value = findHint(payload.columns, 'source_id') || payload.columns[0]?.header || ''
+  }
+}
 async function loadCatalogs(selectCurrent = false): Promise<void> {
   catalogs.value = ((await api.get('/catalogs')).data ?? []).filter((item: any) => item.status === 'READY')
     .sort((a: any, b: any) => Number(b.active) - Number(a.active) || String(b.created_at).localeCompare(String(a.created_at)))
@@ -321,12 +382,23 @@ async function loadProfiles(): Promise<void> {
 async function getProfileDetail(profileId: string): Promise<ProfileDetail> {
   return (await api.get(`/profiles/${profileId}`)).data as ProfileDetail
 }
+async function hydrateCompositeDocument(document: Record<string, any>): Promise<void> {
+  if (!isCompositeProfile.value) {
+    compositeChildren.value = []
+    compositeTargetInputs.value = []
+    compositeAssignments.value = {}
+    compositeRunEntries.value = []
+    return
+  }
+  compositeChildren.value = await hydrateCompositeChildren(compositeRefsFromDocument(document))
+}
 async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
   const detail = await getProfileDetail(profileId)
   const published = detail.latest_published
   if (!published) { ElMessage.warning('该方案尚未发布，不能用于开始匹配'); return }
   loadDocument(published.document ?? {})
+  await hydrateCompositeDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   ElMessage.success(`已应用方案「${detail.name}」v${published.version_no}，字段映射与阈值已载入`)
 }
@@ -339,6 +411,7 @@ async function loadProfileForEdit(profileId: string): Promise<void> {
   name.value = detail.name
   const editable = detail.draft ?? detail.latest_published
   loadDocument(editable?.document ?? {})
+  await hydrateCompositeDocument(editable?.document ?? {})
 }
 async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   const detail = await getProfileDetail(profileId)
@@ -346,6 +419,7 @@ async function loadPublishedProfileForTask(profileId: string): Promise<void> {
   if (!published) throw new Error('该方案尚未发布，请先在匹配方案配置中发布后再开始匹配')
   profilePicker.value = profileId
   loadDocument(published.document ?? {})
+  await hydrateCompositeDocument(published.document ?? {})
   appliedProfile.value = { id: profileId, version: Number(published.version_no) }
   profileTaskMeta.value = { name: detail.name, version: Number(published.version_no), sha256: String(published.sha256 ?? '') }
 }
@@ -353,6 +427,21 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules) ? cloneDocument(value.rules) : []
+  const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
+  profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
+  compositeRunEntries.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
+  if (isProfileEditorMode.value && isCompositeProfile.value) {
+    const remembered = Array.isArray(advancedDocument.template_schema?.source_fields)
+      ? advancedDocument.template_schema.source_fields.map(String)
+      : []
+    if (!sourceColumns.value.length && remembered.length) sourceColumns.value = remembered.map((header: string) => ({ header }))
+  }
+  if (!isCompositeProfile.value) {
+    compositeChildren.value = []
+    compositeTargetInputs.value = []
+    compositeAssignments.value = {}
+    compositeRunEntries.value = []
+  }
   sourceIdColumn.value = String(value.source_id_column ?? '')
   scopeMode.value = value.scope_mode ?? 'GLOBAL'
   scopeSourceField.value = String(value.scope?.source_field ?? '')
@@ -385,10 +474,31 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
   const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
   delete baseAdvanced.workspace_target
-  if (includeWorkspaceTarget && target.value) {
-    baseAdvanced.workspace_target = {
-      file_id: target.value.file_id,
-      group_code_column: groupCodeColumn.value || null,
+  delete baseAdvanced.composite_run
+  baseAdvanced.profile_kind = profileKind.value
+  if (isCompositeProfile.value) {
+    baseAdvanced.composite_children = compositeChildren.value.map(child => ({
+      profile_id: child.profile_id,
+      version_no: child.version_no,
+    }))
+    if (isProfileEditorMode.value && srcHeaders.value.length) {
+      baseAdvanced.template_schema = {
+        ...(baseAdvanced.template_schema && typeof baseAdvanced.template_schema === 'object' ? baseAdvanced.template_schema : {}),
+        source_fields: [...srcHeaders.value],
+        target_fields: [],
+        group_code_field: null,
+      }
+    }
+    if (includeWorkspaceTarget && compositeRunEntries.value.length) {
+      baseAdvanced.composite_run = cloneDocument(compositeRunEntries.value)
+    }
+  } else {
+    delete baseAdvanced.composite_children
+    if (includeWorkspaceTarget && target.value) {
+      baseAdvanced.workspace_target = {
+        file_id: target.value.file_id,
+        group_code_column: groupCodeColumn.value || null,
+      }
     }
   }
   const retrieval = {
@@ -403,7 +513,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     scope_mode: scopeMode.value,
     scope: { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
     source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: 'exact' } : null,
-    rules: cloneDocument(rules.value),
+    rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
     decision: {
       ...baseDecision,
       success_threshold: successThreshold.value,
@@ -415,7 +525,19 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     advanced: baseAdvanced,
   }
 }
-const configValid = computed(() => Boolean(source.value) && Boolean(sourceIdColumn.value) && Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0 && reviewThreshold.value < successThreshold.value)
+const configValid = computed(() => {
+  if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
+  if (isCompositeProfile.value) {
+    return compositeChildren.value.length >= 2
+      && compositeChildren.value.every(child => {
+        const assignment = compositeAssignments.value[child.profile_id]
+        return Boolean(assignment?.file_id && assignment?.group_code_column)
+      })
+  }
+  return Boolean(target.value && groupCodeColumn.value)
+    && rules.value.length > 0
+    && rules.value.every(rule => sideReady(rule.source) && sideReady(rule.target))
+})
 
 async function persistProfileDraft(showMessage = true): Promise<string | null> {
   const profileName = name.value.trim()
@@ -478,6 +600,17 @@ async function ensureDraft(): Promise<void> {
 }
 
 async function resolveCatalogVersionForDraft(): Promise<string | null> {
+  if (isCompositeProfile.value) {
+    const resolved = await resolveCompositeRun(
+      compositeChildren.value,
+      compositeTargetInputs.value,
+      compositeAssignments.value,
+      schemeTitle.value,
+    )
+    compositeAssignments.value = resolved.assignments
+    compositeRunEntries.value = resolved.run
+    return resolved.run[0]?.catalog_version_id ?? null
+  }
   if (!target.value || !groupCodeColumn.value) return null
   await loadCatalogs(false)
   let existing = catalogs.value.find((item: any) => item.source_file_id === target.value!.file_id && item.group_code_column === groupCodeColumn.value)
@@ -544,7 +677,9 @@ function scheduleDraftPersist(): void {
 async function saveConfig(): Promise<void> {
   await ensureDraft()
   const versionId = await resolveCatalogVersionForDraft()
-  if (!source.value || !target.value || !versionId) throw new Error('请先上传左侧待匹配 Excel 和右侧集团码标准 Excel')
+  if (!source.value || !versionId || (!isCompositeProfile.value && !target.value)) {
+    throw new Error(isCompositeProfile.value ? '请上传 SAP 待匹配文件，并为每个子方案分配集团文件' : '请先上传左侧待匹配 Excel 和右侧集团码标准 Excel')
+  }
   const payload = buildDraftPayload(versionId)
   await api.patch(`/task-drafts/${draftId.value}`, payload)
   await api.put(`/task-drafts/${draftId.value}/data`, {
@@ -558,7 +693,7 @@ async function saveConfig(): Promise<void> {
   draftSaveState.value = 'saved'
 }
 async function saveAsProfile(): Promise<void> {
-  if (!rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
+  if (!isCompositeProfile.value && !rules.value.length) { ElMessage.warning('请先完成字段映射'); return }
   try {
     const { value } = await ElMessageBox.prompt('方案名称(发布后不可变,后续匹配可直接复用)', '存为匹配方案', { inputValue: name.value || '', confirmButtonText: '校验并发布', cancelButtonText: '取消' })
     const created = (await api.post('/profiles', { name: value.trim() || `方案-${Date.now()}`, document: documentBody(false) })).data
@@ -838,6 +973,10 @@ watch([
   retrievalMaxLength,
   retrievalDocument,
   documentBase,
+  profileKind,
+  compositeChildren,
+  compositeTargetInputs,
+  compositeAssignments,
 ], scheduleDraftPersist, { deep: true })
 
 onMounted(async () => {
@@ -929,7 +1068,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="profile-summary-grid">
-          <div><span>字段规则</span><b>{{ rules.length }} 条</b></div>
+          <div><span>{{ isCompositeProfile ? '子方案' : '字段规则' }}</span><b>{{ isCompositeProfile ? compositeChildren.length + ' 个' : rules.length + ' 条' }}</b></div>
           <div><span>自动匹配阈值</span><b>{{ successThreshold }} 分</b></div>
           <div><span>人工确认下限</span><b>{{ reviewThreshold }} 分</b></div>
           <div><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
@@ -945,7 +1084,21 @@ onBeforeUnmount(() => {
             <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
           </div>
         </div>
+        <CompositeTaskUploadPanel
+          v-if="isCompositeProfile"
+          :source="source"
+          :source-columns="sourceColumns"
+          :source-id-column="sourceIdColumn"
+          :children="compositeChildren"
+          :target-inputs="compositeTargetInputs"
+          :assignments="compositeAssignments"
+          @source-parsed="onCompositeTaskSourceParsed"
+          @update:sourceIdColumn="onSourceIdColumnChange"
+          @update:targetInputs="compositeTargetInputs = $event"
+          @update:assignments="compositeAssignments = $event"
+        />
         <DualExcelUploadPanel
+          v-else
           :source="source"
           :target="target"
           :source-columns="sourceColumns"
@@ -964,12 +1117,30 @@ onBeforeUnmount(() => {
         </template>
       </div>
 
-      <div class="panel">
+      <div class="panel" :class="{ 'composite-profile-panel': isCompositeProfile }">
         <div v-if="isProfileEditorMode" class="profile-editor-meta">
           <label><span>方案名称</span><el-input v-model="name" maxlength="120" show-word-limit placeholder="输入可复用方案名称"/></label>
-          <label><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
+          <label><span>方案类型</span>
+            <el-radio-group v-model="profileKind">
+              <el-radio-button value="single">普通匹配方案</el-radio-button>
+              <el-radio-button value="composite">跨类目组合方案</el-radio-button>
+            </el-radio-group>
+          </label>
+          <label v-if="!isCompositeProfile"><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
         </div>
-        <div class="section-head">
+        <CompositeProfilePanel
+          v-if="isProfileEditorMode && isCompositeProfile"
+          :profiles="profiles"
+          :children="compositeChildren"
+          :source="source"
+          :source-columns="sourceColumns"
+          :source-id-column="sourceIdColumn"
+          :editing-profile-id="editingProfileId"
+          @update:children="compositeChildren = $event"
+          @source-parsed="onCompositeProfileSourceParsed"
+          @update:sourceIdColumn="onSourceIdColumnChange"
+        />
+        <div v-if="!isCompositeProfile" class="section-head">
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
             <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
@@ -982,7 +1153,7 @@ onBeforeUnmount(() => {
             </template>
           </div>
         </div>
-        <template v-if="!isProfileEditorMode">
+        <template v-if="!isCompositeProfile && !isProfileEditorMode">
           <div v-if="!sourceColumns.length || !targetColumns.length" class="canvas-empty">
             <el-empty description="先在上方上传左右两份 Excel，字段清单会自动解析到这里" :image-size="70"/>
           </div>
@@ -998,16 +1169,28 @@ onBeforeUnmount(() => {
             @target-click="onTargetChip"
           />
         </template>
-        <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
-        <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
-          <el-table-column label="源字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
-            <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+        <el-empty v-if="!isCompositeProfile && isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
+        <el-table v-if="!isCompositeProfile && rules.length" :data="rules" row-key="id" size="small" class="rules-table">
+          <el-table-column label="源字段" min-width="260"><template #default="scope">
+            <div class="rule-side-editor">
+              <el-select :model-value="sideMode(scope.row.source)" class="rule-side-mode" @update:model-value="(value: unknown) => setSideMode(scope.row.source, String(value) as 'field' | 'fixed')">
+                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
+              </el-select>
+              <el-input v-if="sideMode(scope.row.source)==='fixed'" v-model="scope.row.source.fixed_value" placeholder="输入固定值"/>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
+            </div>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
-          <el-table-column label="目标字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
-            <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+          <el-table-column label="目标字段" min-width="260"><template #default="scope">
+            <div class="rule-side-editor">
+              <el-select :model-value="sideMode(scope.row.target)" class="rule-side-mode" @update:model-value="(value: unknown) => setSideMode(scope.row.target, String(value) as 'field' | 'fixed')">
+                <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
+              </el-select>
+              <el-input v-if="sideMode(scope.row.target)==='fixed'" v-model="scope.row.target.fixed_value" placeholder="输入固定值"/>
+              <el-select v-else-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
+              <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
+            </div>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
             <el-select v-model="scope.row.matcher" size="small">
@@ -1029,10 +1212,10 @@ onBeforeUnmount(() => {
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
             </el-select>
             <el-radio-group v-model="filterMode" size="small"><el-radio-button value="include">等于其中之一</el-radio-button><el-radio-button value="exclude">排除</el-radio-button></el-radio-group>
-            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="输入值后回车,如 Z001" style="width:320px">
+            <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="输入值后回车" style="width:320px">
               <el-option v-for="value in filterValues" :key="value" :label="value" :value="value"/>
             </el-select>
-            <span class="muted">例:物料类型只匹配 Z001;或本次仅处理 A006</span>
+            <span class="muted">按所选源字段和值限定本方案需要处理的数据范围。</span>
           </template>
         </div>
         <div class="threshold">
@@ -1040,7 +1223,7 @@ onBeforeUnmount(() => {
           <span>人工确认下限 ≥</span><el-slider v-model="reviewThreshold" :min="0" :max="99" style="width:180px"/>
           <span>候选 TopN</span><el-input-number v-model="topN" :min="1" :max="50" size="small"/>
         </div>
-        <template v-if="isProfileEditorMode">
+        <template v-if="isProfileEditorMode && !isCompositeProfile">
           <h4 class="click" @click="advanced=!advanced">高级配置{{ advanced ? ' ▲' : ' ▼' }}</h4>
           <div v-if="advanced" class="threshold">
             <span>max_length</span>
@@ -1322,6 +1505,26 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 7px;
   min-width: 0;
+}
+.rule-side-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rule-side-editor > :deep(.el-select),
+.rule-side-editor > :deep(.el-input) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rule-side-editor > :deep(.rule-side-mode) {
+  flex: 0 0 88px;
+  width: 88px;
+}
+.composite-profile-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 .compatibility-list {
   padding-top: 6px;
