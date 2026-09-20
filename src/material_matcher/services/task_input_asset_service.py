@@ -384,7 +384,13 @@ class TaskInputAssetService:
         for index, row in enumerate(composite_rows, start=1):
             profile_id = str(row.get("profile_id") or str(row["asset_role"]).split(".", 1)[-1])
             profile_version = row.get("profile_version")
-            label = f"子方案 {index}"
+            with self.meta.connect() as connection:
+                profile = connection.execute(
+                    "SELECT name FROM profiles WHERE profile_id=?",
+                    (profile_id,),
+                ).fetchone()
+            profile_name = str(profile["name"] or "").strip() if profile is not None else ""
+            label = profile_name or f"子方案 {index}"
             target = self._describe_asset(
                 task_id,
                 str(row["asset_role"]),
@@ -392,6 +398,7 @@ class TaskInputAssetService:
                 target_download_url=f"/api/tasks/{task_id}/input-files/targets/{profile_id}",
             )
             target["profile_id"] = profile_id
+            target["profile_name"] = profile_name or None
             if profile_version is not None:
                 target["profile_version"] = int(profile_version)
             targets.append(target)
