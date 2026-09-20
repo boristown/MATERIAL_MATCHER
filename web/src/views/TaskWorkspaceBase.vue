@@ -10,7 +10,7 @@ import FieldMappingCanvas from '../components/FieldMappingCanvas.vue'
 import {
   compositeRefsFromDocument,
   hydrateCompositeChildren,
-  resolveCompositeRun,
+  resolveCompositeTargetBindings,
   type CompositeAssignment,
   type CompositeChildView,
   type CompositeTargetInput,
@@ -62,7 +62,7 @@ const profileKind = ref<'single' | 'composite'>('single')
 const compositeChildren = ref<CompositeChildView[]>([])
 const compositeTargetInputs = ref<CompositeTargetInput[]>([])
 const compositeAssignments = ref<Record<string, CompositeAssignment>>({})
-const compositeRunEntries = ref<Array<{ profile_id: string; version_no: number; catalog_version_id: string }>>([])
+const compositeTargetBindings = ref<Array<{ profile_id: string; version_no: number; catalog_version_id: string }>>([])
 const catalogs = ref<any[]>([])
 const catalogVersionId = ref('')
 const draftId = ref('')
@@ -349,11 +349,11 @@ function onCompositeTaskSourceParsed(payload: { file: FileRecord; columns: Colum
 }
 function onCompositeTargetInputsUpdate(value: CompositeTargetInput[]): void {
   compositeTargetInputs.value = value
-  compositeRunEntries.value = []
+  compositeTargetBindings.value = []
 }
 function onCompositeAssignmentsUpdate(value: Record<string, CompositeAssignment>): void {
   compositeAssignments.value = value
-  compositeRunEntries.value = []
+  compositeTargetBindings.value = []
 }
 async function loadCatalogs(selectCurrent = false): Promise<void> {
   catalogs.value = ((await api.get('/catalogs')).data ?? []).filter((item: any) => item.status === 'READY')
@@ -385,18 +385,23 @@ async function hydrateCompositeDocument(document: Record<string, any>): Promise<
     compositeChildren.value = []
     compositeTargetInputs.value = []
     compositeAssignments.value = {}
-    compositeRunEntries.value = []
+    compositeTargetBindings.value = []
     return
   }
   compositeChildren.value = await hydrateCompositeChildren(compositeRefsFromDocument(document))
 }
-async function restoreCompositeRun(document: Record<string, any>): Promise<void> {
+async function restoreCompositeTargets(
+  document: Record<string, any>,
+  draftBindings?: Array<Record<string, any>>,
+): Promise<void> {
   if (!isCompositeProfile.value) return
   await hydrateCompositeDocument(document)
-  const run = Array.isArray(document?.advanced?.composite_run) ? document.advanced.composite_run : []
+  const bindings = Array.isArray(draftBindings) && draftBindings.length
+    ? draftBindings
+    : (Array.isArray(document?.advanced?.composite_run) ? document.advanced.composite_run : [])
   const inputs = new Map<string, CompositeTargetInput>()
   const assignments: Record<string, CompositeAssignment> = {}
-  for (const item of run) {
+  for (const item of bindings) {
     const profileId = String(item?.profile_id ?? '')
     const catalogVersionId = String(item?.catalog_version_id ?? '')
     if (!profileId || !catalogVersionId) continue
@@ -418,7 +423,7 @@ async function restoreCompositeRun(document: Record<string, any>): Promise<void>
   }
   compositeTargetInputs.value = [...inputs.values()]
   compositeAssignments.value = assignments
-  compositeRunEntries.value = run
+  compositeTargetBindings.value = bindings
 }
 async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
@@ -457,7 +462,7 @@ function loadDocument(document: any): void {
   rules.value = Array.isArray(value.rules) ? cloneDocument(value.rules) : []
   const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
   profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
-  compositeRunEntries.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
+  compositeTargetBindings.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
   if (isProfileEditorMode.value && isCompositeProfile.value) {
     const remembered = Array.isArray(advancedDocument.template_schema?.source_fields)
       ? advancedDocument.template_schema.source_fields.map(String)
@@ -468,7 +473,7 @@ function loadDocument(document: any): void {
     compositeChildren.value = []
     compositeTargetInputs.value = []
     compositeAssignments.value = {}
-    compositeRunEntries.value = []
+    compositeTargetBindings.value = []
   }
   sourceIdColumn.value = String(value.source_id_column ?? '')
   scopeMode.value = value.scope_mode ?? 'GLOBAL'
@@ -516,9 +521,6 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
         target_fields: [],
         group_code_field: null,
       }
-    }
-    if (includeWorkspaceTarget && compositeRunEntries.value.length) {
-      baseAdvanced.composite_run = cloneDocument(compositeRunEntries.value)
     }
   } else {
     delete baseAdvanced.composite_children
@@ -600,12 +602,26 @@ async function publishProfileChanges(): Promise<void> {
   } catch (error) { ElMessage.error((error as Error).message ?? '发布失败') } finally { busy.value = false }
 }
 
+function draftCompositeTargets(): Array<{ profile_id: string; version_no: number; catalog_version_id: string | null }> {
+  if (!isCompositeProfile.value) return []
+  return compositeChildren.value.map(child => {
+    const resolved = compositeTargetBindings.value.find(item =>
+      item.profile_id === child.profile_id && Number(item.version_no) === child.version_no,
+    )
+    return {
+      profile_id: child.profile_id,
+      version_no: child.version_no,
+      catalog_version_id: resolved?.catalog_version_id ?? compositeAssignments.value[child.profile_id]?.catalog_version_id ?? null,
+    }
+  })
+}
 function buildDraftPayload(catalogVersion: string | null = catalogVersionId.value || null): Record<string, unknown> {
   return {
     source_file_id: source.value?.file_id ?? null,
-    catalog_version_id: catalogVersion,
+    catalog_version_id: isCompositeProfile.value ? null : catalogVersion,
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
+    ...(isCompositeProfile.value ? { composite_targets: draftCompositeTargets() } : {}),
     config_document: documentBody(true),
   }
 }
@@ -621,15 +637,15 @@ async function ensureDraft(): Promise<void> {
 
 async function resolveCatalogVersionForDraft(): Promise<string | null> {
   if (isCompositeProfile.value) {
-    const resolved = await resolveCompositeRun(
+    const resolved = await resolveCompositeTargetBindings(
       compositeChildren.value,
       compositeTargetInputs.value,
       compositeAssignments.value,
       schemeTitle.value,
     )
     compositeAssignments.value = resolved.assignments
-    compositeRunEntries.value = resolved.run
-    return resolved.run[0]?.catalog_version_id ?? null
+    compositeTargetBindings.value = resolved.bindings
+    return resolved.bindings[0]?.catalog_version_id ?? null
   }
   if (!target.value || !groupCodeColumn.value) return null
   await loadCatalogs(false)
@@ -706,9 +722,10 @@ async function saveConfig(): Promise<void> {
   await api.patch(`/task-drafts/${draftId.value}`, payload)
   await api.put(`/task-drafts/${draftId.value}/data`, {
     source_file_id: source.value.file_id,
-    catalog_version_id: versionId,
+    catalog_version_id: isCompositeProfile.value ? null : versionId,
     template_profile_id: appliedProfile.value?.id ?? null,
     template_profile_version: appliedProfile.value?.version ?? null,
+    ...(isCompositeProfile.value ? { composite_targets: draftCompositeTargets() } : {}),
   })
   await api.put(`/task-drafts/${draftId.value}/rules`, documentBody(true))
   lastDraftSignature = JSON.stringify(payload)
@@ -926,7 +943,7 @@ async function restoreDraft(id: string): Promise<void> {
   draftTemplateProfileId.value = String(draft.template_profile_id ?? '')
   const configDocument = draft.config_document ?? {}
   loadDocument(configDocument)
-  if (isCompositeProfile.value) await restoreCompositeRun(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument, draft.composite_targets)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (draft.source_file_id) await loadFileColumns(String(draft.source_file_id), 'source')
   if (!isCompositeProfile.value && draft.catalog_version_id) {
@@ -956,7 +973,7 @@ async function restoreTask(taskId: string): Promise<void> {
   task.value = (await api.get(`/tasks/${taskId}`)).data
   const configDocument = task.value.config_snapshot ?? {}
   loadDocument(configDocument)
-  if (isCompositeProfile.value) await restoreCompositeRun(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (task.value.source_file_id) await loadFileColumns(String(task.value.source_file_id), 'source').catch(() => undefined)
   if (!isCompositeProfile.value && task.value.catalog_version_id) {
