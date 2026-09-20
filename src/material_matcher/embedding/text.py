@@ -44,14 +44,25 @@ def retrieval_text_signature(config: MatchingConfig, side: SideName) -> str:
     if explicit is not None:
         payload: object = {"explicit": explicit.model_dump(mode="json")}
     else:
-        payload = {
-            "derived_from_rules": [
-                {
-                    "side": _side_for_rule(rule, side).model_dump(mode="json"),
-                    "value_mapping": rule.value_mapping if side == "source" else {},
-                }
-                for rule in config.rules if rule.weight > 0
-            ]
-        }
+        active_rules = [rule for rule in config.rules if rule.weight > 0]
+        has_value_mapping = side == "source" and any(rule.value_mapping for rule in active_rules)
+        if has_value_mapping:
+            payload = {
+                "derived_from_rules": [
+                    {
+                        "side": _side_for_rule(rule, side).model_dump(mode="json"),
+                        "value_mapping": rule.value_mapping,
+                    }
+                    for rule in active_rules
+                ]
+            }
+        else:
+            # Preserve the historical signature for configs without value mappings.
+            payload = {
+                "derived_from_rules": [
+                    _side_for_rule(rule, side).model_dump(mode="json")
+                    for rule in active_rules
+                ]
+            }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
