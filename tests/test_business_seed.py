@@ -84,3 +84,27 @@ def test_seed_import_rejects_missing_directory(tmp_path: Path, meta: MetadataRep
 
     with pytest.raises(DomainError):
         BusinessSeedService(meta).import_seed(tmp_path / "nowhere")
+
+
+def test_seed_presets_domestic_import_mapping_and_composite_a007() -> None:
+    import json
+    payload = json.loads((SEED_DIR / "profiles.json").read_text(encoding="utf-8"))
+    by_prefix = {p["name"][:4]: p for p in payload["profiles"]}
+    for prefix, profile in by_prefix.items():
+        document = profile["versions"][-1]["document"]
+        if isinstance(document, str):
+            document = json.loads(document)
+        if prefix == "A007":
+            advanced = document["advanced"]
+            assert advanced.get("profile_kind") == "composite"
+            children = advanced["composite_children"]
+            assert len(children) == 5
+            ids = {p["profile_id"] for p in payload["profiles"]}
+            for child in children:
+                assert child["profile_id"] in ids
+                assert child["profile_id"] != profile["profile_id"]
+            continue
+        rule = next((r for r in document["rules"] if r.get("id") == "seed-enum-gnjk"), None)
+        assert rule is not None, f"{prefix} 缺少国产进口预置规则"
+        assert rule["value_mapping"] == {"10": "国产", "11": "进口"}
+        assert rule["matcher"] == "exact" and rule["weight"] == 0 and rule["critical"] is False
