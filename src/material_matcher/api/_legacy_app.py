@@ -166,7 +166,6 @@ class BatchRequest(BaseModel):
 
 class ReDecideRequest(BaseModel):
     success_threshold: int = Field(ge=1, le=100)
-    review_threshold: int = Field(ge=0, le=99)
     mode: str = Field(default="apply", pattern="^(preview|apply)$")
 
 
@@ -693,7 +692,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return manual_reviews.logs(task_id, source_row_id=source_row_id, limit=limit, offset=offset)
 
     @app.post("/api/tasks/{task_id}/re-decide")
-    def re_decide(task_id: str, payload: ReDecideRequest) -> dict[str, object]: return matches.re_decide(task_id, payload.success_threshold, payload.review_threshold, payload.mode)
+    def re_decide(task_id: str, payload: ReDecideRequest) -> dict[str, object]:
+        result = matches.re_decide(task_id, payload.success_threshold, 0, payload.mode)
+        result.pop("review_threshold", None)
+        return result
     @app.post("/api/tasks/{task_id}/finalize")
     def finalize(task_id:str,payload:FinalizeRequest)->dict[str,object]: return matches.finalize(task_id,payload.allow_unresolved_review)
     @app.get("/api/tasks/{task_id}/exports")
