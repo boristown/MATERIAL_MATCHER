@@ -260,16 +260,20 @@ async function loadFileColumns(fileId: string, kind: 'source' | 'target'): Promi
   if (kind === 'source') {
     source.value = response.file
     sourceColumns.value = columns
-    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && Boolean(sourceIdColumn.value)
-    if (!preserveProfileField && (!sourceIdColumn.value || !columns.some(column => column.header === sourceIdColumn.value))) {
+    const configuredSourceFieldStillExists = Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
+    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && configuredSourceFieldStillExists
+    if (isProfileEditorMode.value) {
+      sourceIdColumn.value = configuredSourceFieldStillExists ? sourceIdColumn.value : findHint(columns, 'source_id')
+    } else if (!preserveProfileField && !configuredSourceFieldStillExists) {
       sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
     }
     if (!filterField.value && !isProfileTaskCreateMode.value) filterField.value = findHint(columns, 'material_group') || findHint(columns, 'material_type') || ''
   } else {
     target.value = response.file
     targetColumns.value = columns
-    if (!groupCodeColumn.value || !columns.some(column => column.header === groupCodeColumn.value)) {
-      groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
+    const configuredGroupCodeStillExists = Boolean(groupCodeColumn.value) && columns.some(column => column.header === groupCodeColumn.value)
+    if (!configuredGroupCodeStillExists) {
+      groupCodeColumn.value = findHint(columns, 'group_code') || (isProfileEditorMode.value ? '' : columns[0]?.header || '')
     }
   }
 }
@@ -278,13 +282,21 @@ function onWorkbookParsed(payload: ParsedWorkbookPayload): void {
   if (payload.kind === 'source') {
     source.value = payload.file
     sourceColumns.value = columns
-    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
-    if (!preserveProfileField) sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
+    const configuredSourceFieldStillExists = Boolean(sourceIdColumn.value) && columns.some(column => column.header === sourceIdColumn.value)
+    const preserveProfileField = isProfileTaskCreateMode.value && Boolean(appliedProfile.value) && configuredSourceFieldStillExists
+    if (isProfileEditorMode.value) {
+      sourceIdColumn.value = configuredSourceFieldStillExists ? sourceIdColumn.value : findHint(columns, 'source_id')
+    } else if (!preserveProfileField) {
+      sourceIdColumn.value = findHint(columns, 'source_id') || columns[0]?.header || ''
+    }
     if (!filterField.value && !isProfileTaskCreateMode.value) filterField.value = findHint(columns, 'material_group') || findHint(columns, 'material_type') || ''
   } else {
     target.value = payload.file
     targetColumns.value = columns
-    groupCodeColumn.value = findHint(columns, 'group_code') || columns[0]?.header || ''
+    const configuredGroupCodeStillExists = Boolean(groupCodeColumn.value) && columns.some(column => column.header === groupCodeColumn.value)
+    groupCodeColumn.value = configuredGroupCodeStillExists
+      ? groupCodeColumn.value
+      : (findHint(columns, 'group_code') || (isProfileEditorMode.value ? '' : columns[0]?.header || ''))
     targetMode.value = 'upload'
     catalogVersionId.value = ''
   }
@@ -361,6 +373,7 @@ function loadDocument(document: any): void {
     const rememberedTargetFields = Array.isArray(templateSchema?.target_fields) ? templateSchema.target_fields.map(String) : []
     if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map(header => ({ header }))
     if (!targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map(header => ({ header }))
+    groupCodeColumn.value = String(templateSchema?.group_code_field ?? '')
   }
   sourceIdColumn.value = String(value.source_id_column ?? '')
   scopeMode.value = value.scope_mode ?? 'GLOBAL'
@@ -398,6 +411,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     baseAdvanced.template_schema = {
       source_fields: [...srcHeaders.value],
       target_fields: [...tgtHeaders.value],
+      group_code_field: groupCodeColumn.value || null,
     }
   }
   if (includeWorkspaceTarget && target.value) {
@@ -991,7 +1005,6 @@ onBeforeUnmount(() => {
       <div class="panel">
         <div v-if="isProfileEditorMode" class="profile-editor-meta">
           <label><span>方案名称</span><el-input v-model="name" maxlength="120" show-word-limit placeholder="输入可复用方案名称"/></label>
-          <label><span>客户物料标识字段</span><el-select v-model="sourceIdColumn" filterable allow-create default-first-option placeholder="输入或选择字段名"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select></label>
         </div>
         <div class="section-head">
           <div>
@@ -1028,12 +1041,12 @@ onBeforeUnmount(() => {
         <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>
         <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
           <el-table-column label="源字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
+            <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable :allow-create="!sourceColumns.length" default-first-option placeholder="选择客户模板字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
             <el-select v-else v-model="scope.row.source.fields" multiple filterable placeholder="选择一个或多个源字段"><el-option v-for="field in idCandidateColumns" :key="field" :label="field" :value="field"/></el-select>
           </template></el-table-column>
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
           <el-table-column label="目标字段" min-width="200"><template #default="scope">
-            <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable allow-create default-first-option placeholder="集团字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
+            <el-select v-if="isProfileEditorMode" v-model="scope.row.target.fields" multiple filterable :allow-create="!targetColumns.length" default-first-option placeholder="选择集团码模板字段"><el-option v-for="field in profileTargetFields" :key="field" :label="field" :value="field"/></el-select>
             <el-select v-else v-model="scope.row.target.fields" multiple filterable placeholder="选择一个或多个目标字段"><el-option v-for="field in tgtHeaders.filter(field => field !== groupCodeColumn)" :key="field" :label="field" :value="field"/></el-select>
           </template></el-table-column>
           <el-table-column label="匹配方式" width="150"><template #default="scope">
@@ -1052,7 +1065,7 @@ onBeforeUnmount(() => {
         <div class="filter-row">
           <el-switch v-model="filterEnabled"/><span>仅处理满足条件的源数据行</span>
           <template v-if="filterEnabled">
-            <el-select v-model="filterField" placeholder="字段" style="width:180px" filterable :allow-create="isProfileEditorMode" default-first-option>
+            <el-select v-model="filterField" placeholder="字段" style="width:180px" filterable :allow-create="isProfileEditorMode && !sourceColumns.length" default-first-option>
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
             </el-select>
             <el-radio-group v-model="filterMode" size="small"><el-radio-button value="include">等于其中之一</el-radio-button><el-radio-button value="exclude">排除</el-radio-button></el-radio-group>
@@ -1338,7 +1351,7 @@ onBeforeUnmount(() => {
 }
 .profile-editor-meta {
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) minmax(260px, 0.75fr);
+  grid-template-columns: minmax(280px, 620px);
   gap: 16px;
   padding-bottom: 18px;
   margin-bottom: 18px;
