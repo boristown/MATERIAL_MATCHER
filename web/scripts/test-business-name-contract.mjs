@@ -36,12 +36,13 @@ if (!taskWorkspace.includes("api.post('/task-drafts', {})")) throw new Error('dr
 
 const readRepo = (...parts) => fs.readFileSync(path.join(repo, ...parts), 'utf8')
 const resultExport = readRepo('src/material_matcher/services/result_export_service.py')
+const exportProfile = readRepo('src/material_matcher/services/export_profile.py')
 const manualReview = readRepo('src/material_matcher/services/manual_review_service.py')
-for (const [file, text] of [['result_export_service.py', resultExport], ['manual_review_service.py', manualReview]]) {
-  if (text.includes('任务名称')) throw new Error(`${file} must not export a 任务名称 row`)
+for (const [file, text] of [['result_export_service.py', resultExport], ['export_profile.py', exportProfile], ['manual_review_service.py', manualReview]]) {
+  if (text.includes('任务名称')) throw new Error(`${file} must not surface the 任务名称 concept`)
 }
-if (!resultExport.includes('("方案名称", scheme_name')) throw new Error('summary first business row must be 方案名称')
-if (!resultExport.includes('物料集团码匹配结果_')) throw new Error('result export filename must stay business-styled')
+if (!exportProfile.includes('"scheme_name": "方案名称"')) throw new Error('default export profile summary row must stay 方案名称')
+if (!exportProfile.includes('"filename_prefix": "物料集团码匹配结果"')) throw new Error('default result export filename must stay business-styled')
 if (!resultExport.includes('safe_business_filename')) throw new Error('result export filename must be sanitised')
 if (!manualReview.includes('resolve_task_scheme_name')) throw new Error('manual review guide must resolve the frozen scheme name')
 
