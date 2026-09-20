@@ -8,7 +8,7 @@ from typing import Any
 import uuid
 
 from material_matcher.domain.errors import DomainError
-from material_matcher.domain.models import MatchingConfig
+from material_matcher.domain.models import MatchingConfig, strip_legacy_review_threshold
 from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -423,7 +423,7 @@ class TaskService:
         # "任务名称" is no longer a business concept. The legacy column keeps only a
         # system-generated internal id (run-xxxxxxxx); user input is never consumed.
         internal_name = f"run-{draft_id[:8]}"
-        document = self.dictionaries.bind_references(config_document) if config_document is not None else {}
+        document = strip_legacy_review_threshold(self.dictionaries.bind_references(config_document)) if config_document is not None else {}
         if config_document is not None:
             MatchingConfig.model_validate(document)
         if template_profile_id is not None or template_profile_version is not None:
@@ -468,6 +468,8 @@ class TaskService:
         result: list[dict[str, object]] = []
         for row in rows:
             item = self.repo.decode(row, ("config_document",)) or {}
+            if isinstance(item.get("config_document"), dict):
+                item["config_document"] = strip_legacy_review_threshold(item["config_document"])
             item["composite_targets"] = self._draft_targets(str(item["draft_id"]))
             result.append(item)
         return result
@@ -478,6 +480,8 @@ class TaskService:
         if row is None:
             raise DomainError("TASK_DRAFT_NOT_FOUND", "任务草稿不存在", status_code=404)
         item = self.repo.decode(row, ("config_document",)) or {}
+        if isinstance(item.get("config_document"), dict):
+            item["config_document"] = strip_legacy_review_threshold(item["config_document"])
         item["composite_targets"] = self._draft_targets(draft_id)
         return item
 
@@ -537,6 +541,7 @@ class TaskService:
                 document = {}
             if not isinstance(document, dict):
                 raise DomainError("INVALID_PROFILE", "匹配规则格式不正确", status_code=422)
+            document = strip_legacy_review_threshold(document)
             updates.append("config_document=?")
             values.append(_canonical(document))
 
@@ -622,7 +627,7 @@ class TaskService:
 
     def save_rules(self, draft_id: str, document: dict[str, Any]) -> dict[str, object]:
         draft = self.get_draft(draft_id)
-        bound_document = self.dictionaries.bind_references(document)
+        bound_document = strip_legacy_review_threshold(self.dictionaries.bind_references(document))
         MatchingConfig.model_validate(bound_document)
         template_profile_id = draft.get("template_profile_id")
         template_profile_version = draft.get("template_profile_version")
@@ -812,6 +817,8 @@ class TaskService:
         if row is None:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
         task = self.repo.decode(row, ("config_snapshot",)) or {}
+        if isinstance(task.get("config_snapshot"), dict):
+            task["config_snapshot"] = strip_legacy_review_threshold(task["config_snapshot"])
         with self.repo.connect() as connection:
             run_count = connection.execute(
                 """SELECT CASE WHEN ? IS NOT NULL THEN
@@ -855,6 +862,8 @@ class TaskService:
         result: list[dict[str, object]] = []
         for row in rows:
             item = self.repo.decode(row, ("config_snapshot",)) or {}
+            if isinstance(item.get("config_snapshot"), dict):
+                item["config_snapshot"] = strip_legacy_review_threshold(item["config_snapshot"])
             item["created_by"] = item.pop("actor_created_by", None)
             item["started_by"] = item.pop("actor_started_by", None)
             item["run_number"] = int(item.get("run_number") or 1)
