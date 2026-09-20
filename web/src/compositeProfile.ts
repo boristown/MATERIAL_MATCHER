@@ -175,15 +175,26 @@ export async function resolveCompositeTargetBindings(
   inputs: CompositeTargetInput[],
   assignments: Record<string, CompositeAssignment>,
   schemeTitle: string,
-): Promise<{ bindings: Array<CompositeChildRef & { catalog_version_id: string }>; assignments: Record<string, CompositeAssignment> }> {
-  const bindings: Array<CompositeChildRef & { catalog_version_id: string }> = []
+  requireComplete = true,
+): Promise<{ bindings: Array<CompositeChildRef & { catalog_version_id: string | null }>; assignments: Record<string, CompositeAssignment> }> {
+  const bindings: Array<CompositeChildRef & { catalog_version_id: string | null }> = []
   const next = { ...assignments }
   for (const child of children) {
     const assignment = next[child.profile_id]
-    if (!assignment?.file_id) throw new Error(`请为子方案「${child.name}」分配本次集团文件`)
+    if (!assignment?.file_id || !assignment.group_code_column) {
+      if (requireComplete) {
+        if (!assignment?.file_id) throw new Error(`请为子方案「${child.name}」分配本次集团文件`)
+        throw new Error(`请确认子方案「${child.name}」对应文件的集团码字段`)
+      }
+      bindings.push({ profile_id: child.profile_id, version_no: child.version_no, catalog_version_id: null })
+      continue
+    }
     const input = inputs.find(item => item.file.file_id === assignment.file_id)
-    if (!input) throw new Error(`子方案「${child.name}」对应的集团文件已不存在，请重新选择`)
-    if (!assignment.group_code_column) throw new Error(`请确认子方案「${child.name}」对应文件的集团码字段`)
+    if (!input) {
+      if (requireComplete) throw new Error(`子方案「${child.name}」对应的集团文件已不存在，请重新选择`)
+      bindings.push({ profile_id: child.profile_id, version_no: child.version_no, catalog_version_id: null })
+      continue
+    }
     const catalogVersionId = assignment.catalog_version_id
       || await ensureCatalogVersion(input, assignment.group_code_column, schemeTitle)
     next[child.profile_id] = { ...assignment, catalog_version_id: catalogVersionId }
