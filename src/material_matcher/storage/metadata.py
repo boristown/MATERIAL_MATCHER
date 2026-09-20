@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS match_candidates(
   task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, rank INTEGER NOT NULL,
   target_row_number INTEGER, target_group_code TEXT NOT NULL, target_payload TEXT NOT NULL,
   score REAL NOT NULL, field_scores TEXT NOT NULL, critical_conflict INTEGER NOT NULL,
+  child_profile_id TEXT, child_profile_version INTEGER, child_profile_name TEXT,
+  target_file_id TEXT, target_file_name TEXT,
   PRIMARY KEY(task_id, source_row_id, rank),
   FOREIGN KEY(task_id, source_row_id) REFERENCES match_items(task_id, source_row_id)
 );
@@ -266,6 +268,11 @@ class MetadataRepository:
             # target original-row traceability and calibration revisions existed.
             self._ensure_column(connection, "match_items", "source_row_number", "INTEGER")
             self._ensure_column(connection, "match_candidates", "target_row_number", "INTEGER")
+            self._ensure_column(connection, "match_candidates", "child_profile_id", "TEXT")
+            self._ensure_column(connection, "match_candidates", "child_profile_version", "INTEGER")
+            self._ensure_column(connection, "match_candidates", "child_profile_name", "TEXT")
+            self._ensure_column(connection, "match_candidates", "target_file_id", "TEXT")
+            self._ensure_column(connection, "match_candidates", "target_file_name", "TEXT")
             self._ensure_column(connection, "evaluation_runs", "expected_result_column", "TEXT")
             self._ensure_column(connection, "evaluation_items", "expected_result", "TEXT NOT NULL DEFAULT 'MATCH'")
             self._ensure_column(connection, "dictionary_versions", "created_by", "TEXT NOT NULL DEFAULT ''")
