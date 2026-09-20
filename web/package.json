@@ -5,7 +5,7 @@
   "name": "material-matcher-web",
   "scripts": {
     "test:login-brand": "node scripts/test-login-brand.mjs",
-    "build": "npm run test:browser-guard && npm run test:task-time-contract && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && npm run test:business-name-contract && npm run test:task-input-assets-contract && npm run test:step4-result-contract && npm run test:composite-profile-contract && npm run test:profile-template-upload-contract && npm run test:fixed-value-source-filter-contract && npm run test:login-brand && npm run test:mobile-responsive && vue-tsc -b && vite build",
+    "build": "npm run test:browser-guard && npm run test:task-time-contract && npm run test:review-contract && npm run test:synonym-contract && npm run test:step-naming && npm run test:review-history-contract && npm run test:business-name-contract && npm run test:task-input-assets-contract && npm run test:step4-result-contract && npm run test:composite-profile-contract && npm run test:profile-template-upload-contract && npm run test:fixed-value-source-filter-contract && npm run test:value-mapping-contract && npm run test:login-brand && npm run test:mobile-responsive && vue-tsc -b && vite build",
     "test:step-naming": "node scripts/test-step-naming.mjs",
     "test:browser-guard": "node scripts/test-browser-check.mjs",
     "test:task-time-contract": "node scripts/test-task-time-contract.mjs",
@@ -18,7 +18,8 @@
     "test:step4-result-contract": "node scripts/test-step4-result-contract.mjs",
     "test:composite-profile-contract": "node scripts/test-composite-profile-contract.mjs",
     "test:profile-template-upload-contract": "node scripts/test-profile-template-upload-contract.mjs",
-    "test:fixed-value-source-filter-contract": "node scripts/test-fixed-value-source-filter-contract.mjs"
+    "test:fixed-value-source-filter-contract": "node scripts/test-fixed-value-source-filter-contract.mjs",
+    "test:value-mapping-contract": "node scripts/test-value-mapping-contract.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
