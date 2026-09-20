@@ -53,14 +53,30 @@ class FieldRule(BaseModel):
 class DecisionConfig(BaseModel):
     success_threshold: int = Field(default=88, ge=0, le=100)
     review_enabled: bool = True
-    review_threshold: int = Field(default=75, ge=0, le=100)
     top_n: int = Field(default=5, ge=1, le=50)
 
-    @model_validator(mode="after")
-    def validate_thresholds(self) -> "DecisionConfig":
-        if self.review_enabled and self.review_threshold >= self.success_threshold:
-            raise ValueError("人工确认下限必须小于自动匹配成功阈值")
-        return self
+    @property
+    def review_threshold(self) -> int:
+        """Compatibility floor for the unchanged matching scorer.
+
+        review_threshold is no longer part of the business configuration.
+        Historical documents may still contain it; Pydantic ignores that extra
+        input and new model dumps never write it back. The scorer continues to
+        receive a fixed zero floor so positive-score rows below the automatic
+        threshold go to manual review without changing the core scoring code.
+        """
+        return 0
+
+
+def strip_legacy_review_threshold(document: dict[str, object]) -> dict[str, object]:
+    """Return a copy of a matching document without the removed legacy field."""
+    normalized = dict(document)
+    decision = normalized.get("decision")
+    if isinstance(decision, dict):
+        normalized_decision = dict(decision)
+        normalized_decision.pop("review_threshold", None)
+        normalized["decision"] = normalized_decision
+    return normalized
 
 
 class SourceFilter(BaseModel):
