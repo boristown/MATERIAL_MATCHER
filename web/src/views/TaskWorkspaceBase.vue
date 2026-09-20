@@ -29,8 +29,8 @@ type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion 
 type WorkbenchItem = { source_row_id: string; source_id: string; source_payload: Record<string, unknown>; top1_group_code?: string | null; top1_score: number; second_score: number; score_gap: number; critical_conflict: boolean; current_status?: string }
 type FieldScore = { rule_id: string; score: number; weight: number; source_value: string; target_value: string; critical: boolean; conflict: boolean }
 type Candidate = { rank: number; target_group_code: string; score: number; critical_conflict: boolean; target_payload: Record<string, unknown>; field_scores: FieldScore[] }
-type TaskInputAsset = { kind: 'source' | 'target'; label: string; original_name?: string | null; uploaded_at?: string | null; available: boolean; download_url?: string | null; message?: string | null }
-type TaskInputAssets = { source?: TaskInputAsset | null; target?: TaskInputAsset | null }
+type TaskInputAsset = { kind: 'source' | 'target'; label: string; original_name?: string | null; uploaded_at?: string | null; available: boolean; download_url?: string | null; message?: string | null; profile_id?: string | null; profile_name?: string | null; profile_version?: number | null; catalog_version_id?: string | null }
+type TaskInputAssets = { composite?: boolean; source?: TaskInputAsset | null; target?: TaskInputAsset | null; targets?: TaskInputAsset[] }
 
 const route = useRoute(), router = useRouter()
 const profileQueryId = computed(() => typeof route.query.profile === 'string' ? route.query.profile : '')
@@ -109,7 +109,7 @@ const drawerVisible = ref(false), drawerItem = ref<WorkbenchItem | null>(null)
 const candidates = ref<Candidate[]>([]), candidateIndex = ref(0)
 const finalized = ref(false)
 const taskInputAssets = ref<TaskInputAssets>({})
-const downloadingOriginal = ref<'source' | 'target' | ''>('')
+const downloadingOriginal = ref('')
 
 /* ---------- 连线画布 ---------- */
 const pendingSource = ref<string | null>(null)
@@ -925,7 +925,12 @@ function taskInputMeta(asset: TaskInputAsset | null | undefined): string {
   if (!asset?.available) return String(asset?.message || '该历史任务的原始文件已无法确认')
   return asset.uploaded_at ? `上传时间：${String(asset.uploaded_at).slice(0, 19).replace('T', ' ')}` : '任务启动时已冻结原始文件引用'
 }
-function downloadOriginalInput(asset: TaskInputAsset | null | undefined, role: 'source' | 'target'): void {
+function taskInputTargetLabel(asset: TaskInputAsset, index: number): string {
+  const name = String(asset.profile_name || '').trim()
+  const version = asset.profile_version ? ` · v${asset.profile_version}` : ''
+  return `${name || `子方案 ${index + 1}`}${version}`
+}
+function downloadOriginalInput(asset: TaskInputAsset | null | undefined, role: string): void {
   if (!asset?.available || !asset.download_url) {
     ElMessage.warning(asset?.message || '该历史任务的原始文件已无法确认')
     return
@@ -1386,7 +1391,29 @@ onBeforeUnmount(() => {
             >下载原始文件</el-button>
           </div>
         </el-descriptions-item>
-        <el-descriptions-item label="集团码标准数据">
+        <template v-if="taskInputAssets.composite">
+          <el-descriptions-item
+            v-for="(asset, index) in (taskInputAssets.targets ?? [])"
+            :key="`${asset.profile_id ?? index}-${asset.profile_version ?? ''}`"
+            :label="taskInputTargetLabel(asset, index)"
+          >
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="min-width:220px;flex:1 1 360px">
+                <b>{{ taskInputName(asset) }}</b>
+                <div class="muted" style="margin-top:3px">{{ taskInputMeta(asset) }}</div>
+              </div>
+              <el-button
+                type="primary"
+                plain
+                size="small"
+                :loading="downloadingOriginal === `target.${asset.profile_id ?? index}`"
+                :disabled="!asset.available"
+                @click="downloadOriginalInput(asset, `target.${asset.profile_id ?? index}`)"
+              >下载原始文件</el-button>
+            </div>
+          </el-descriptions-item>
+        </template>
+        <el-descriptions-item v-else label="集团码标准数据">
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
             <div style="min-width:220px;flex:1 1 360px">
               <b>{{ taskInputName(taskInputAssets.target) }}</b>
