@@ -170,13 +170,13 @@ export async function ensureCatalogVersion(
   return String(created.version_id)
 }
 
-export async function resolveCompositeRun(
+export async function resolveCompositeTargetBindings(
   children: CompositeChildView[],
   inputs: CompositeTargetInput[],
   assignments: Record<string, CompositeAssignment>,
   schemeTitle: string,
-): Promise<{ run: Array<CompositeChildRef & { catalog_version_id: string }>; assignments: Record<string, CompositeAssignment> }> {
-  const run: Array<CompositeChildRef & { catalog_version_id: string }> = []
+): Promise<{ bindings: Array<CompositeChildRef & { catalog_version_id: string }>; assignments: Record<string, CompositeAssignment> }> {
+  const bindings: Array<CompositeChildRef & { catalog_version_id: string }> = []
   const next = { ...assignments }
   for (const child of children) {
     const assignment = next[child.profile_id]
@@ -187,7 +187,7 @@ export async function resolveCompositeRun(
     const catalogVersionId = assignment.catalog_version_id
       || await ensureCatalogVersion(input, assignment.group_code_column, schemeTitle)
     next[child.profile_id] = { ...assignment, catalog_version_id: catalogVersionId }
-    run.push({ profile_id: child.profile_id, version_no: child.version_no, catalog_version_id: catalogVersionId })
+    bindings.push({ profile_id: child.profile_id, version_no: child.version_no, catalog_version_id: catalogVersionId })
   }
-  return { run, assignments: next }
+  return { bindings, assignments: next }
 }
