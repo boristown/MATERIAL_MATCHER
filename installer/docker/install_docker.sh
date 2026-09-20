@@ -227,8 +227,13 @@ apply_data_mount() {  # 全新安装时把 lib/log 数据目录放到选定磁�
     link="${pair%%:*}"; target="${pair##*:}"
     if [[ ! -e "$link" ]]; then
       ln -sfn "$target" "$link"
-    elif [[ -d "$link" && -z "$(ls -A "$link" 2>/dev/null)" ]]; then
-      rmdir "$link" 2>/dev/null && ln -sfn "$target" "$link"
+    elif [[ -d "$link" && ! -L "$link" ]]; then
+      # 安装器本次预建的空目录（仅含本报告子目录）不算既有数据，可安全迁移
+      local residue
+      residue="$(find "$link" -mindepth 1 -maxdepth 1 ! -path "$link/install-reports" 2>/dev/null | head -1)"
+      if [[ -z "$residue" ]]; then
+        rm -rf "$link" && ln -sfn "$target" "$link"
+      fi
     fi
     [[ "$(readlink -f "$link")" != "$(readlink -f "$target")" ]] && echo "提示：$link 已有既有数据，保持原位（不自动迁移）。" >&2
   done
@@ -412,7 +417,7 @@ REPORT_FILE="$REPORT_DIR/docker-install-$(date +%Y%m%d-%H%M%S).txt"
 } >"$REPORT_FILE"
 chmod 0600 "$REPORT_FILE"
 step 100 "安装完成。"
-echo "@@RESULT@@|$(MM_SEED="$SEED_SUMMARY" MM_MODE="$MODE_TEXT" MM_VER="$RELEASE_VERSION" MM_COMMIT="$GIT_COMMIT" MM_PORT="$FINAL_PORT" MM_PW="$PASSWORD_SOURCE" MM_ADDR="$MAP_ADDRESSES" MM_FW="$FIREWALL_HINT" MM_REPORT="$REPORT_FILE" MM_IMG="$IMAGE_REF" "$PY" - <<'PY'
+SUMMARY_JSON="$(MM_SEED="$SEED_SUMMARY" MM_MODE="$MODE_TEXT" MM_VER="$RELEASE_VERSION" MM_COMMIT="$GIT_COMMIT" MM_PORT="$FINAL_PORT" MM_PW="$PASSWORD_SOURCE" MM_ADDR="$MAP_ADDRESSES" MM_FW="$FIREWALL_HINT" MM_REPORT="$REPORT_FILE" MM_IMG="$IMAGE_REF" "$PY" - <<'PY'
 import json, os
 e = os.environ
 print(json.dumps({"ok": True, "mode": e["MM_MODE"], "version": e["MM_VER"], "git_commit": e["MM_COMMIT"], "port": int(e["MM_PORT"]),
@@ -421,6 +426,9 @@ print(json.dumps({"ok": True, "mode": e["MM_MODE"], "version": e["MM_VER"], "git
                   "service_active": "running" if os.system("docker ps --format '{{.Names}}' | grep -qx material_matcher-app") == 0 else "unknown"}, ensure_ascii=False))
 PY
 )"
+mkdir -p '/var/lib/material_matcher/install' 2>/dev/null || true
+printf '%s' "$SUMMARY_JSON" > '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true
+echo "@@RESULT@@|$SUMMARY_JSON"
 echo "MATERIAL_MATCHER（Docker 方式）${MODE_TEXT}完成：版本 $RELEASE_VERSION，端口 $FINAL_PORT。"
 for a in $MAP_ADDRESSES; do echo "局域网访问地址：http://${a}:$FINAL_PORT"; done
 echo "管理员账号：admin；初始密码文件：$PASSWORD_FILE（root 可读）"

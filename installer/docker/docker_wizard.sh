@@ -125,6 +125,7 @@ INSTALL_RC=1
 run_install() {
   local args=()
   [[ -n "${MM_ADMIN_PASSWORD_SET:-}" ]] && args+=("MM_ADMIN_PASSWORD=$MM_ADMIN_PASSWORD_SET")
+  rm -f '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true
   TMP_OUT="$(mktemp /tmp/mm_docker_install.XXXXXX)"
   if [[ -n "$GUI" ]]; then
     FIFO="$(mktemp -u /tmp/mm_docker_prog.XXXXXX)"; mkfifo "$FIFO"
@@ -231,7 +232,8 @@ main() {
 
   run_install
   local err result_json
-  result_json="$(grep -m1 '^@@RESULT@@|' "$TMP_OUT" | sed 's/^@@RESULT@@|//' || true)"
+  result_json="$(cat '/var/lib/material_matcher/install/last_result.json' 2>/dev/null || true)"
+  [[ -z "$result_json" ]] && result_json="$(grep -m1 '^@@RESULT@@|' "$TMP_OUT" | sed 's/^@@RESULT@@|//' || true)"
   err="$(grep -m1 '^安装失败：' "$TMP_OUT" | sed 's/^安装失败：//' || true)"
   [[ -n "$err" ]] || err="安装程序异常退出（详见日志）"
   if [[ "$INSTALL_RC" != "0" ]]; then
@@ -262,7 +264,7 @@ d = json.loads(sys.stdin.read() or "{}")
 print("\n".join("http://{}:{}".format(a, d.get("port")) for a in d.get("addresses", [])))
 PYE
 )"
-  seed="$(printf '%s' "$result_json" | "$PY" - <<'PYE' 2>/dev/null || true
+  seed=  seed="$(printf '%s' "$result_json" | "$PY" - <<'PYE' 2>/dev/null || true
 import json, sys
 print(json.loads(sys.stdin.read() or "{}").get("seed_summary", ""))
 PYE
