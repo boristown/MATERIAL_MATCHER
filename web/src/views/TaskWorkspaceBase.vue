@@ -301,6 +301,13 @@ function setSideMode(side: FieldSide, mode: string, rule?: Rule): void {
 function clearRuleValueMapping(rule: Rule): void {
   rule.value_mapping = {}
 }
+function enumValueText(value: unknown): string {
+  if (value && typeof value === 'object') {
+    const item = value as Record<string, unknown>
+    return String(item.value ?? item.key ?? item.label ?? '').trim()
+  }
+  return String(value ?? '').trim()
+}
 function enumValues(column: ColumnInfo | undefined): string[] {
   if (!column) return []
   const raw = Array.isArray(column.top_values) && column.top_values.length
@@ -308,7 +315,7 @@ function enumValues(column: ColumnInfo | undefined): string[] {
     : Array.isArray(column.sample_values) && column.sample_values.length
       ? column.sample_values
       : (column.samples ?? [])
-  return [...new Set(raw.map(value => String(value ?? '').trim()).filter(Boolean))]
+  return [...new Set(raw.map(enumValueText).filter(Boolean))]
 }
 function ruleSourceEnumValues(rule: Rule): string[] {
   if (sideMode(rule.source) !== 'field' || rule.source.fields.length !== 1) return []
