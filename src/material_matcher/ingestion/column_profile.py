@@ -99,21 +99,25 @@ def _infer_datatype(kinds: set[str]) -> str:
 
 
 def _is_enum_candidate(*, unique_count: int, non_empty_count: int, datatype: str) -> bool:
-    if unique_count == 0 or unique_count > MAX_ENUM_UNIQUE_VALUES:
+    if unique_count < 2 or unique_count > MAX_ENUM_UNIQUE_VALUES:
         return False
-    if unique_count == 1:
-        return True
 
-    # Small templates may legitimately contain one example per permitted value.
-    # This remains a candidate hint only; callers also receive cardinality and
-    # truncation metadata and should keep the final mapping user-confirmed.
-    if non_empty_count <= 3 and unique_count == non_empty_count:
-        return datatype in {"BOOLEAN", "INTEGER", "NUMBER", "DATE", "TEXT"}
+    # BOOLEAN is intrinsically categorical once both values are observed.
+    if datatype == "BOOLEAN":
+        return unique_count <= 2 and non_empty_count >= 2
 
+    # Be deliberately conservative: value-mapping hints are optional, while a
+    # false-positive hint makes descriptive fields such as model/specification
+    # look like business enums. Manual value mapping remains available even
+    # when a field is not auto-classified as an enum candidate.
     repetition_ratio = unique_count / max(non_empty_count, 1)
-    if unique_count <= 5:
-        return repetition_ratio <= 0.80
-    return non_empty_count >= unique_count * 2 and repetition_ratio <= 0.50
+    if unique_count <= 2:
+        return non_empty_count >= 4 and repetition_ratio <= 0.50
+    if unique_count <= 4:
+        return non_empty_count >= unique_count * 3 and repetition_ratio <= (1 / 3)
+    if unique_count <= 10:
+        return non_empty_count >= unique_count * 4 and repetition_ratio <= 0.25
+    return non_empty_count >= unique_count * 5 and repetition_ratio <= 0.20
 
 
 def _new_accumulator(index: int, header: object) -> dict[str, object]:
