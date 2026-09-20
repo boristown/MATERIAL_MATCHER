@@ -183,6 +183,13 @@ const schemeTitle = computed((): string => {
   const viaProfile = profiles.value.find(item => item.profile_id === profileId)?.name ?? ''
   return explicit || profileTaskMeta.value?.name || viaProfile || (draftId.value ? '匹配草稿' : '未命名方案')
 })
+const compositeAssignmentsComplete = computed(() =>
+  compositeChildren.value.length >= 2
+  && compositeChildren.value.every(child => {
+    const assignment = compositeAssignments.value[child.profile_id]
+    return Boolean(assignment?.file_id && assignment?.group_code_column)
+  }),
+)
 const profileTaskValid = computed(() => Boolean(appliedProfile.value) && configValid.value && profileTaskIssues.value.length === 0)
 const profileFilterSummary = computed(() => {
   if (!filterEnabled.value || !filterField.value || !filterValues.value.length) return '不过滤'
@@ -357,6 +364,14 @@ function onCompositeTaskSourceParsed(payload: { file: FileRecord; columns: Colum
     sourceIdColumn.value = findHint(payload.columns, 'source_id') || payload.columns[0]?.header || ''
   }
 }
+function onCompositeTargetInputsUpdate(value: CompositeTargetInput[]): void {
+  compositeTargetInputs.value = value
+  compositeRunEntries.value = []
+}
+function onCompositeAssignmentsUpdate(value: Record<string, CompositeAssignment>): void {
+  compositeAssignments.value = value
+  compositeRunEntries.value = []
+}
 async function loadCatalogs(selectCurrent = false): Promise<void> {
   catalogs.value = ((await api.get('/catalogs')).data ?? []).filter((item: any) => item.status === 'READY')
     .sort((a: any, b: any) => Number(b.active) - Number(a.active) || String(b.created_at).localeCompare(String(a.created_at)))
@@ -391,6 +406,36 @@ async function hydrateCompositeDocument(document: Record<string, any>): Promise<
     return
   }
   compositeChildren.value = await hydrateCompositeChildren(compositeRefsFromDocument(document))
+}
+async function restoreCompositeRun(document: Record<string, any>): Promise<void> {
+  if (!isCompositeProfile.value) return
+  await hydrateCompositeDocument(document)
+  const run = Array.isArray(document?.advanced?.composite_run) ? document.advanced.composite_run : []
+  const inputs = new Map<string, CompositeTargetInput>()
+  const assignments: Record<string, CompositeAssignment> = {}
+  for (const item of run) {
+    const profileId = String(item?.profile_id ?? '')
+    const catalogVersionId = String(item?.catalog_version_id ?? '')
+    if (!profileId || !catalogVersionId) continue
+    try {
+      const catalog = (await api.get(`/catalogs/versions/${catalogVersionId}`)).data
+      const fileId = String(catalog?.source_file_id ?? '')
+      if (!fileId) continue
+      const response = (await api.get(`/files/${fileId}/inspection`)).data
+      const columns = columnsFromInspection(response.inspection)
+      inputs.set(fileId, { file: response.file, columns, inspection: response.inspection })
+      assignments[profileId] = {
+        file_id: fileId,
+        group_code_column: String(catalog?.group_code_column ?? ''),
+        catalog_version_id: catalogVersionId,
+      }
+    } catch {
+      // 历史任务中单个输入已不可用时，保留其余可恢复映射；最终页面仍由 input-assets 给出追溯提示。
+    }
+  }
+  compositeTargetInputs.value = [...inputs.values()]
+  compositeAssignments.value = assignments
+  compositeRunEntries.value = run
 }
 async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
@@ -527,13 +572,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
 }
 const configValid = computed(() => {
   if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
-  if (isCompositeProfile.value) {
-    return compositeChildren.value.length >= 2
-      && compositeChildren.value.every(child => {
-        const assignment = compositeAssignments.value[child.profile_id]
-        return Boolean(assignment?.file_id && assignment?.group_code_column)
-      })
-  }
+  if (isCompositeProfile.value) return compositeAssignmentsComplete.value
   return Boolean(target.value && groupCodeColumn.value)
     && rules.value.length > 0
     && rules.value.every(rule => sideReady(rule.source) && sideReady(rule.target))
@@ -645,7 +684,9 @@ async function persistWorkspaceDraft(): Promise<void> {
   draftSaveInFlight = true
   try {
     await ensureDraft()
-    const versionId = await resolveCatalogVersionForDraft()
+    const versionId = isCompositeProfile.value && !compositeAssignmentsComplete.value
+      ? null
+      : await resolveCatalogVersionForDraft()
     const payload = buildDraftPayload(versionId)
     const signature = JSON.stringify(payload)
     if (signature === lastDraftSignature) {
@@ -904,14 +945,15 @@ async function restoreDraft(id: string): Promise<void> {
   draftTemplateProfileId.value = String(draft.template_profile_id ?? '')
   const configDocument = draft.config_document ?? {}
   loadDocument(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeRun(configDocument)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (draft.source_file_id) await loadFileColumns(String(draft.source_file_id), 'source')
-  if (draft.catalog_version_id) {
+  if (!isCompositeProfile.value && draft.catalog_version_id) {
     catalogVersionId.value = String(draft.catalog_version_id)
     targetMode.value = 'upload'
     if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
     await selectCatalog(catalogVersionId.value, workspaceTarget.fileId)
-  } else if (workspaceTarget.fileId) {
+  } else if (!isCompositeProfile.value && workspaceTarget.fileId) {
     if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
     await loadFileColumns(workspaceTarget.fileId, 'target')
   }
@@ -933,9 +975,10 @@ async function restoreTask(taskId: string): Promise<void> {
   task.value = (await api.get(`/tasks/${taskId}`)).data
   const configDocument = task.value.config_snapshot ?? {}
   loadDocument(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeRun(configDocument)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (task.value.source_file_id) await loadFileColumns(String(task.value.source_file_id), 'source').catch(() => undefined)
-  if (task.value.catalog_version_id) {
+  if (!isCompositeProfile.value && task.value.catalog_version_id) {
     catalogVersionId.value = String(task.value.catalog_version_id)
     if (workspaceTarget.groupCodeColumn) groupCodeColumn.value = workspaceTarget.groupCodeColumn
     await selectCatalog(catalogVersionId.value, workspaceTarget.fileId).catch(() => undefined)
@@ -1029,7 +1072,7 @@ onBeforeUnmount(() => {
       <div>
         <h2>{{ stage === 0 ? '第一步 · 数据上传' : stage === 1 ? '第二步 · 进度监控' : stage === 2 ? '第三步 · 人工调整' : '第四步 · 输出结果' }}</h2>
         <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；这里只维护字段映射、匹配规则和默认参数，不会启动匹配。</p>
-        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。</p>
+        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；{{ isCompositeProfile ? '上传一份 SAP 源文件与各子方案对应的集团文件，并确认文件对应关系。' : '上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。' }}</p>
         <p v-else-if="stage === 0"><b>数据上传与匹配设置</b>：上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始匹配</p>
         <p v-else><b>{{ task?.scheme_name || profileTaskMeta?.name || '未命名方案' }}</b> · {{ stage === 1 ? '匹配计算进行中，进度与中间结果实时更新。' : stage === 2 ? '集中处理需要人工确认的记录。' : '确认无误后生成并下载最终结果 Excel。' }}</p>
       </div>
@@ -1081,7 +1124,7 @@ onBeforeUnmount(() => {
         <div class="section-head step1-heading">
           <div>
             <h3 style="margin:0">数据上传</h3>
-            <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
+            <p class="step1-subtitle">{{ isCompositeProfile ? '上传一个 SAP 待匹配文件与多份集团文件；集团文件可以使用不同字段结构，系统会按子方案自动推荐对应关系。' : '只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。' }}</p>
           </div>
         </div>
         <CompositeTaskUploadPanel
@@ -1094,8 +1137,8 @@ onBeforeUnmount(() => {
           :assignments="compositeAssignments"
           @source-parsed="onCompositeTaskSourceParsed"
           @update:sourceIdColumn="onSourceIdColumnChange"
-          @update:targetInputs="compositeTargetInputs = $event"
-          @update:assignments="compositeAssignments = $event"
+          @update:targetInputs="onCompositeTargetInputsUpdate"
+          @update:assignments="onCompositeAssignmentsUpdate"
         />
         <DualExcelUploadPanel
           v-else
@@ -1110,10 +1153,10 @@ onBeforeUnmount(() => {
           @update:groupCodeColumn="onGroupCodeColumnChange"
         />
         <template v-if="isProfileTaskCreateMode">
-          <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前两份数据与方案配置还需要确认">
+          <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前数据与方案配置还需要确认">
             <div class="compatibility-list"><div v-for="issue in profileTaskIssues" :key="issue">• {{ issue }}</div></div>
           </el-alert>
-          <el-alert v-else-if="source && target" class="profile-compatibility-alert" type="success" :closable="false" title="字段兼容检查通过，可继续确认映射和匹配设置。"/>
+          <el-alert v-else-if="source && (isCompositeProfile ? compositeAssignmentsComplete : target)" class="profile-compatibility-alert" type="success" :closable="false" :title="isCompositeProfile ? '子方案与集团文件对应关系完整，可开始匹配。' : '字段兼容检查通过，可继续确认映射和匹配设置。'"/>
         </template>
       </div>
 
@@ -1242,7 +1285,7 @@ onBeforeUnmount(() => {
             <el-button type="primary" :loading="busy" :disabled="reviewThreshold >= successThreshold" @click="publishProfileChanges">{{ editingProfilePublishedVersion ? '校验并发布新版本' : '校验并发布' }}</el-button>
           </template>
           <template v-else>
-            <el-button :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
+            <el-button v-if="!isCompositeProfile" :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
             <el-button type="primary" :loading="busy" :disabled="!configValid" @click="start">开始匹配 →</el-button>
           </template>
         </div>
