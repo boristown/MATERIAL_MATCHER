@@ -283,6 +283,14 @@ def main() -> int:
         code, a007_detail = api.json("GET", f"/api/profiles/{a007['profile_id']}")
         published = (a007_detail or {}).get("latest_published") or {}
         profile_document = published.get("document")
+        if isinstance(profile_document, dict) and (profile_document.get("advanced") or {}).get("profile_kind") == "composite":
+            children = (profile_document.get("advanced") or {}).get("composite_children") or []
+            present = all(any(str(p.get("profile_id")) == str(c.get("profile_id")) for p in profile_rows) for c in children)
+            check("A007 预置为跨类目组合方案（子方案齐备）", len(children) >= 2 and present, f"children={len(children)}")
+            flat = next((p for p in profile_rows if not str(p.get("name", "")).startswith("A007")), None)
+            if flat is not None:
+                code, flat_detail = api.json("GET", f"/api/profiles/{flat['profile_id']}")
+                profile_document = ((flat_detail or {}).get("latest_published") or {}).get("document")
         if code == 200 and isinstance(profile_document, dict) and profile_document.get("rules"):
             profile_config = _copy.deepcopy(profile_document)
             profile_config["source_id_column"] = "物料编码"
