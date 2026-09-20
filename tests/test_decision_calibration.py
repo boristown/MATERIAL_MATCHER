@@ -114,7 +114,9 @@ def test_dual_threshold_preview_apply_revision_rollback_and_human_protection(tmp
     assert revisions[0]["rollback_of_revision"] == 1
     assert revisions[0]["operator"] == "admin"
     assert revisions[0]["success_threshold"] == 65.0
-    assert revisions[0]["review_threshold"] == 45.0
+    # Compatibility column is retained in SQLite, but rollback writes the fixed
+    # zero floor instead of reviving the removed business threshold.
+    assert revisions[0]["review_threshold"] == 0.0
 
 
 def test_histograms_and_batch_preview_are_database_aggregations(tmp_path: Path) -> None:
