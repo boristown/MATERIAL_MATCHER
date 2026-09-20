@@ -78,11 +78,23 @@ def _trace_dicts(value: ProcessedValue) -> list[dict[str, object]]:
     ]
 
 
-def prepare_side_values(row: Mapping[str, object], side: FieldSide) -> list[ProcessedValue]:
+def prepare_side_values(
+    row: Mapping[str, object],
+    side: FieldSide,
+    *,
+    value_mapping: Mapping[str, str] | None = None,
+) -> list[ProcessedValue]:
     pipeline = _pipeline_dicts(side)
+    mapping = {str(key): str(value) for key, value in (value_mapping or {}).items()}
+
+    def mapped(value: object) -> object:
+        if value is None or not mapping:
+            return value
+        return mapping.get(str(value), value)
+
     if side.fixed_value is not None:
-        return [apply_processing_pipeline(side.fixed_value, pipeline)]
-    raw_values = [row.get(field) for field in side.fields]
+        return [apply_processing_pipeline(mapped(side.fixed_value), pipeline)]
+    raw_values = [mapped(row.get(field)) for field in side.fields]
     if side.combine == "best_of":
         return [
             apply_processing_pipeline(value, pipeline)
@@ -194,7 +206,7 @@ def score_field_rule(
 ) -> FieldScore | None:
     source_values = [
         value
-        for value in prepare_side_values(source_row, rule.source)
+        for value in prepare_side_values(source_row, rule.source, value_mapping=rule.value_mapping)
         if not value.is_missing and value.text not in {None, ""}
     ]
     target_values = [
