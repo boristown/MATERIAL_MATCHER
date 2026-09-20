@@ -44,7 +44,95 @@ class ProfileService:
             raise DomainError("PROFILE_NOT_FOUND", "匹配方案不存在", status_code=404)
         return dict(row)
 
-    def _validate(self, document: dict[str, object]) -> MatchingConfig:
+    def _validate_composite_children(
+        self,
+        profile_id: str,
+        children: object,
+    ) -> list[dict[str, object]]:
+        if not isinstance(children, list) or len(children) < 2:
+            raise DomainError(
+                "INVALID_PROFILE",
+                "组合匹配方案至少需要两个已发布子方案",
+                status_code=422,
+            )
+
+        normalized: list[dict[str, object]] = []
+        seen: set[tuple[str, int]] = set()
+        for index, child in enumerate(children, start=1):
+            if not isinstance(child, dict):
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    f"第 {index} 个子方案引用格式不正确",
+                    status_code=422,
+                )
+            child_profile_id = str(child.get("profile_id") or "").strip()
+            raw_version = child.get("version_no")
+            if isinstance(raw_version, bool):
+                version_no = 0
+            else:
+                try:
+                    version_no = int(raw_version)
+                except (TypeError, ValueError):
+                    version_no = 0
+            if not child_profile_id or version_no <= 0:
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    f"第 {index} 个子方案必须固定到明确的已发布 version_no",
+                    status_code=422,
+                )
+            if child_profile_id == profile_id:
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    "组合匹配方案不能引用自身",
+                    status_code=422,
+                )
+
+            reference = (child_profile_id, version_no)
+            if reference in seen:
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    "组合匹配方案不能重复引用同一个 profile/version",
+                    status_code=422,
+                )
+            seen.add(reference)
+
+            try:
+                published = self.version(child_profile_id, version_no)
+            except DomainError as exc:
+                if exc.code in {"PROFILE_NOT_FOUND", "PROFILE_VERSION_NOT_FOUND"}:
+                    raise DomainError(
+                        "INVALID_PROFILE",
+                        f"子方案 {child_profile_id} v{version_no} 不是已发布的可用版本",
+                        status_code=422,
+                        details={"profile_id": child_profile_id, "version_no": version_no},
+                    ) from exc
+                raise
+
+            child_document = published.get("document")
+            child_advanced = (
+                child_document.get("advanced")
+                if isinstance(child_document, dict)
+                else {}
+            )
+            child_kind = (
+                str(child_advanced.get("profile_kind") or "single").strip().lower()
+                if isinstance(child_advanced, dict)
+                else "single"
+            )
+            if child_kind == "composite":
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    "第一版组合匹配方案不支持嵌套 composite 子方案",
+                    status_code=422,
+                    details={"profile_id": child_profile_id, "version_no": version_no},
+                )
+
+            normalized.append(
+                {"profile_id": child_profile_id, "version_no": version_no}
+            )
+        return normalized
+
+    def _validate(self, document: dict[str, object], *, profile_id: str | None = None) -> MatchingConfig:
         try:
             bound = self.dictionaries.bind_references(document)
             config = MatchingConfig.model_validate(bound)
@@ -53,10 +141,41 @@ class ProfileService:
         except ValidationError as exc:
             message = exc.errors()[0].get("msg", "匹配方案格式不正确") if exc.errors() else "匹配方案格式不正确"
             raise DomainError("INVALID_PROFILE", str(message).replace("Value error, ", ""), status_code=422) from exc
+
         if not config.source_id_column:
             raise DomainError("INVALID_PROFILE", "匹配方案必须配置客户物料标识字段", status_code=422)
+
+        advanced = config.advanced if isinstance(config.advanced, dict) else {}
+        profile_kind = str(advanced.get("profile_kind") or "single").strip().lower()
+        if profile_kind not in {"single", "composite"}:
+            raise DomainError(
+                "INVALID_PROFILE",
+                f"不支持的匹配方案类型: {profile_kind}",
+                status_code=422,
+            )
+
+        if profile_kind == "composite":
+            if not profile_id:
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    "组合匹配方案校验缺少 profile_id",
+                    status_code=422,
+                )
+            advanced = dict(advanced)
+            advanced["profile_kind"] = "composite"
+            advanced["composite_children"] = self._validate_composite_children(
+                profile_id,
+                advanced.get("composite_children"),
+            )
+            config.advanced = advanced
+            return config
+
+        if "profile_kind" in advanced:
+            advanced = dict(advanced)
+            advanced["profile_kind"] = "single"
+            config.advanced = advanced
         if not config.rules:
-            raise DomainError("INVALID_PROFILE", "匹配方案至少需要一条字段匹配规则", status_code=422)
+            raise DomainError("INVALID_PROFILE", "普通匹配方案至少需要一条字段匹配规则", status_code=422)
         return config
 
     def create(self, name: str, document: dict[str, object] | None = None) -> dict[str, object]:
@@ -151,7 +270,7 @@ class ProfileService:
         draft = profile.get("draft")
         if not isinstance(draft, dict):
             raise DomainError("PROFILE_DRAFT_NOT_FOUND", "当前方案没有可校验的草稿", status_code=409)
-        config = self._validate(dict(draft["document"]))
+        config = self._validate(dict(draft["document"]), profile_id=profile_id)
         return {"ok": True, "profile_id": profile_id, "normalized": config.model_dump(mode="json")}
 
     def publish(self, profile_id: str) -> dict[str, object]:
@@ -159,7 +278,7 @@ class ProfileService:
         draft = profile.get("draft")
         if not isinstance(draft, dict):
             raise DomainError("PROFILE_DRAFT_NOT_FOUND", "当前方案没有可发布的草稿", status_code=409)
-        config = self._validate(dict(draft["document"]))
+        config = self._validate(dict(draft["document"]), profile_id=profile_id)
         normalized = config.model_dump(mode="json")
         now = _now()
         with self.meta.connect() as connection:
