@@ -576,8 +576,12 @@ class TaskService:
 
     def save_data(self, draft_id: str, payload: dict[str, Any]) -> dict[str, object]:
         draft = self.get_draft(draft_id)
-        template_profile_id = payload.get("template_profile_id", draft.get("template_profile_id"))
-        template_profile_version = payload.get("template_profile_version", draft.get("template_profile_version"))
+        template_profile_id = payload.get("template_profile_id")
+        template_profile_version = payload.get("template_profile_version")
+        if template_profile_id is None:
+            template_profile_id = draft.get("template_profile_id")
+        if template_profile_version is None:
+            template_profile_version = draft.get("template_profile_version")
         if template_profile_id is None and template_profile_version is None:
             kind, children = "single", []
         elif template_profile_id is None or template_profile_version is None:
