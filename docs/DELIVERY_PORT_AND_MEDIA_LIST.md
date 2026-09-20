@@ -24,7 +24,7 @@
 | 项 | 名称 | 体积 |
 |---|---|---|
 | 交付包（单个压缩文件，U 盘/分发用） | `mm-1.2.8-x86_64.tar.gz` | **1,238,287,759 字节 ≈ 1.24 GB** |
-| SHA256 | `7aea0d7a2312f3edeec581c262f48687b946efb7a5d8debb0a50bd1c76d8144e` | — |
+| SHA256 | `d8be55bb33d3f110d587d0618155c66866e3927d0fc202dbd2c8c5499735343b` | — |
 | 解压后总目录 | `mm-1.2.8/` | 约 **2.7 GB** |
 | ├ d（**推荐，客户已确认**） | 含 Docker Engine 27.1.1 官方静态组件、Compose v2.29.7、应用镜像 `material-matcher-app:1.2.8`（tar 1.24 GB）、seed、smoke、`run.sh`＋生命周期四脚本（重启/停用/卸载/定时备份） | 约 **1.4 GB** |
 | ├ n（备用完整方案） | 自包含 Python Runtime + wheelhouse + 模型 + 源码 + systemd 安装链、`run.sh` | 约 **1.3 GB** |
