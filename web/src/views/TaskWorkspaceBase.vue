@@ -571,8 +571,8 @@ function loadDocument(document: any): void {
     const templateSchema = value.advanced?.template_schema
     const rememberedSourceFields = Array.isArray(templateSchema?.source_fields) ? templateSchema.source_fields.map(String) : []
     const rememberedTargetFields = Array.isArray(templateSchema?.target_fields) ? templateSchema.target_fields.map(String) : []
-    if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map(header => ({ header }))
-    if (!targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map(header => ({ header }))
+    if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map((header: string) => ({ header }))
+    if (!targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map((header: string) => ({ header }))
     groupCodeColumn.value = String(templateSchema?.group_code_field ?? '')
   }
   sourceIdColumn.value = String(value.source_id_column ?? '')
@@ -1278,7 +1278,7 @@ onBeforeUnmount(() => {
         <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
           <el-table-column label="源侧" min-width="280"><template #default="scope">
             <div class="field-side-editor">
-              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="mode => setSideMode(scope.row.source, String(mode))">
+              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event))">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
               </el-select>
               <el-input v-if="sideMode(scope.row.source) === 'fixed'" v-model="scope.row.source.fixed_value" clearable placeholder="例如：Z001"/>
@@ -1289,7 +1289,7 @@ onBeforeUnmount(() => {
           <el-table-column label="" width="46"><template #default>➜</template></el-table-column>
           <el-table-column label="目标侧" min-width="280"><template #default="scope">
             <div class="field-side-editor">
-              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="mode => setSideMode(scope.row.target, String(mode))">
+              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event))">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
               </el-select>
               <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
