@@ -286,19 +286,24 @@ def main() -> int:
                 root = ET.fromstring(z.read("xl/sharedStrings.xml"))
                 for si in root.findall(ns + "si"):
                     shared.append("".join(s.text or "" for s in si.iter(ns + "t")))
-            sheet = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
-            row = next(sheet.iter(ns + "row"), None)
-            hdr = []
-            if row is not None:
+            for name in sorted(n for n in z.namelist() if n.startswith("xl/worksheets/") and n.endswith(".xml")):
+                sheet = ET.fromstring(z.read(name))
+                row = next(sheet.iter(ns + "row"), None)
+                if row is None:
+                    continue
+                hdr = []
                 for cell in row.iter(ns + "c"):
-                    v = cell.find(ns + "v"); ist = cell.find(ns + "is")
+                    v = cell.find(ns + "v")
+                    ist = cell.find(ns + "is")
                     if ist is not None:
                         hdr.append("".join(x.text or "" for x in ist.iter(ns + "t")))
                     elif v is not None and cell.get("t") == "s":
-                        hdr.append(shared[int(v.text)])
+                        hdr.append(shared[int(v.text)] if v.text else "")
                     elif v is not None:
                         hdr.append(v.text or "")
-            return hdr
+                if hdr:
+                    return hdr
+            return []
 
     profile_task_ok = False
     task_id, task = "", {}
