@@ -40,6 +40,8 @@ class FieldRule(BaseModel):
     critical: bool = False
     matcher_options: dict[str, object] = Field(default_factory=dict)
     value_mapping: dict[str, str] = Field(default_factory=dict)
+    value_mapping_source_values: list[str] = Field(default_factory=list)
+    value_mapping_target_values: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def numeric_requires_tolerance(self) -> "FieldRule":
