@@ -1792,6 +1792,7 @@ onBeforeUnmount(() => {
 .field-side-editor {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -1831,7 +1832,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style scoped>
-.value-mapping-editor { margin-top: 8px; padding: 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
+.value-mapping-editor { flex: 1 0 100%; width: 100%; margin-top: 8px; padding: 9px; border: 1px solid #dfe7f1; border-radius: 8px; background: #f8fafc; }
 .value-mapping-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:9px; font-size:11px; }
 .value-mapping-title span { color:#7b879a; font-weight:400; }
 .value-candidate-editor { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
