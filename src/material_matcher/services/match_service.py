@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
@@ -12,7 +12,8 @@ from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
 from material_matcher.embedding.cache import EmbeddingCache
 from material_matcher.ingestion.reader import detect_layout
-from material_matcher.matching.engine import RowResult, match_rows, match_rows_indexed, summarize
+from material_matcher.matching.engine import CandidateResult, RowResult, match_rows, match_rows_indexed, summarize
+from material_matcher.matching.scorer import decide_status, minimum_score_gap
 from material_matcher.services.result_export_service import ResultExportService
 from material_matcher.services.task_service import task_time_fields
 from material_matcher.settings import Settings
@@ -134,6 +135,214 @@ class MatchService:
             on_index_ready(str(index_info.get("index_id") or index.metadata.get("fingerprint") or ""))
         cache = EmbeddingCache(self.settings.embedding_cache_dir, provider)
         return match_rows_indexed(source_path, index=index, provider=provider, cache=cache, config=config, group_code_column=str(catalog["group_code_column"]), query_batch_size=self.settings.query_batch_size, max_source_rows=max_source_rows, on_progress=on_progress, scan_workers=self.settings.index_scan_workers, on_batch=on_batch)
+
+    def _published_profile_config(self, profile_id: str, version_no: int) -> tuple[str, MatchingConfig]:
+        with self.meta.connect() as connection:
+            row = connection.execute(
+                """SELECT p.name,v.document
+                   FROM profile_versions v
+                   JOIN profiles p ON p.profile_id=v.profile_id
+                   WHERE v.profile_id=? AND v.version_no=? AND v.status='PUBLISHED'""",
+                (profile_id, version_no),
+            ).fetchone()
+        if row is None:
+            raise DomainError(
+                "PROFILE_VERSION_NOT_FOUND",
+                "组合方案引用的子方案版本不存在",
+                status_code=422,
+                details={"profile_id": profile_id, "version_no": version_no},
+            )
+        document = json.loads(str(row["document"]))
+        return str(row["name"]), MatchingConfig.model_validate(document)
+
+    @staticmethod
+    def _is_composite(config: MatchingConfig) -> bool:
+        advanced = config.advanced if isinstance(config.advanced, dict) else {}
+        return str(advanced.get("profile_kind") or "single") == "composite"
+
+    @staticmethod
+    def _composite_run_entries(config: MatchingConfig) -> list[dict[str, object]]:
+        advanced = config.advanced if isinstance(config.advanced, dict) else {}
+        raw = advanced.get("composite_run")
+        if not isinstance(raw, list) or len(raw) < 2:
+            raise DomainError(
+                "COMPOSITE_RUN_INCOMPLETE",
+                "跨类目组合方案需要为每个子方案选择对应的集团码文件",
+                status_code=422,
+            )
+        entries: list[dict[str, object]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            profile_id = str(item.get("profile_id") or "")
+            catalog_version_id = str(item.get("catalog_version_id") or "")
+            try:
+                version_no = int(item.get("version_no"))
+            except (TypeError, ValueError):
+                version_no = 0
+            if not profile_id or version_no <= 0 or not catalog_version_id:
+                raise DomainError(
+                    "COMPOSITE_RUN_INCOMPLETE",
+                    "组合方案的子方案与集团码文件映射不完整",
+                    status_code=422,
+                )
+            entries.append({
+                **item,
+                "profile_id": profile_id,
+                "version_no": version_no,
+                "catalog_version_id": catalog_version_id,
+            })
+        if len(entries) < 2:
+            raise DomainError("COMPOSITE_RUN_INCOMPLETE", "跨类目组合方案至少需要两个子方案", status_code=422)
+        return entries
+
+    @staticmethod
+    def _combine_composite_rows(
+        child_rows: list[list[RowResult]],
+        parent_config: MatchingConfig,
+    ) -> list[RowResult]:
+        grouped: dict[str, dict[str, object]] = {}
+        for rows in child_rows:
+            for row in rows:
+                bucket = grouped.setdefault(
+                    row.source_row_id,
+                    {
+                        "source_id": row.source_id,
+                        "source_payload": row.source_payload,
+                        "source_row_number": row.source_row_number,
+                        "candidates": [],
+                    },
+                )
+                bucket["candidates"].extend(row.candidates)
+
+        combined: list[RowResult] = []
+        for source_row_id, bucket in grouped.items():
+            by_code: dict[str, CandidateResult] = {}
+            for candidate in bucket["candidates"]:
+                assert isinstance(candidate, CandidateResult)
+                existing = by_code.get(candidate.group_code)
+                if existing is None or candidate.score > existing.score:
+                    by_code[candidate.group_code] = candidate
+            ordered = sorted(
+                by_code.values(),
+                key=lambda candidate: (-candidate.score, candidate.group_code),
+            )[: parent_config.decision.top_n]
+            candidates = [
+                replace(candidate, rank=rank)
+                for rank, candidate in enumerate(ordered, start=1)
+            ]
+            first = candidates[0].score if candidates else 0.0
+            second = candidates[1].score if len(candidates) > 1 else 0.0
+            status = decide_status(first, parent_config) if candidates else "UNMATCHED"
+            if status == "MATCHED" and candidates and not candidates[0].auto_match_safe:
+                status = "REVIEW" if parent_config.decision.review_enabled else "UNMATCHED"
+            if status == "MATCHED" and candidates:
+                competitor = next(
+                    (candidate for candidate in candidates[1:] if candidate.group_code != candidates[0].group_code),
+                    None,
+                )
+                if competitor is not None and first - competitor.score < minimum_score_gap(parent_config):
+                    status = "REVIEW" if parent_config.decision.review_enabled else "UNMATCHED"
+            if (
+                status == "MATCHED"
+                and parent_config.decision.review_enabled
+                and len(candidates) > 1
+                and candidates[1].score == first
+                and candidates[1].group_code != candidates[0].group_code
+            ):
+                status = "REVIEW"
+            final_group_code = candidates[0].group_code if status == "MATCHED" and candidates else None
+            combined.append(
+                RowResult(
+                    source_row_id=str(source_row_id),
+                    source_id=str(bucket["source_id"]),
+                    source_payload=dict(bucket["source_payload"]),
+                    status=status,
+                    final_group_code=final_group_code,
+                    first_score=first,
+                    second_score=second,
+                    score_gap=round(first - second, 4),
+                    critical_conflict=candidates[0].critical_conflict if candidates else False,
+                    candidates=candidates,
+                    source_row_number=bucket["source_row_number"],
+                )
+            )
+        combined.sort(key=lambda row: int(row.source_row_id) if str(row.source_row_id).isdigit() else str(row.source_row_id))
+        return combined
+
+    def _run_composite_rows(
+        self,
+        *,
+        source: dict[str, object],
+        parent_config: MatchingConfig,
+        max_source_rows: int | None = None,
+        on_progress=None,
+    ) -> list[RowResult]:
+        entries = self._composite_run_entries(parent_config)
+        all_rows: list[list[RowResult]] = []
+        child_count = len(entries)
+
+        for child_index, entry in enumerate(entries):
+            profile_id = str(entry["profile_id"])
+            version_no = int(entry["version_no"])
+            catalog_version_id = str(entry["catalog_version_id"])
+            profile_name, child_config = self._published_profile_config(profile_id, version_no)
+            if self._is_composite(child_config):
+                raise DomainError(
+                    "COMPOSITE_NESTING_NOT_SUPPORTED",
+                    "组合方案暂不支持嵌套组合子方案",
+                    status_code=422,
+                )
+
+            # Reuse each child scheme's field mapping / normalization / retrieval
+            # rules, but apply the parent scheme's source filter and final decision
+            # thresholds. This is what lets A007 fan out into the five ordinary
+            # category matchers without inheriting their Z001/Z002/... source filter.
+            child_config = child_config.model_copy(
+                update={
+                    "source_id_column": parent_config.source_id_column or child_config.source_id_column,
+                    "source_filter": parent_config.source_filter,
+                    "decision": parent_config.decision,
+                },
+                deep=True,
+            )
+            catalog = self._catalog(catalog_version_id)
+            target = self.files.get(str(catalog["source_file_id"]))
+            target_file_id = str(target.get("file_id") or "")
+            target_file_name = str(target.get("original_name") or "")
+
+            def child_progress(done: int, total: int, *, index: int = child_index) -> None:
+                if on_progress:
+                    on_progress(index, child_count, done, total)
+
+            rows = self._run_rows(
+                source=source,
+                target=target,
+                catalog=catalog,
+                config=child_config,
+                max_source_rows=max_source_rows,
+                on_progress=child_progress,
+            )
+            decorated: list[RowResult] = []
+            for row in rows:
+                candidates = [
+                    replace(
+                        candidate,
+                        target_payload={
+                            **candidate.target_payload,
+                            "__child_profile_id": profile_id,
+                            "__child_profile_version": version_no,
+                            "__child_profile_name": profile_name,
+                            "__target_file_id": target_file_id,
+                            "__target_file_name": target_file_name,
+                        },
+                    )
+                    for candidate in row.candidates
+                ]
+                decorated.append(replace(row, candidates=candidates))
+            all_rows.append(decorated)
+
+        return self._combine_composite_rows(all_rows, parent_config)
 
     def dry_run(self, draft_id: str, sample_rows: int = 100) -> dict[str, object]:
         _, config, source, catalog = self._draft_context(draft_id)
