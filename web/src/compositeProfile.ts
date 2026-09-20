@@ -54,9 +54,7 @@ export function childViewFromDocument(
     version_no: versionNo,
     name,
     source_fields: unique([
-      ...(Array.isArray(schema.source_fields) ? schema.source_fields : []),
-      document?.source_id_column,
-      document?.source_filter?.field,
+      document?.scope_mode !== 'GLOBAL' ? document?.scope?.source_field : null,
       ...rules.flatMap((rule: any) => Array.isArray(rule?.source?.fields) ? rule.source.fields : []),
     ]),
     target_fields: unique([
@@ -116,35 +114,53 @@ export function recommendCompositeAssignments(
 ): Record<string, CompositeAssignment> {
   const next: Record<string, CompositeAssignment> = {}
   const used = new Set<string>()
+
   for (const child of children) {
     const assignment = current[child.profile_id]
-    if (assignment && inputs.some(input => input.file.file_id === assignment.file_id)) {
+    if (assignment && inputs.some(input => input.file.file_id === assignment.file_id) && !used.has(assignment.file_id)) {
       next[child.profile_id] = assignment
       used.add(assignment.file_id)
     }
   }
 
-  const pairs = children.flatMap(child =>
-    inputs
-      .filter(input => !used.has(input.file.file_id))
-      .map(input => ({ child, input, score: targetCompatibility(child, input) })),
-  ).sort((a, b) =>
-    b.score.ratio - a.score.ratio
-    || b.score.matched - a.score.matched
-    || a.child.name.localeCompare(b.child.name, 'zh-CN')
-    || a.input.file.original_name.localeCompare(b.input.file.original_name, 'zh-CN'),
-  )
+  const remaining = children.filter(child => !next[child.profile_id])
+  while (remaining.length) {
+    const available = inputs.filter(input => !used.has(input.file.file_id))
+    if (!available.length) break
 
-  const assignedChildren = new Set(Object.keys(next))
-  for (const pair of pairs) {
-    if (assignedChildren.has(pair.child.profile_id) || used.has(pair.input.file.file_id)) continue
-    if (pair.score.total > 0 && pair.score.matched === 0) continue
-    next[pair.child.profile_id] = {
-      file_id: pair.input.file.file_id,
-      group_code_column: findGroupCode(pair.child, pair.input),
+    const choices = remaining.map(child => {
+      const ranked = available
+        .map(input => ({ input, score: targetCompatibility(child, input) }))
+        .sort((a, b) =>
+          b.score.ratio - a.score.ratio
+          || b.score.matched - a.score.matched
+          || a.input.file.original_name.localeCompare(b.input.file.original_name, 'zh-CN'),
+        )
+      const best = ranked[0]
+      const second = ranked[1]
+      return {
+        child,
+        best,
+        confidence: (best?.score.ratio ?? 0) - (second?.score.ratio ?? 0),
+      }
+    }).sort((a, b) =>
+      b.confidence - a.confidence
+      || (b.best?.score.ratio ?? 0) - (a.best?.score.ratio ?? 0)
+      || (b.best?.score.matched ?? 0) - (a.best?.score.matched ?? 0)
+      || a.child.name.localeCompare(b.child.name, 'zh-CN'),
+    )
+
+    const choice = choices[0]
+    if (!choice?.best) break
+    const childIndex = remaining.findIndex(child => child.profile_id === choice.child.profile_id)
+    if (childIndex >= 0) remaining.splice(childIndex, 1)
+
+    if (choice.best.score.total > 0 && choice.best.score.matched === 0) continue
+    next[choice.child.profile_id] = {
+      file_id: choice.best.input.file.file_id,
+      group_code_column: findGroupCode(choice.child, choice.best.input),
     }
-    assignedChildren.add(pair.child.profile_id)
-    used.add(pair.input.file.file_id)
+    used.add(choice.best.input.file.file_id)
   }
   return next
 }
