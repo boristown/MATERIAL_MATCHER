@@ -48,10 +48,15 @@ const requiredView = [
   '不一致',
   '无数据',
   'server-side',
+  'ensureCandidates(item)',
+  'fetchCandidates(activeTaskId.value, item.source_row_id)',
 ]
 
 const requiredApi = [
+  'includeCandidates = 0',
   'include_candidates: includeCandidates',
+  'buildWorkbenchParams(filter, page, pageSize)',
+  'fetchCandidates',
   "mode: 'explicit'",
   "mode: 'filter'",
   "'confirm_top1'",
@@ -98,6 +103,9 @@ for (const token of requiredCss) {
 }
 
 if (view.includes('hydrateCandidates')) throw new Error('ReviewView must not eager-load candidates for every row')
+if (api.includes('buildWorkbenchParams(filter, page, pageSize, 5)')) throw new Error('Workbench list must not preload Top5 candidates; use fetchCandidates lazily')
+if (!/function onFilterChanged\(\): void \{[\s\S]*?page\.value = 1[\s\S]*?loadItems\(false\)/.test(view)) throw new Error('Status/search filter changes must reset server-side paging to page 1')
+if (!/function onPageSizeChange\(next: number\): void \{[\s\S]*?page\.value = 1[\s\S]*?loadItems\(false\)/.test(view)) throw new Error('Page-size changes must reset server-side paging to page 1')
 if (view.includes('PAGE_SIZE_OPTIONS = [10') || view.includes('PAGE_SIZE_OPTIONS = [20')) throw new Error('STEP3 page size must be 50 / 100 / 200')
 if (view.includes('previewReDecision')) throw new Error('STEP3 UI must use the single-threshold adapter, not expose the legacy dual-threshold call')
 if (api.includes('review_threshold') || api.includes('single_threshold')) throw new Error('STEP3 API adapter must send automatic threshold only')
