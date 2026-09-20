@@ -80,6 +80,12 @@ def _validate_source_columns(source_row: dict[str, object], config: MatchingConf
             f"客户物料编码字段“{config.source_id_column}”不存在",
             status_code=422,
         )
+    if config.source_filter and config.source_filter.field not in source_headers:
+        raise DomainError(
+            "COLUMN_NOT_FOUND",
+            f"源数据过滤字段“{config.source_filter.field}”不存在",
+            status_code=422,
+        )
     if config.scope_mode != "GLOBAL" and config.scope.source_field not in source_headers:
         raise DomainError(
             "COLUMN_NOT_FOUND",
