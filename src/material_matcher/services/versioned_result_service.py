@@ -17,6 +17,21 @@ class VersionedResultService:
         self.exporter = ResultExportService(metadata, files, settings)
         self.calibration = DecisionCalibrationService(metadata)
 
+    def _has_newer_manual_activity(self, task_id: str, result_file_id: str) -> bool:
+        """定稿之后又发生人工确认/导入（复核状态或人工记录被更新）时，旧结果快照视为过期。"""
+        with self.meta.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM match_items WHERE task_id=? AND COALESCE(updated_at,created_at) > (SELECT created_at FROM files WHERE file_id=?) LIMIT 1",
+                (task_id, result_file_id),
+            ).fetchone()
+            if row is not None:
+                return True
+            row = connection.execute(
+                "SELECT 1 FROM reviews WHERE task_id=? AND created_at > (SELECT created_at FROM files WHERE file_id=?) LIMIT 1",
+                (task_id, result_file_id),
+            ).fetchone()
+        return row is not None
+
     def finalize(self, task_id: str, *, allow_unresolved_review: bool = False) -> dict[str, object]:
         with self.meta.connect() as connection:
             task_row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -38,7 +53,7 @@ class VersionedResultService:
             )
 
         current = self.calibration.latest_result_for_current_decision(task_id)
-        if current is not None:
+        if current is not None and not self._has_newer_manual_activity(task_id, str(current["file_id"])):
             return {
                 "task_id": task_id,
                 "result_file_id": current["file_id"],

@@ -118,3 +118,23 @@ def test_persistent_worker_review_and_finalize_flow(authed: TestClient)->None:
     else:
         assert premature.status_code==200
     result=authed.get(f"/api/tasks/{task['task_id']}/result"); assert result.status_code==200; wb=load_workbook(BytesIO(result.content),read_only=True); assert {'匹配摘要','最终匹配结果','Top5候选','人工操作记录','未匹配清单'} <= set(wb.sheetnames); wb.close()
+
+
+def test_finalize_after_review_bumps_result_revision(authed) -> None:
+    draft, rules = setup_draft(authed, source_rows=[["0001", "电阻", "R10"], ["0002", "电容", "C10"], ["0003", "电感", "L5"]],
+                               target_rows=[["G1", "电阻", "R10"], ["G2", "电容", "C11"], ["G3", "电感", "L5"]], success=95, review=40)
+    started = authed.post(f"/api/task-drafts/{draft['draft_id']}/start").json()
+    task = wait_task(authed, started["task_id"])
+    fin1 = authed.post(f"/api/tasks/{task['task_id']}/finalize", json={"allow_unresolved_review": True})
+    assert fin1.status_code == 200
+    file1 = fin1.json()["result_file_id"]
+    items = authed.get(f"/api/tasks/{task['task_id']}/workbench/items?status=REVIEW&page_size=50").json()["items"]
+    assert items, "预置待人工行用于二次确认"
+    row = items[0]["source_row_id"]
+    cands = authed.get(f"/api/tasks/{task['task_id']}/items/{row}/candidates").json()["candidates"]
+    conf = authed.post(f"/api/tasks/{task['task_id']}/items/{row}/confirm", json={"target_id": cands[0]["target_group_code"], "comment": "定稿后追加确认"})
+    assert conf.status_code == 200
+    fin2 = authed.post(f"/api/tasks/{task['task_id']}/finalize", json={"allow_unresolved_review": True})
+    assert fin2.status_code == 200 and fin2.json()["result_file_id"] != file1, "定稿后新增人工确认必须重新生成结果文件"
+    fin3 = authed.post(f"/api/tasks/{task['task_id']}/finalize", json={"allow_unresolved_review": True})
+    assert fin3.json()["result_file_id"] == fin2.json()["result_file_id"] and fin3.json().get("reused") is True, "无新操作时保持幂等复用"
