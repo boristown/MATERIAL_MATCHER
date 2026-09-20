@@ -41,8 +41,6 @@ const AGENT3_ACTION: Record<ReviewBatchAction, string> = {
   restore_original: 'RESTORE_ALGORITHM',
 }
 
-export const STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR = 0
-
 const versionCache = new Map<string, string>()
 
 function versionKey(taskId: string, sourceRowId: string): string {
@@ -229,27 +227,15 @@ export async function fetchCalibrationStatistics(taskId: string): Promise<any | 
   }
 }
 
-export async function previewReDecision(taskId: string, successThreshold: number, reviewThreshold: number, mode: 'preview' | 'apply'): Promise<any> {
-  return (await api.post(`/tasks/${taskId}/re-decide`, {
-    success_threshold: successThreshold,
-    review_threshold: reviewThreshold,
-    mode,
-  })).data ?? {}
-}
-
 /**
- * STEP3 business UI intentionally exposes one threshold only. The legacy
- * re-decide API still requires review_threshold, so the adapter pins it to 0
- * and opts into inclusive success semantics: score >= the visible threshold
- * is MATCHED, positive-score rows below it stay in REVIEW, and zero-score/no-
- * usable-candidate rows may remain UNMATCHED. Historical callers keep the
- * legacy dual-threshold behavior because single_threshold defaults to false.
+ * STEP3 exposes the only business threshold: automatic-match threshold.
+ * Positive-score rows below it stay in REVIEW, while zero-score/no-usable-
+ * candidate rows may remain UNMATCHED. The API no longer accepts a separate
+ * manual-review lower bound.
  */
 export async function reDecideSingleThreshold(taskId: string, successThreshold: number, mode: 'preview' | 'apply'): Promise<any> {
   return (await api.post(`/tasks/${taskId}/re-decide`, {
     success_threshold: successThreshold,
-    review_threshold: STEP3_SINGLE_THRESHOLD_REVIEW_FLOOR,
-    single_threshold: true,
     mode,
   })).data ?? {}
 }
