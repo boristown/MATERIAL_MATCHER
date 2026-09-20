@@ -572,7 +572,7 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules)
-    ? adaptRulesFromApi(cloneDocument(value.rules)).map((rule: Rule) => ({
+    ? adaptRulesFromApi<Rule>(cloneDocument(value.rules) as Rule[]).map((rule: Rule) => ({
         ...rule,
         value_mapping: { ...(rule.value_mapping ?? {}) },
         value_mapping_source_values: Array.isArray(rule.value_mapping_source_values) ? rule.value_mapping_source_values.map(String) : [],
