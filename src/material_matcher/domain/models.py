@@ -39,6 +39,7 @@ class FieldRule(BaseModel):
     weight: int = Field(ge=0, le=100)
     critical: bool = False
     matcher_options: dict[str, object] = Field(default_factory=dict)
+    value_mapping: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def numeric_requires_tolerance(self) -> "FieldRule":
