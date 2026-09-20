@@ -191,14 +191,14 @@ def test_100000_server_side_status_paging_search_and_select_all_contract(tmp_pat
         assert all(row["current_status"] == status for row in page_1["items"])
         assert svc.selection_count("t1", {"mode":"filter","filter":{"status":status}})["count"] == total
 
-    source_id=svc.list_items("t1",status="ALL",q="SRC-099990",page=1,page_size=50)
-    source_payload=svc.list_items("t1",status="ALL",q="material-99990",page=1,page_size=50)
-    group_code=svc.list_items("t1",status="ALL",q="G099990-1",page=1,page_size=50)
-    review_search=svc.list_items("t1",status="REVIEW",q="SRC-099990",page=1,page_size=50)
-    matched_search=svc.list_items("t1",status="MATCHED",q="SRC-099990",page=1,page_size=50)
+    source_id=svc.list_items("t1",status="ALL",q="SRC-099970",page=1,page_size=50)
+    source_payload=svc.list_items("t1",status="ALL",q="material-99970",page=1,page_size=50)
+    group_code=svc.list_items("t1",status="ALL",q="G099970-1",page=1,page_size=50)
+    review_search=svc.list_items("t1",status="REVIEW",q="SRC-099970",page=1,page_size=50)
+    matched_search=svc.list_items("t1",status="MATCHED",q="SRC-099970",page=1,page_size=50)
     for result in (source_id,source_payload,group_code,review_search):
         assert result["total"] == 1
-        assert result["items"][0]["source_row_id"] == "99990"
+        assert result["items"][0]["source_row_id"] == "99970"
     assert matched_search["total"] == 0
     assert matched_search["items"] == []
 
