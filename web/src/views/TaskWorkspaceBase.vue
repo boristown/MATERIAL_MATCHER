@@ -330,15 +330,30 @@ function enumValues(column: ColumnInfo | undefined): string[] {
       : (column.samples ?? [])
   return uniqueValueOptions(raw)
 }
+function ruleSourceColumn(rule: Rule): ColumnInfo | undefined {
+  if (sideMode(rule.source) !== 'field' || rule.source.fields.length !== 1) return undefined
+  return sourceColumns.value.find(item => item.header === rule.source.fields[0])
+}
+function ruleTargetColumn(rule: Rule): ColumnInfo | undefined {
+  if (sideMode(rule.target) !== 'field' || rule.target.fields.length !== 1) return undefined
+  return targetColumns.value.find(item => item.header === rule.target.fields[0])
+}
+function isDictionaryCandidateColumn(column: ColumnInfo | undefined): boolean {
+  const uniqueCount = Number(column?.unique_count ?? 0)
+  return column?.enum_candidate === true && uniqueCount >= 2 && uniqueCount <= 10
+}
+function ruleHasDictionaryCandidates(rule: Rule): boolean {
+  const sourceColumn = ruleSourceColumn(rule)
+  const targetColumn = ruleTargetColumn(rule)
+  return isDictionaryCandidateColumn(sourceColumn) && isDictionaryCandidateColumn(targetColumn)
+}
 function ruleSourceEnumValues(rule: Rule): string[] {
-  if (sideMode(rule.source) !== 'field' || rule.source.fields.length !== 1) return []
-  const column = sourceColumns.value.find(item => item.header === rule.source.fields[0])
-  return column?.enum_candidate === true ? enumValues(column) : []
+  if (!ruleHasDictionaryCandidates(rule)) return []
+  return enumValues(ruleSourceColumn(rule))
 }
 function ruleTargetEnumValues(rule: Rule): string[] {
-  if (sideMode(rule.target) !== 'field' || rule.target.fields.length !== 1) return []
-  const column = targetColumns.value.find(item => item.header === rule.target.fields[0])
-  return column?.enum_candidate === true ? enumValues(column) : []
+  if (!ruleHasDictionaryCandidates(rule)) return []
+  return enumValues(ruleTargetColumn(rule))
 }
 function ruleSourceValueOptions(rule: Rule): string[] {
   return uniqueValueOptions([
@@ -358,15 +373,14 @@ function ruleValueMappingVisible(rule: Rule): boolean {
   if (sideMode(rule.source) !== 'field' || sideMode(rule.target) !== 'field') return false
   if (rule.source.fields.length !== 1 || rule.target.fields.length !== 1) return false
   return isProfileEditorMode.value
-    || ruleSourceEnumValues(rule).length > 0
-    || ruleTargetEnumValues(rule).length > 0
+    || ruleHasDictionaryCandidates(rule)
     || Object.keys(rule.value_mapping ?? {}).length > 0
 }
 function valueMappingConfiguredCount(rule: Rule): number {
   return Object.keys(rule.value_mapping ?? {}).length
 }
 function valueMappingHasDetectedCandidates(rule: Rule): boolean {
-  return ruleSourceEnumValues(rule).length > 0 || ruleTargetEnumValues(rule).length > 0
+  return ruleHasDictionaryCandidates(rule)
 }
 function normalizeManualValues(values: string[]): string[] {
   return uniqueValueOptions(values)
@@ -1423,7 +1437,6 @@ onBeforeUnmount(() => {
                 >
                   <span>值映射</span>
                   <span v-if="valueMappingConfiguredCount(scope.row)" class="value-mapping-entry-status">· 已配 {{ valueMappingConfiguredCount(scope.row) }} 项</span>
-                  <span v-else-if="valueMappingHasDetectedCandidates(scope.row)" class="value-mapping-entry-status">· 有候选</span>
                 </el-button>
               </template>
               <div class="value-mapping-popover-content">
@@ -1490,8 +1503,15 @@ onBeforeUnmount(() => {
               <el-option label="智能匹配" value="semantic" :disabled="!embeddingReady"/>
             </el-select>
           </template></el-table-column>
-          <el-table-column label="权重" width="108" align="center"><template #default="scope"><el-input-number v-model="scope.row.weight" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
-          <el-table-column v-if="isProfileEditorMode" label="冲突阻断" width="82" align="center"><template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template></el-table-column>
+          <el-table-column label="权重" width="116" align="center"><template #default="scope"><el-input-number v-model="scope.row.weight" class="rule-weight-input" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
+          <el-table-column v-if="isProfileEditorMode" width="94" align="center">
+            <template #header>
+              <el-tooltip content="开启后，该字段得分为 0 时标记冲突，候选不会自动通过，将转人工确认；总相似度不会直接归零。" placement="top">
+                <span class="critical-header">冲突阻断 ⓘ</span>
+              </el-tooltip>
+            </template>
+            <template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template>
+          </el-table-column>
           <el-table-column label="" width="48" align="center"><template #default="scope"><el-button link type="danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
         </el-table>
       </div>
@@ -1918,6 +1938,14 @@ onBeforeUnmount(() => {
   color: #94a3b8;
   font-size: 10.5px;
   font-weight: 400;
+}
+.rules-table :deep(.rule-weight-input.el-input-number) {
+  width: 100%;
+  max-width: 100%;
+}
+.critical-header {
+  cursor: help;
+  white-space: nowrap;
 }
 .value-mapping-na {
   color: #cbd5e1;
