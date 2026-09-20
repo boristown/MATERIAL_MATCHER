@@ -28,6 +28,16 @@ CREATE TABLE IF NOT EXISTS task_drafts(
   config_document TEXT NOT NULL, current_step INTEGER NOT NULL,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS task_draft_targets(
+  draft_id TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  profile_version INTEGER NOT NULL,
+  catalog_version_id TEXT,
+  binding_order INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(draft_id, profile_id),
+  FOREIGN KEY(draft_id) REFERENCES task_drafts(draft_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_task_draft_targets_catalog ON task_draft_targets(catalog_version_id);
 CREATE TABLE IF NOT EXISTS tasks(
   task_id TEXT PRIMARY KEY, name TEXT NOT NULL, source_file_id TEXT NOT NULL,
   catalog_version_id TEXT NOT NULL, profile_id TEXT, profile_version INTEGER,
@@ -51,6 +61,8 @@ CREATE TABLE IF NOT EXISTS task_input_assets(
   uploaded_at TEXT,
   frozen_at TEXT NOT NULL,
   catalog_version_id TEXT,
+  profile_id TEXT,
+  profile_version INTEGER,
   PRIMARY KEY(task_id, asset_role),
   FOREIGN KEY(task_id) REFERENCES tasks(task_id),
   FOREIGN KEY(file_id) REFERENCES files(file_id)
@@ -276,6 +288,8 @@ class MetadataRepository:
             self._ensure_column(connection, "evaluation_runs", "expected_result_column", "TEXT")
             self._ensure_column(connection, "evaluation_items", "expected_result", "TEXT NOT NULL DEFAULT 'MATCH'")
             self._ensure_column(connection, "dictionary_versions", "created_by", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "task_input_assets", "profile_id", "TEXT")
+            self._ensure_column(connection, "task_input_assets", "profile_version", "INTEGER")
             connection.execute("UPDATE tasks SET status='RECOVERING' WHERE status IN ('RUNNING','PREPARING','EXPORTING')")
             connection.execute("UPDATE task_runtime SET current_phase='RECOVERING', updated_at=datetime('now') WHERE task_id IN (SELECT task_id FROM tasks WHERE status='RECOVERING')")
 
