@@ -699,7 +699,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/tasks/{task_id}/finalize")
     def finalize(task_id:str,payload:FinalizeRequest)->dict[str,object]: return matches.finalize(task_id,payload.allow_unresolved_review)
     @app.get("/api/tasks/{task_id}/exports")
-    def exports(task_id:str)->dict[str,object]: task=tasks.get_task(task_id); file_id=task.get("result_file_id"); return {"final_result":({"file_id":file_id,"download_url":f"/api/tasks/{task_id}/result"} if file_id else None),"manual_review":{"download_url":f"/api/tasks/{task_id}/manual-review.xlsx","import_url":f"/api/tasks/{task_id}/manual-review/import"}}
+    def exports(task_id:str)->dict[str,object]:
+        task=tasks.get_task(task_id); file_id=task.get("result_file_id")
+        stale=False
+        if file_id:
+            with metadata.connect() as conn:
+                stale = conn.execute("SELECT 1 FROM match_items WHERE task_id=? AND COALESCE(updated_at,created_at) > (SELECT created_at FROM files WHERE file_id=?) LIMIT 1",(task_id,str(file_id))).fetchone() is not None
+                if not stale:
+                    stale = conn.execute("SELECT 1 FROM reviews WHERE task_id=? AND created_at > (SELECT created_at FROM files WHERE file_id=?) LIMIT 1",(task_id,str(file_id))).fetchone() is not None
+        return {"final_result":({"file_id":file_id,"download_url":f"/api/tasks/{task_id}/result","stale":stale} if file_id else None),"manual_review":{"download_url":f"/api/tasks/{task_id}/manual-review.xlsx","import_url":f"/api/tasks/{task_id}/manual-review/import"}}
     @app.get("/api/tasks/{task_id}/result")
     def result_file(task_id:str):
         task=tasks.get_task(task_id); file_id=task.get("result_file_id")
