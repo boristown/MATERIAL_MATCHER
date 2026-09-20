@@ -208,7 +208,11 @@ def _resolve_layout(
     *,
     sheet_name: str | None,
     header_row: int | None,
+    row_count_estimate: int | None,
 ) -> tuple[str, int, int]:
+    if sheet_name is not None and header_row is not None and row_count_estimate is not None:
+        return sheet_name, int(header_row), int(row_count_estimate)
+
     from material_matcher.ingestion.inspector import inspect_tabular_file
 
     inspection = inspect_tabular_file(path)
@@ -230,6 +234,7 @@ def profile_tabular_columns(
     *,
     sheet_name: str | None = None,
     header_row: int | None = None,
+    row_count_estimate: int | None = None,
     scan_limit: int = DEFAULT_COLUMN_PROFILE_SCAN_LIMIT,
     top_values_limit: int = DEFAULT_TOP_VALUES_LIMIT,
 ) -> dict[str, object]:
@@ -238,10 +243,11 @@ def profile_tabular_columns(
     if top_values_limit < 1:
         raise ValueError("top_values_limit 必须大于 0")
 
-    selected_sheet, selected_header, row_count_estimate = _resolve_layout(
+    selected_sheet, selected_header, estimated_rows = _resolve_layout(
         path,
         sheet_name=sheet_name,
         header_row=header_row,
+        row_count_estimate=row_count_estimate,
     )
     suffix = path.suffix.lower()
     scanned_rows = 0
@@ -296,8 +302,8 @@ def profile_tabular_columns(
         "sheet_name": selected_sheet,
         "header_row": selected_header,
         "scanned_rows": scanned_rows,
-        "row_count_estimate": row_count_estimate,
-        "truncated": row_count_estimate > scanned_rows and scanned_rows >= scan_limit,
+        "row_count_estimate": estimated_rows,
+        "truncated": estimated_rows > scanned_rows and scanned_rows >= scan_limit,
         "columns": _finalize_columns(accumulators, top_values_limit=top_values_limit),
     }
 
@@ -320,6 +326,7 @@ def inspect_tabular_file_with_profiles(
         path,
         sheet_name=str(selected["sheet_name"]),
         header_row=int(selected.get("recommended_header_row") or 1),
+        row_count_estimate=int(selected.get("row_count_estimate") or 0),
         scan_limit=scan_limit,
     )
     by_index = {int(item["column_index"]): item for item in profile["columns"]}
