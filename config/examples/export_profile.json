@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "profile_id": "standard-business-result",
+  "display_name": "标准业务结果",
+  "filename_prefix": "物料集团码匹配结果",
+  "candidate_top_n": 5,
+  "sheets": {
+    "summary": "匹配摘要",
+    "final_result": "最终匹配结果",
+    "top_candidates": "Top5候选",
+    "audit": "人工操作记录",
+    "unmatched": "未匹配清单"
+  },
+  "groups": {
+    "source": "源数据区",
+    "result": "匹配结果区",
+    "target": "目标数据区",
+    "candidate_result": "候选结果区",
+    "audit_source": "源数据",
+    "audit_action": "人工操作",
+    "unmatched_reference": "参考信息"
+  },
+  "headers": {
+    "source_row_number": "源表原始行号",
+    "source_material_code": "源物料编码",
+    "status": "匹配状态",
+    "final_group_code": "最终集团码",
+    "similarity": "相似度",
+    "match_method": "匹配方式",
+    "operator": "操作账号",
+    "match_time": "匹配日期时间",
+    "target_row_number": "目标表原始行号",
+    "candidate_rank": "候选排名",
+    "group_code": "集团码",
+    "action": "操作",
+    "comment": "备注",
+    "action_time": "操作时间",
+    "unmatched_status": "状态",
+    "first_target_row": "第一候选目标行",
+    "first_group_code": "第一候选集团码",
+    "first_similarity": "第一候选相似度",
+    "last_operator": "最后操作账号",
+    "last_action_time": "最后操作时间"
+  },
+  "labels": {
+    "summary_title": "匹配结果摘要",
+    "legend_title": "字段颜色说明",
+    "summary": {
+      "scheme_name": "方案名称",
+      "source_total": "源数据总数",
+      "automatic_matches": "自动匹配数",
+      "manual_matches": "人工匹配数",
+      "unmatched_count": "未匹配数",
+      "pending_count": "待处理数",
+      "started_by": "启动账号",
+      "started_at": "任务开始时间",
+      "compute_duration": "自动计算耗时",
+      "compute_completed_at": "自动计算完成时间",
+      "generated_at": "结果生成时间",
+      "source_file": "源文件",
+      "target_file": "目标集团码文件",
+      "pending_records": "待处理记录"
+    },
+    "legend": {
+      "exact": "完全一致",
+      "partial": "部分相似",
+      "different": "不一致",
+      "missing": "无数据"
+    },
+    "status": {
+      "MATCHED": "自动匹配",
+      "CONFIRMED": "人工匹配",
+      "REVIEW": "待处理",
+      "UNMATCHED": "未匹配"
+    },
+    "method": {
+      "MATCHED": "自动匹配",
+      "CONFIRMED": "人工匹配",
+      "REVIEW": "待人工处理",
+      "UNMATCHED_REVIEWED": "人工标记未匹配",
+      "UNMATCHED": "自动判定未匹配"
+    },
+    "actions": {
+      "CONFIRM_CANDIDATE": "匹配",
+      "MATCH": "匹配",
+      "BATCH_CONFIRM_TOP1": "匹配",
+      "CANCEL_MATCH": "取消匹配",
+      "CANCEL": "取消匹配",
+      "UNMATCH": "取消匹配",
+      "REMATCH": "重新匹配",
+      "RE_MATCH": "重新匹配",
+      "REJECT_ALL": "标记未匹配",
+      "MARK_UNMATCHED": "标记未匹配",
+      "BATCH_REJECT": "标记未匹配",
+      "manual_adjust": "人工调整"
+    }
+  },
+  "style": {
+    "header_fill": "1F4E78",
+    "header_font_color": "FFFFFF",
+    "group_source_fill": "D9EAF7",
+    "group_result_fill": "DDEBF7",
+    "group_target_fill": "E2F0D9",
+    "group_audit_fill": "FFF2CC",
+    "group_font_color": "1F2937",
+    "exact_fill": "E2F0D9",
+    "partial_fill": "FFF2CC",
+    "different_fill": "FCE4D6",
+    "missing_fill": "E7E6E6",
+    "summary_title_color": "1F4E78",
+    "summary_key_color": "475569",
+    "summary_key_fill": "F3F6FA",
+    "border_color": "D9E2F3",
+    "status_fill": {
+      "MATCHED": "E2F0D9",
+      "CONFIRMED": "DDEBF7",
+      "REVIEW": "FFF2CC",
+      "UNMATCHED": "E7E6E6"
+    },
+    "date_format": "yyyy-mm-dd hh:mm:ss",
+    "freeze_panes": "A3",
+    "group_header_height": 22,
+    "column_header_height": 34,
+    "max_column_width": 38,
+    "summary_column_widths": {
+      "A": 22,
+      "B": 34,
+      "C": 22,
+      "D": 34
+    }
+  }
+}
