@@ -540,8 +540,10 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   return {
     ...base,
     source_id_column: sourceIdColumn.value || null,
-    scope_mode: scopeMode.value,
-    scope: { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
+    scope_mode: isCompositeProfile.value ? 'GLOBAL' : scopeMode.value,
+    scope: isCompositeProfile.value
+      ? { ...baseScope, source_field: null, target_field: null }
+      : { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
     source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: 'exact' } : null,
     rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
     decision: {
@@ -1068,7 +1070,7 @@ onBeforeUnmount(() => {
     <div class="toolbar workspace-toolbar">
       <div>
         <h2>{{ stage === 0 ? '第一步 · 数据上传' : stage === 1 ? '第二步 · 进度监控' : stage === 2 ? '第三步 · 人工调整' : '第四步 · 输出结果' }}</h2>
-        <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；这里只维护字段映射、匹配规则和默认参数，不会启动匹配。</p>
+        <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；{{ isCompositeProfile ? '这里只维护源数据条件、阈值和子方案集合，不重复维护子方案字段规则。' : '这里只维护字段映射、匹配规则和默认参数，不会启动匹配。' }}</p>
         <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；{{ isCompositeProfile ? '上传一份 SAP 源文件与各子方案对应的集团文件，并确认文件对应关系。' : '上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。' }}</p>
         <p v-else-if="stage === 0"><b>数据上传与匹配设置</b>：上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始匹配</p>
         <p v-else><b>{{ task?.scheme_name || profileTaskMeta?.name || '未命名方案' }}</b> · {{ stage === 1 ? '匹配计算进行中，进度与中间结果实时更新。' : stage === 2 ? '集中处理需要人工确认的记录。' : '确认无误后生成并下载最终结果 Excel。' }}</p>
@@ -1111,7 +1113,7 @@ onBeforeUnmount(() => {
           <div><span>{{ isCompositeProfile ? '子方案' : '字段规则' }}</span><b>{{ isCompositeProfile ? compositeChildren.length + ' 个' : rules.length + ' 条' }}</b></div>
           <div><span>自动匹配阈值</span><b>{{ successThreshold }} 分</b></div>
           <div><span>人工确认下限</span><b>{{ reviewThreshold }} 分</b></div>
-          <div><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
+          <div v-if="!isCompositeProfile"><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
           <div class="wide"><span>源数据过滤</span><b>{{ profileFilterSummary }}</b></div>
         </div>
         <el-alert type="info" :closable="false" title="这是本次匹配的初始配置；后续调整只作用于本次匹配，不会修改已发布方案。"/>
@@ -1232,7 +1234,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="panel">
-        <h3>{{ isProfileEditorMode ? '过滤、匹配范围与阈值' : '③ 匹配设置' }}</h3>
+        <h3>{{ isProfileEditorMode ? (isCompositeProfile ? '源数据过滤与匹配阈值' : '过滤、匹配范围与阈值') : '③ 匹配设置' }}</h3>
         <div class="filter-row">
           <el-switch v-model="filterEnabled"/><span>仅处理满足条件的源数据行</span>
           <template v-if="filterEnabled">
