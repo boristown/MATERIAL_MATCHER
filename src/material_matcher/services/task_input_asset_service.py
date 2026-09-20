@@ -11,7 +11,7 @@ from material_matcher.storage.metadata import MetadataRepository
 
 AssetRole = str
 _UNAVAILABLE_MESSAGE = "该历史任务的原始文件已无法确认"
-_UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\\x00-\\x1f]+')
+_UNSAFE_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _MEDIA_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
