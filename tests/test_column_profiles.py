@@ -92,6 +92,20 @@ def test_profile_requires_repeated_evidence_for_tiny_enum_samples(tmp_path: Path
     assert repeated_profile["columns"][0]["enum_candidate"] is True
 
 
+def test_profile_rejects_more_than_ten_dictionary_values(tmp_path: Path) -> None:
+    path = tmp_path / "too-many-enum-values.csv"
+    rows = ["类型"]
+    for _ in range(5):
+        rows.extend(f"V{index:02d}" for index in range(1, 12))
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    profile = profile_tabular_columns(path)
+    column = profile["columns"][0]
+
+    assert column["unique_count"] == 11
+    assert column["enum_candidate"] is False
+
+
 def test_profile_preserves_leading_zero_codes_as_text(tmp_path: Path) -> None:
     path = tmp_path / "codes.csv"
     path.write_text("编码\n001\n002\n003\n", encoding="utf-8")

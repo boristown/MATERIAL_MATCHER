@@ -12,3 +12,41 @@ def test_best_of_supports_many_to_many():
     config=MatchingConfig.model_validate({'rules':[{'id':'model','source':{'fields':['a','b'],'combine':'best_of'},'target':{'fields':['x','y'],'combine':'best_of'},'matcher':'exact','weight':100}]})
     score=score_candidate({'a':'A','b':'B'},{'x':'C','y':'B'},config)
     assert score.display_score==100
+
+
+def test_critical_conflict_blocks_auto_match_without_zeroing_total_score():
+    config = MatchingConfig.model_validate({
+        'rules': [
+            {
+                'id': 'name',
+                'source': {'fields': ['source_name']},
+                'target': {'fields': ['target_name']},
+                'matcher': 'exact',
+                'weight': 90,
+            },
+            {
+                'id': 'origin',
+                'source': {'fields': ['source_origin']},
+                'target': {'fields': ['target_origin']},
+                'matcher': 'exact',
+                'weight': 10,
+                'critical': True,
+            },
+        ],
+        'decision': {
+            'success_threshold': 80,
+            'review_enabled': True,
+            'review_threshold': 0,
+            'top_n': 5,
+        },
+    })
+
+    score = score_candidate(
+        {'source_name': '继电器', 'source_origin': '国产'},
+        {'target_name': '继电器', 'target_origin': '进口'},
+        config,
+    )
+
+    assert score.display_score == 90
+    assert score.critical_conflict is True
+    assert score.auto_match_safe is False
