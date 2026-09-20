@@ -18,6 +18,7 @@ import {
 } from '../compositeProfile'
 import { setActiveWorkspaceStep, type WorkspaceStep } from '../workspaceStage'
 import { formatDurationMs, formatTimePoint } from '../taskTime'
+import { selectOneToOneAutoMapPairs } from '../utils/autoMap'
 
 type FileRecord = { file_id: string; original_name: string; sha256?: string; role?: string }
 type ColumnInfo = { header: string; business_hint?: string | null; datatype?: string | null; unique_count?: number | null; samples?: string[]; sample_values?: unknown[]; top_values?: unknown[]; enum_candidate?: boolean }
@@ -231,35 +232,6 @@ function normalizeWeights(): void {
   }
 }
 
-function normalizeAutoMapHeader(value: string): string {
-  return String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/^(清洗后|清洗前|标准化后|标准化|源侧|目标侧|源|目标)/, '')
-    .replace(/[\s_\-—–/（）()【】\[\]:：]+/g, '')
-}
-
-function autoMapPairScore(sourceColumn: ColumnInfo, targetColumn: ColumnInfo): number {
-  const sourceHeader = normalizeAutoMapHeader(sourceColumn.header)
-  const targetHeader = normalizeAutoMapHeader(targetColumn.header)
-  if (!sourceHeader || !targetHeader) return 0
-
-  let score = 0
-  if (sourceHeader === targetHeader) {
-    score = 100
-  } else if (sourceHeader.includes(targetHeader) || targetHeader.includes(sourceHeader)) {
-    const shorter = Math.min(sourceHeader.length, targetHeader.length)
-    const longer = Math.max(sourceHeader.length, targetHeader.length)
-    score = 20 + (shorter / Math.max(longer, 1)) * 70
-  }
-
-  if (sourceColumn.business_hint && sourceColumn.business_hint === targetColumn.business_hint) {
-    score += 20
-  }
-
-  return score
-}
-
 function autoMapRuleDefaults(sourceColumn: ColumnInfo, targetColumn: ColumnInfo): { matcher: string; weight: number } {
   const hint = sourceColumn.business_hint === targetColumn.business_hint ? sourceColumn.business_hint : null
   if (hint === 'material_name') return { matcher: 'semantic', weight: 40 }
@@ -273,38 +245,23 @@ function autoMapRuleDefaults(sourceColumn: ColumnInfo, targetColumn: ColumnInfo)
 function autoMap(): void {
   const sourceCandidates = sourceColumns.value.filter(column => column.header !== sourceIdColumn.value)
   const targetCandidates = targetColumns.value.filter(column => column.header !== groupCodeColumn.value)
+  const selectedPairs = selectOneToOneAutoMapPairs(sourceCandidates, targetCandidates)
 
-  const scoredPairs = sourceCandidates
-    .flatMap(sourceColumn => targetCandidates.map(targetColumn => ({
-      sourceColumn,
-      targetColumn,
-      score: autoMapPairScore(sourceColumn, targetColumn),
-    })))
-    .filter(item => item.score >= 55)
-    .sort((left, right) =>
-      right.score - left.score
-      || sourceCandidates.indexOf(left.sourceColumn) - sourceCandidates.indexOf(right.sourceColumn)
-      || targetCandidates.indexOf(left.targetColumn) - targetCandidates.indexOf(right.targetColumn),
-    )
-
-  const usedSources = new Set<string>()
-  const usedTargets = new Set<string>()
-  const out: Rule[] = []
-  for (const item of scoredPairs) {
-    if (usedSources.has(item.sourceColumn.header) || usedTargets.has(item.targetColumn.header)) continue
+  const out = selectedPairs.map(item => {
     const defaults = autoMapRuleDefaults(item.sourceColumn, item.targetColumn)
-    out.push(makeRule([item.sourceColumn.header], [item.targetColumn.header], defaults.matcher, defaults.weight))
-    usedSources.add(item.sourceColumn.header)
-    usedTargets.add(item.targetColumn.header)
-  }
+    return makeRule([item.sourceColumn.header], [item.targetColumn.header], defaults.matcher, defaults.weight)
+  })
 
-  if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
   rules.value = out
   normalizeWeights()
   pendingSource.value = null
-  ElMessage.success(`已自动生成 ${out.length} 条一对一字段映射；多字段组合请按需手工添加`)
-}
 
+  if (out.length) {
+    ElMessage.success(`已自动生成 ${out.length} 条高置信一对一字段映射；多字段组合映射可按需人工添加`)
+  } else {
+    ElMessage.info('未发现足够明确的一对一字段映射，请人工连线确认')
+  }
+}
 function defaultRule(): Rule {
   const sField = sourceColumns.value.find(column => column.header !== sourceIdColumn.value)?.header ?? srcHeaders.value[0] ?? ''
   const tField = targetColumns.value.find(column => column.header !== groupCodeColumn.value)?.header ?? tgtHeaders.value[0] ?? ''
@@ -1437,8 +1394,8 @@ onBeforeUnmount(() => {
         <div v-if="!isCompositeProfile" class="section-head">
           <div>
             <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
-            <p v-if="!isProfileEditorMode" class="section-note">系统自动推荐只生成一对一字段映射；点击左侧字段再点击右侧字段可快速连线。多对一 / 一对多等组合映射作为扩展能力，需要时可在下方规则中手工配置。</p>
-            <p v-else class="section-note">建议先上传两份模板自动识别字段。自动推荐只生成一对一字段映射；多字段组合映射可按需手工添加。每一侧都可以选择 Excel 字段或固定值；下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
+            <p v-if="!isProfileEditorMode" class="section-note">自动推荐仅生成一对一字段映射。多字段组合映射可按需人工添加。点击左侧字段再点击右侧字段可快速连线，也可以直接拖拽建立连线。</p>
+            <p v-else class="section-note">建议先上传两份模板自动识别字段。自动推荐仅生成一对一字段映射。多字段组合映射可按需人工添加。每一侧都可以选择 Excel 字段或固定值；固定值参与字段匹配规则，下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
           </div>
           <div>
             <template v-if="isProfileEditorMode">
