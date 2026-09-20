@@ -1311,7 +1311,7 @@ onBeforeUnmount(() => {
       <div class="panel">
         <h3>{{ isProfileEditorMode ? '过滤、匹配范围与阈值' : '③ 匹配设置' }}</h3>
         <div class="filter-row">
-          <el-switch v-model="filterEnabled"/><span>仅处理满足条件的源数据行</span>
+          <el-switch v-model="filterEnabled"/><span>按条件筛选本方案处理的源数据行</span>
           <template v-if="filterEnabled">
             <el-select v-model="filterField" placeholder="字段" style="width:180px" filterable :allow-create="isProfileEditorMode && !sourceColumns.length" default-first-option>
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
