@@ -56,6 +56,7 @@ type FileRecord = {
 type ExportInfo = {
   file_id?: string | null
   download_url: string
+  stale?: boolean
 }
 
 type ExportBundle = Record<string, unknown> & {
@@ -649,7 +650,8 @@ onMounted(load)
             <div class="result-download-primary">
               <div class="result-download-actions">
                 <el-button size="large" @click="router.push('/review')">← 人工调整</el-button>
-                <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport" @click="downloadExport(finalExport, 'final', '该方案尚未生成可下载的最终匹配结果')">
+                <el-alert v-if="finalExport?.stale" type="warning" :closable="false" show-icon title="定稿后又发生了人工调整，当前结果文件尚未更新" description="请回到匹配详情重新生成最终结果后再下载，避免使用过期版本。" style="margin-bottom: 8px" />
+                <el-button type="primary" size="large" :loading="downloadingExportKey === 'final'" :disabled="!finalExport || finalExport?.stale" @click="downloadExport(finalExport, 'final', '该方案尚未生成可下载的最终匹配结果')">
                   下载结果 Excel
                 </el-button>
               </div>

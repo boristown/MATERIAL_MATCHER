@@ -17,6 +17,12 @@ class VersionedResultService:
         self.exporter = ResultExportService(metadata, files, settings)
         self.calibration = DecisionCalibrationService(metadata)
 
+    def is_result_stale(self, task_id: str) -> bool:
+        with self.meta.connect() as connection:
+            row = connection.execute("SELECT result_file_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        file_id = str(row[0]) if row is not None and row[0] else ""
+        return bool(file_id) and self._has_newer_manual_activity(task_id, file_id)
+
     def _has_newer_manual_activity(self, task_id: str, result_file_id: str) -> bool:
         """定稿之后又发生人工确认/导入（复核状态或人工记录被更新）时，旧结果快照视为过期。"""
         with self.meta.connect() as connection:
