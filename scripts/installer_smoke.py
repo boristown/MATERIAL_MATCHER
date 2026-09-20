@@ -287,11 +287,24 @@ def main() -> int:
             children = (profile_document.get("advanced") or {}).get("composite_children") or []
             present = all(any(str(p.get("profile_id")) == str(c.get("profile_id")) for p in profile_rows) for c in children)
             check("A007 预置为跨类目组合方案（子方案齐备）", len(children) >= 2 and present, f"children={len(children)}")
-            flat = next((p for p in profile_rows if not str(p.get("name", "")).startswith("A007")), None)
-            if flat is not None:
-                code, flat_detail = api.json("GET", f"/api/profiles/{flat['profile_id']}")
-                profile_document = ((flat_detail or {}).get("latest_published") or {}).get("document")
-        if code == 200 and isinstance(profile_document, dict) and profile_document.get("rules"):
+            child_by_id = {str(p.get("profile_id")): p for p in profile_rows}
+            for child in children:
+                ref = child_by_id.get(str(child.get("profile_id")))
+                if ref is None:
+                    continue
+                code, child_detail = api.json("GET", f"/api/profiles/{ref['profile_id']}")
+                child_doc = ((child_detail or {}).get("latest_published") or {}).get("document")
+                if not (isinstance(child_doc, dict) and child_doc.get("rules")):
+                    continue
+                trial = _copy.deepcopy(child_doc)
+                trial["source_id_column"] = "物料编码"
+                trial_advanced = dict(trial.get("advanced") or {})
+                trial_advanced["workspace_target"] = {"file_id": target_file_id, "group_code_column": "集团码"}
+                trial["advanced"] = trial_advanced
+                profile_task_ok, task_id, task = run_task_with(trial, f"child:{str(ref.get('name', ''))[:12]}")
+                if profile_task_ok:
+                    break
+        elif code == 200 and isinstance(profile_document, dict) and profile_document.get("rules"):
             profile_config = _copy.deepcopy(profile_document)
             profile_config["source_id_column"] = "物料编码"
             advanced = dict(profile_config.get("advanced") or {})
