@@ -395,35 +395,79 @@ class MatchService:
                 )
             config = MatchingConfig.model_validate(json.loads(str(task["config_snapshot"])))
             source = self.files.get(str(task["source_file_id"]))
-            catalog = self._catalog(str(task["catalog_version_id"]))
-            target = self.files.get(str(catalog["source_file_id"]))
             with self.meta.connect() as connection:
                 connection.execute("DELETE FROM match_candidates WHERE task_id=?", (task_id,))
                 connection.execute("DELETE FROM match_items WHERE task_id=?", (task_id,))
                 connection.execute("UPDATE tasks SET status='RUNNING', progress=2, processed_rows=0, total_rows=0 WHERE task_id=?", (task_id,))
-            vector_mode = self._use_vector(config, Path(str(target["stored_path"])))
-            execution_mode = "vector" if vector_mode else "scan"
-            self._set_runtime(task_id, execution_mode, "INDEX" if vector_mode else "RETRIEVE")
 
-            def index_progress(done: int, total: int) -> None:
-                pct = 3.0 + 27.0 * (done / max(total, 1)); self.observe_progress(task_id, "index", done, total)
-                with self.meta.connect() as connection: connection.execute("UPDATE tasks SET progress=? WHERE task_id=?", (min(30.0, pct), task_id))
-
-            def progress(done: int, total: int) -> None:
-                self.observe_progress(task_id, "query", done, total)
-                if done == 1: self._set_runtime(task_id, execution_mode, "RERANK")
-                base = 32.0 if vector_mode else 5.0; span = 63.0 if vector_mode else 90.0; pct = base + span * (done / max(total, 1))
-                with self.meta.connect() as connection: connection.execute("UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?", (done, total, min(95.0, pct), task_id))
-
-            def index_ready(index_id: str) -> None: self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
             persisted = [0]
+            if self._is_composite(config):
+                execution_mode = "composite"
+                self._set_runtime(task_id, execution_mode, "RETRIEVE")
 
-            def persist_batch(batch: list[RowResult]) -> None:
-                self._persist_rows(task_id, batch); persisted[0] += len(batch)
+                def composite_progress(child_index: int, child_count: int, done: int, total: int) -> None:
+                    fraction = (child_index + (done / max(total, 1))) / max(child_count, 1)
+                    pct = 5.0 + 90.0 * fraction
+                    self.observe_progress(task_id, "query", int(fraction * max(total, 1) * child_count), max(total, 1) * child_count)
+                    if done == 1:
+                        self._set_runtime(task_id, execution_mode, "RERANK")
+                    with self.meta.connect() as connection:
+                        connection.execute(
+                            "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
+                            (done, total, min(95.0, pct), task_id),
+                        )
 
-            rows = self._run_rows(source=source, target=target, catalog=catalog, config=config, on_progress=progress, on_index_progress=index_progress, on_index_ready=index_ready if vector_mode else None, on_batch=persist_batch)
+                rows = self._run_composite_rows(
+                    source=source,
+                    parent_config=config,
+                    on_progress=composite_progress,
+                )
+            else:
+                catalog = self._catalog(str(task["catalog_version_id"]))
+                target = self.files.get(str(catalog["source_file_id"]))
+                vector_mode = self._use_vector(config, Path(str(target["stored_path"])))
+                execution_mode = "vector" if vector_mode else "scan"
+                self._set_runtime(task_id, execution_mode, "INDEX" if vector_mode else "RETRIEVE")
+
+                def index_progress(done: int, total: int) -> None:
+                    pct = 3.0 + 27.0 * (done / max(total, 1)); self.observe_progress(task_id, "index", done, total)
+                    with self.meta.connect() as connection:
+                        connection.execute("UPDATE tasks SET progress=? WHERE task_id=?", (min(30.0, pct), task_id))
+
+                def progress(done: int, total: int) -> None:
+                    self.observe_progress(task_id, "query", done, total)
+                    if done == 1:
+                        self._set_runtime(task_id, execution_mode, "RERANK")
+                    base = 32.0 if vector_mode else 5.0
+                    span = 63.0 if vector_mode else 90.0
+                    pct = base + span * (done / max(total, 1))
+                    with self.meta.connect() as connection:
+                        connection.execute(
+                            "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
+                            (done, total, min(95.0, pct), task_id),
+                        )
+
+                def index_ready(index_id: str) -> None:
+                    self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
+
+                def persist_batch(batch: list[RowResult]) -> None:
+                    self._persist_rows(task_id, batch)
+                    persisted[0] += len(batch)
+
+                rows = self._run_rows(
+                    source=source,
+                    target=target,
+                    catalog=catalog,
+                    config=config,
+                    on_progress=progress,
+                    on_index_progress=index_progress,
+                    on_index_ready=index_ready if vector_mode else None,
+                    on_batch=persist_batch,
+                )
+
             self._set_runtime(task_id, execution_mode, "PERSIST")
-            if persisted[0] < len(rows): self._persist_rows(task_id, rows[persisted[0]:])
+            if persisted[0] < len(rows):
+                self._persist_rows(task_id, rows[persisted[0]:])
             with self.meta.connect() as connection:
                 review_count = connection.execute("SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'", (task_id,)).fetchone()[0]
                 stage = "REVIEW" if review_count else "RESULT"
