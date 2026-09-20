@@ -59,6 +59,8 @@
 | 程序 | Docker 方式在容器内；Native 方式在 `/opt/material_matcher/releases/<版本>/`（current 软链） |
 | 导出模板后台配置 | `/etc/material_matcher/export_profile.json`（可选；不存在则用内置标准模板；修改后重启服务生效） |
 | 定时备份 | `./bk.sh enable [HH:MM]`，保留 14 份 |
+| 上传去重 | 内容(SHA-256)与大小完全相同的文件只存一份，重复上传自动引用原文件，不占额外空间 |
+| 磁盘清理 | 介质目录 `./clean.sh` 预演、`./clean.sh --apply` 回收（孤立文件移入 .trash，不物理删除） |
 
 ## 7. 现场改代码指引（工程师）
 

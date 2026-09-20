@@ -96,7 +96,7 @@ def test_verify_requires_final_media_entries() -> None:
 
 def test_builder_plan_covers_manual_layout() -> None:
     text = read(REPO / "scripts/build_offline_bundle.py")
-    for target in ("run.sh", "menu.sh", "doc.md", "README.md", "rst.sh", "stop.sh", "del.sh", "bk.sh", "安装物料集团码智能匹配平台.desktop", "docs/doc.md", "docs/ops.md", "docs/faq.md", "use.md", "docs/use.md"):
+    for target in ("run.sh", "menu.sh", "doc.md", "README.md", "rst.sh", "stop.sh", "del.sh", "bk.sh", "clean.sh", "安装物料集团码智能匹配平台.desktop", "docs/doc.md", "docs/ops.md", "docs/faq.md", "use.md", "docs/use.md"):
         assert target in text
     # 根目录不出现开发仓库噪音：builder 只复制计划内文件。
     assert "git clone" not in text
