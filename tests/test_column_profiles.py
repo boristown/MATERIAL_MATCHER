@@ -51,6 +51,47 @@ def test_profile_tabular_columns_detects_generic_enum_candidate(tmp_path: Path) 
     assert by_name["物料名称"]["enum_candidate"] is False
 
 
+def test_profile_does_not_flag_constant_or_sparse_descriptive_columns_as_enum(tmp_path: Path) -> None:
+    path = tmp_path / "descriptive.csv"
+    path.write_text(
+        "特殊说明,型号\n"
+        "无,M1\n"
+        "无,M1\n"
+        "无,M2\n"
+        "无,M3\n"
+        "无,M4\n"
+        "无,M5\n"
+        "无,M5\n"
+        "无,M5\n",
+        encoding="utf-8",
+    )
+
+    profile = profile_tabular_columns(path)
+    by_name = {item["field_name"]: item for item in profile["columns"]}
+
+    # A constant column carries no useful mapping choice and should not surface
+    # as an enum candidate in STEP1.
+    assert by_name["特殊说明"]["unique_count"] == 1
+    assert by_name["特殊说明"]["enum_candidate"] is False
+
+    # Five values across only eight rows is weak evidence and previously caused
+    # fields such as model/specification to show a misleading "candidate" hint.
+    assert by_name["型号"]["unique_count"] == 5
+    assert by_name["型号"]["enum_candidate"] is False
+
+
+def test_profile_requires_repeated_evidence_for_tiny_enum_samples(tmp_path: Path) -> None:
+    sparse = tmp_path / "sparse.csv"
+    sparse.write_text("类型\n10\n11\n", encoding="utf-8")
+    sparse_profile = profile_tabular_columns(sparse)
+    assert sparse_profile["columns"][0]["enum_candidate"] is False
+
+    repeated = tmp_path / "repeated.csv"
+    repeated.write_text("类型\n10\n11\n10\n11\n", encoding="utf-8")
+    repeated_profile = profile_tabular_columns(repeated)
+    assert repeated_profile["columns"][0]["enum_candidate"] is True
+
+
 def test_profile_preserves_leading_zero_codes_as_text(tmp_path: Path) -> None:
     path = tmp_path / "codes.csv"
     path.write_text("编码\n001\n002\n003\n", encoding="utf-8")
