@@ -549,6 +549,20 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules) ? cloneDocument(value.rules) : []
+  const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
+  profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
+  compositeChildren.value = Array.isArray(advancedDocument.composite_children)
+    ? advancedDocument.composite_children.map((item: any) => ({
+        profile_id: String(item.profile_id ?? ''),
+        version_no: Number(item.version_no ?? 0),
+        name: String(item.name ?? ''),
+        source_fields: Array.isArray(item.source_fields) ? item.source_fields.map(String) : [],
+        target_fields: Array.isArray(item.target_fields) ? item.target_fields.map(String) : [],
+        group_code_field: String(item.group_code_field ?? ''),
+      })).filter((item: CompositeChild) => item.profile_id && item.version_no > 0)
+    : []
+  compositeChildIds.value = compositeChildren.value.map(item => item.profile_id)
+  compositeRunEntries.value = Array.isArray(advancedDocument.composite_run) ? cloneDocument(advancedDocument.composite_run) : []
   if (isProfileEditorMode.value) {
     const templateSchema = value.advanced?.template_schema
     const rememberedSourceFields = Array.isArray(templateSchema?.source_fields) ? templateSchema.source_fields.map(String) : []
@@ -589,14 +603,30 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
   const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
   delete baseAdvanced.workspace_target
-  if (isProfileEditorMode.value && (srcHeaders.value.length || tgtHeaders.value.length)) {
+  delete baseAdvanced.composite_run
+  baseAdvanced.profile_kind = profileKind.value
+  if (isCompositeProfile.value) {
+    baseAdvanced.composite_children = compositeChildren.value.map(item => ({
+      profile_id: item.profile_id,
+      version_no: item.version_no,
+      name: item.name,
+      source_fields: [...item.source_fields],
+      target_fields: [...item.target_fields],
+      group_code_field: item.group_code_field || null,
+    }))
+  } else {
+    delete baseAdvanced.composite_children
+  }
+  if (isProfileEditorMode.value && (srcHeaders.value.length || (!isCompositeProfile.value && tgtHeaders.value.length))) {
     baseAdvanced.template_schema = {
       source_fields: [...srcHeaders.value],
-      target_fields: [...tgtHeaders.value],
-      group_code_field: groupCodeColumn.value || null,
+      target_fields: isCompositeProfile.value ? [] : [...tgtHeaders.value],
+      group_code_field: isCompositeProfile.value ? null : (groupCodeColumn.value || null),
     }
   }
-  if (includeWorkspaceTarget && target.value) {
+  if (includeWorkspaceTarget && isCompositeProfile.value && compositeRunEntries.value.length) {
+    baseAdvanced.composite_run = cloneDocument(compositeRunEntries.value)
+  } else if (includeWorkspaceTarget && target.value) {
     baseAdvanced.workspace_target = {
       file_id: target.value.file_id,
       group_code_column: groupCodeColumn.value || null,
@@ -614,7 +644,7 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     scope_mode: scopeMode.value,
     scope: { ...baseScope, source_field: scopeSourceField.value || null, target_field: scopeTargetField.value || null },
     source_filter: filterEnabled.value && filterField.value && filterValues.value.length ? { field: filterField.value, values: filterValues.value, mode: filterMode.value, match: 'exact' } : null,
-    rules: cloneDocument(rules.value),
+    rules: isCompositeProfile.value ? [] : cloneDocument(rules.value),
     decision: {
       ...baseDecision,
       success_threshold: successThreshold.value,
@@ -626,7 +656,24 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
     advanced: baseAdvanced,
   }
 }
-const configValid = computed(() => Boolean(source.value) && Boolean(sourceIdColumn.value) && Boolean(target.value && groupCodeColumn.value) && rules.value.length > 0 && reviewThreshold.value < successThreshold.value)
+function sideReady(side: FieldSide): boolean {
+  return side.fixed_value !== null && side.fixed_value !== undefined
+    ? String(side.fixed_value).trim().length > 0
+    : side.fields.length > 0
+}
+const configValid = computed(() => {
+  if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
+  if (isCompositeProfile.value) {
+    return compositeChildren.value.length >= 2
+      && compositeChildren.value.every(child => {
+        const assignment = compositeAssignments.value[child.profile_id]
+        return Boolean(assignment?.file_id && assignment?.group_code_column)
+      })
+  }
+  return Boolean(target.value && groupCodeColumn.value)
+    && rules.value.length > 0
+    && rules.value.every(rule => sideReady(rule.source) && sideReady(rule.target))
+})
 
 async function persistProfileDraft(showMessage = true): Promise<string | null> {
   const profileName = name.value.trim()
