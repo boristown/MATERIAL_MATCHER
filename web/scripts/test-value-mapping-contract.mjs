@@ -29,10 +29,10 @@ for (const token of [
 if (workspace.includes('rule.value_mapping[sourceValue] = ruleTargetEnumValues(rule)[0]')) {
   throw new Error('value mapping must never auto-select a target value')
 }
-if (!workspace.includes('if (targetValue) rule.value_mapping[sourceValue] = targetValue')) {
+if (!workspace.includes('rule.value_mapping[source] = target')) {
   throw new Error('manual mapping setter missing')
 }
-if (!workspace.includes('else delete rule.value_mapping[sourceValue]')) {
+if (!workspace.includes('delete rule.value_mapping[source]')) {
   throw new Error('mapping must be clearable')
 }
 if (!workspace.includes('return isProfileEditorMode.value')) {
