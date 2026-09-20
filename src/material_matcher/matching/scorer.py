@@ -314,12 +314,13 @@ def score_candidate(
     raw = weighted / compared_weight if compared_weight else 0.0
     coverage = compared_weight / configured_weight if configured_weight else 0.0
     minimum_fields, minimum_coverage = _matching_safety(config)
-    safe = len(scores) >= minimum_fields and coverage >= minimum_coverage
+    critical_conflict = any(item.conflict for item in scores)
+    safe = len(scores) >= minimum_fields and coverage >= minimum_coverage and not critical_conflict
     return CandidateScore(
         raw,
         round(raw * 100.0, 4),
         scores,
-        any(item.conflict for item in scores),
+        critical_conflict,
         len(scores),
         compared_weight,
         configured_weight,
