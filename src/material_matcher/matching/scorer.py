@@ -244,13 +244,22 @@ def score_field_rule(
     conflict = bool(rule.critical and best_score <= 0.0)
     mapping = {str(key): str(value) for key, value in rule.value_mapping.items()}
     before_texts = [value.text or "" for value in source_values_before_mapping]
+
+    def mapping_key(value: ProcessedValue) -> str | None:
+        text = value.text or ""
+        if text in mapping:
+            return text
+        raw = "" if value.raw_value is None else str(value.raw_value)
+        return raw if raw in mapping else None
+
     unconfigured = tuple(
-        text for text in before_texts
-        if mapping and text and text not in mapping
+        value.text or ""
+        for value in source_values_before_mapping
+        if mapping and value.text not in {None, ""} and mapping_key(value) is None
     )
     mapping_applied = bool(mapping) and any(
-        text in mapping and mapping[text] != text
-        for text in before_texts
+        (key := mapping_key(value)) is not None and mapping[key] != (value.text or "")
+        for value in source_values_before_mapping
     )
     return FieldScore(
         rule_id=rule.id,
