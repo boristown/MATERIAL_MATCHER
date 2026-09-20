@@ -21,12 +21,15 @@ if (!workspace.includes('adaptRulesToApi(rules.value)')) throw new Error('busine
 if (!workspace.includes('setBusinessMatchMode(rule, value)')) throw new Error('explicit matcher changes must update API matcher state')
 
 for (const expected of [
-  "['material_name', 'material_name', 'semantic', 40]",
-  "['model', 'model', 'semantic', 25]",
-  "['specification', 'specification', 'semantic', 15]",
-  "['manufacturer', 'manufacturer', 'semantic', 10]",
+  "if (hint === 'material_name') return { matcher: 'semantic', weight: 40 }",
+  "if (hint === 'model') return { matcher: 'semantic', weight: 25 }",
+  "if (hint === 'specification') return { matcher: 'semantic', weight: 15 }",
+  "if (hint === 'manufacturer') return { matcher: 'semantic', weight: 10 }",
 ]) {
-  if (!workspace.includes(expected)) throw new Error(`new auto mapping must use semantic: ${expected}`)
+  if (!workspace.includes(expected)) throw new Error(`new auto mapping must keep intelligent matching defaults: ${expected}`)
+}
+if (!workspace.includes("if (hint === 'material_group' || hint === 'unit') return { matcher: 'exact', weight: 10 }")) {
+  throw new Error('material group and unit auto mappings must keep exact matching defaults')
 }
 
 if (!adapter.includes("=== 'exact' ? 'exact' : 'semantic'")) throw new Error('legacy matchers must collapse to the intelligent business mode')
