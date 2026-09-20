@@ -108,12 +108,18 @@ def main() -> int:
     parser.add_argument("--workdir", type=Path, default=None)
     parser.add_argument("--record", type=Path, default=None, help="JSON 输出")
     args = parser.parse_args()
+    auto_workdir = args.workdir is None
     workdir = args.workdir or Path(tempfile.mkdtemp(prefix="mm-image-build-"))
-    result = build_image(
-        release_dir=args.release_dir, model_dir=args.model_dir, model_id=args.model_id,
-        output_tar=args.output_tar, image_ref=args.image_ref, base_rootfs=args.base_rootfs,
-        base_image=args.base_image, workdir=workdir,
-    )
+    try:
+        result = build_image(
+            release_dir=args.release_dir, model_dir=args.model_dir, model_id=args.model_id,
+            output_tar=args.output_tar, image_ref=args.image_ref, base_rootfs=args.base_rootfs,
+            base_image=args.base_image, workdir=workdir,
+        )
+    finally:
+        if auto_workdir:
+            import shutil
+            shutil.rmtree(workdir, ignore_errors=True)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     if args.record:
         args.record.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
