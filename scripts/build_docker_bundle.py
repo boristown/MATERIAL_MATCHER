@@ -20,6 +20,8 @@ DOCKER_COPY_PLAN = (
     ("menu.sh", "installer/docker/maintain_docker.sh", True),
     ("verify_docker_bundle.py", "installer/docker/verify_docker_bundle.py", False),
     ("clean.sh", "installer/clean.sh", True),
+    ("guide.docx", "installer/docs/user-guide.docx", False),
+    ("test.docx", "installer/docs/test-report.docx", False),
     ("README.md", "installer/docker/README_docker.txt", False),
     ("doc.md", "installer/docker/docs/docker-install-manual.md", False),
     ("use.md", "installer/docs/use-manual.md", False),
