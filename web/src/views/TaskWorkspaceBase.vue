@@ -85,7 +85,7 @@ const filterField = ref('')
 const filterValues = ref<string[]>([])
 const filterMode = ref<'include' | 'exclude'>('include')
 const filterMatch = ref<'exact' | 'contains'>('exact')
-const successThreshold = ref(88), reviewThreshold = ref(75), topN = ref(5)
+const successThreshold = ref(88), topN = ref(5)
 const retrievalMaxLength = ref(256)
 const retrievalDocument = ref<Record<string, unknown>>({})
 const documentBase = ref<Record<string, any>>({})
@@ -105,7 +105,7 @@ const workbenchItems = ref<WorkbenchItem[]>([])
 const selectedRows = ref<WorkbenchItem[]>([])
 const searchQ = ref('')
 const filterMode2 = ref('all')
-const thrSuccess = ref(88), thrReview = ref(75)
+const thrSuccess = ref(88)
 const redecideBusy = ref(false)
 const drawerVisible = ref(false), drawerItem = ref<WorkbenchItem | null>(null)
 const candidates = ref<Candidate[]>([]), candidateIndex = ref(0)
@@ -196,8 +196,8 @@ const profileTaskValid = computed(() => Boolean(appliedProfile.value) && configV
 const profileFilterSummary = computed(() => {
   if (!filterEnabled.value || !filterField.value || !filterValues.value.length) return '不过滤'
   const operator = filterMode.value === 'exclude'
-    ? (filterMatch.value === 'contains' ? '不包含' : '不等于')
-    : (filterMatch.value === 'contains' ? '包含' : '等于')
+    ? (filterMatch.value === 'contains' ? '不含有' : '不等于')
+    : (filterMatch.value === 'contains' ? '含有' : '等于')
   return `${filterField.value} ${operator} ${filterValues.value.join('、')}`
 })
 const profileScopeSummary = computed(() => ({ GLOBAL: '全库匹配', STRICT: '同组匹配', MAPPED: '分类映射' }[scopeMode.value] ?? scopeMode.value))
@@ -255,7 +255,7 @@ function autoMap(): void {
   if (!out.length && srcHeaders.value.length && tgtHeaders.value.length) out.push(defaultRule())
   rules.value = out
   normalizeWeights()
-  ElMessage.success(`已根据字段语义自动生成 ${out.length} 条映射，可继续人工调整`)
+  ElMessage.success(`已根据字段自动生成 ${out.length} 条映射，可继续人工调整`)
 }
 
 function defaultRule(): Rule {
@@ -572,12 +572,12 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules)
-    ? adaptRulesFromApi(cloneDocument(value.rules)).map((rule: Rule) => ({
+    ? adaptRulesFromApi(cloneDocument(value.rules).map((rule: Rule) => ({
         ...rule,
         value_mapping: { ...(rule.value_mapping ?? {}) },
         value_mapping_source_values: Array.isArray(rule.value_mapping_source_values) ? rule.value_mapping_source_values.map(String) : [],
         value_mapping_target_values: Array.isArray(rule.value_mapping_target_values) ? rule.value_mapping_target_values.map(String) : [],
-      }))
+      }))) as Rule[]
     : []
   const advancedDocument = value.advanced && typeof value.advanced === 'object' ? value.advanced : {}
   profileKind.value = String(advancedDocument.profile_kind ?? 'single') === 'composite' ? 'composite' : 'single'
@@ -605,10 +605,8 @@ function loadDocument(document: any): void {
   scopeSourceField.value = String(value.scope?.source_field ?? '')
   scopeTargetField.value = String(value.scope?.target_field ?? '')
   successThreshold.value = Number(value.decision?.success_threshold ?? 88)
-  reviewThreshold.value = Number(value.decision?.review_threshold ?? 75)
   topN.value = Number(value.decision?.top_n ?? 5)
   thrSuccess.value = successThreshold.value
-  thrReview.value = reviewThreshold.value
   retrievalMaxLength.value = Number(value.retrieval?.max_length ?? 256)
   retrievalDocument.value = { ...(value.retrieval ?? {}) }
   const flt = value.source_filter
@@ -630,7 +628,8 @@ function workspaceTargetFromDocument(document: any): { fileId: string; groupCode
 function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const base = cloneDocument(documentBase.value)
   const baseScope = base.scope && typeof base.scope === 'object' ? base.scope : {}
-  const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
+  const rawDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
+  const baseDecision = Object.fromEntries(Object.entries(rawDecision).filter(([key]) => key !== 'review_threshold'))
   const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
   delete baseAdvanced.workspace_target
   delete baseAdvanced.composite_run
@@ -687,7 +686,6 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
       ...baseDecision,
       success_threshold: successThreshold.value,
       review_enabled: typeof baseDecision.review_enabled === 'boolean' ? baseDecision.review_enabled : true,
-      review_threshold: reviewThreshold.value,
       top_n: topN.value,
     },
     retrieval,
@@ -700,7 +698,7 @@ function sideReady(side: FieldSide): boolean {
     : side.fields.length > 0
 }
 const configValid = computed(() => {
-  if (!source.value || !sourceIdColumn.value || reviewThreshold.value >= successThreshold.value) return false
+  if (!source.value || !sourceIdColumn.value) return false
   if (isCompositeProfile.value) return compositeAssignmentsComplete.value
   return Boolean(target.value && groupCodeColumn.value)
     && rules.value.length > 0
@@ -1023,7 +1021,7 @@ async function batchReject(): Promise<void> {
 async function reDecide(): Promise<void> {
   redecideBusy.value = true
   try {
-    const response = (await api.post(`/tasks/${task.value.task_id}/re-decide`, { success_threshold: thrSuccess.value, review_threshold: thrReview.value })).data
+    const response = (await api.post(`/tasks/${task.value.task_id}/re-decide`, { success_threshold: thrSuccess.value })).data
     await loadWorkbench()
     ElMessage.success(`重判完成:自动匹配 ${response.summary.automatic_matched} · 待确认 ${response.summary.pending_review} · 未匹配 ${response.summary.unmatched}`)
   } catch (error) { ElMessage.error((error as Error).message) } finally { redecideBusy.value = false }
@@ -1160,7 +1158,6 @@ watch([
   filterMode,
   filterMatch,
   successThreshold,
-  reviewThreshold,
   topN,
   retrievalMaxLength,
   retrievalDocument,
@@ -1221,7 +1218,7 @@ onBeforeUnmount(() => {
       <div>
         <h2>{{ stage === 0 ? '第一步 · 数据上传' : stage === 1 ? '第二步 · 进度监控' : stage === 2 ? '第三步 · 人工调整' : '第四步 · 输出结果' }}</h2>
         <p v-if="isProfileEditorMode"><b>匹配方案配置</b> · {{ editingProfileId ? `编辑方案「${name || '未命名方案'}」` : '新建匹配方案' }}；{{ isCompositeProfile ? '这里只维护源数据条件、阈值和子方案集合，不重复维护子方案字段规则。' : '这里只维护字段映射、匹配规则和默认参数，不会启动匹配。' }}</p>
-        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；{{ isCompositeProfile ? '上传一份 SAP 源文件与各子方案对应的集团文件，并确认文件对应关系。' : '上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射、权重和阈值。' }}</p>
+        <p v-else-if="isProfileTaskCreateMode"><b>数据上传</b> · 已选方案「{{ profileTaskMeta?.name ?? '未命名方案' }}」；{{ isCompositeProfile ? '上传一份 SAP 源文件与各子方案对应的集团文件，并确认文件对应关系。' : '上传本次左右两份 Excel，已发布方案作为初始配置，开始匹配前仍可调整映射和阈值。' }}</p>
         <p v-else-if="stage === 0"><b>数据上传与匹配设置</b>：上传两份 Excel → 确认字段映射 → 设置匹配方式与阈值 → 开始匹配</p>
         <p v-else><b>{{ task?.scheme_name || profileTaskMeta?.name || '未命名方案' }}</b> · {{ stage === 1 ? '匹配计算进行中，进度与中间结果实时更新。' : stage === 2 ? '集中处理需要人工确认的记录。' : '确认无误后生成并下载最终结果 Excel。' }}</p>
       </div>
@@ -1262,7 +1259,6 @@ onBeforeUnmount(() => {
         <div class="profile-summary-grid">
           <div><span>{{ isCompositeProfile ? '子方案' : '字段规则' }}</span><b>{{ isCompositeProfile ? compositeChildren.length + ' 个' : rules.length + ' 条' }}</b></div>
           <div><span>自动匹配阈值</span><b>{{ successThreshold }} 分</b></div>
-          <div><span>人工确认下限</span><b>{{ reviewThreshold }} 分</b></div>
           <div v-if="!isCompositeProfile"><span>匹配范围</span><b>{{ profileScopeSummary }}</b></div>
           <div class="wide"><span>源数据过滤</span><b>{{ profileFilterSummary }}</b></div>
         </div>
@@ -1342,7 +1338,7 @@ onBeforeUnmount(() => {
         />
         <div v-if="!isCompositeProfile" class="section-head">
           <div>
-            <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射与权重' : '② 字段映射' }}</h3>
+            <h3 style="margin:0">{{ isProfileEditorMode ? '字段映射' : '② 字段映射' }}</h3>
             <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
             <p v-else class="section-note">建议先上传两份模板自动识别字段。每一侧都可以选择 Excel 字段或固定值；固定值参与字段匹配规则，下方“源数据过滤”决定本方案实际处理哪些源数据行。</p>
           </div>
@@ -1452,7 +1448,6 @@ onBeforeUnmount(() => {
               <el-option label="智能匹配" value="semantic" :disabled="!embeddingReady"/>
             </el-select>
           </template></el-table-column>
-          <el-table-column label="权重" width="130"><template #default="scope"><el-input-number v-model="scope.row.weight" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
           <el-table-column v-if="isProfileEditorMode" label="冲突阻断" width="90"><template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template></el-table-column>
           <el-table-column label="" width="60"><template #default="scope"><el-button link type="danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
         </el-table>
@@ -1467,7 +1462,7 @@ onBeforeUnmount(() => {
               <el-option v-for="column in (isProfileEditorMode ? profileSourceFields : srcHeaders)" :key="column" :label="column" :value="column"/>
             </el-select>
             <span class="muted">条件</span>
-            <el-select v-model="filterMatch" size="small" style="width:100px"><el-option label="等于" value="exact"/><el-option label="包含" value="contains"/></el-select>
+            <el-select v-model="filterMatch" size="small" style="width:100px"><el-option label="等于" value="exact"/><el-option label="含有" value="contains"/></el-select>
             <el-select v-model="filterMode" size="small" style="width:160px"><el-option label="保留满足条件的行" value="include"/><el-option label="排除满足条件的行" value="exclude"/></el-select>
             <el-select v-model="filterValues" multiple filterable allow-create default-first-option placeholder="默认值，例如：Z001" style="width:300px">
               <el-option v-for="value in filterValues" :key="value" :label="value" :value="value"/>
@@ -1477,7 +1472,6 @@ onBeforeUnmount(() => {
         </div>
         <div class="threshold">
           <span>自动匹配阈值 ≥</span><el-slider v-model="successThreshold" :min="1" :max="100" style="width:180px"/>
-          <span>人工确认下限 ≥</span><el-slider v-model="reviewThreshold" :min="0" :max="99" style="width:180px"/>
           <span>候选 TopN</span><el-input-number v-model="topN" :min="1" :max="50" size="small"/>
         </div>
         <template v-if="isProfileEditorMode && !isCompositeProfile">
@@ -1496,7 +1490,7 @@ onBeforeUnmount(() => {
         <div class="actions">
           <template v-if="isProfileEditorMode">
             <el-button :loading="busy" @click="saveProfileDraft">保存草稿</el-button>
-            <el-button type="primary" :loading="busy" :disabled="reviewThreshold >= successThreshold" @click="publishProfileChanges">{{ editingProfilePublishedVersion ? '校验并发布新版本' : '校验并发布' }}</el-button>
+            <el-button type="primary" :loading="busy" @click="publishProfileChanges">{{ editingProfilePublishedVersion ? '校验并发布新版本' : '校验并发布' }}</el-button>
           </template>
           <template v-else>
             <el-button v-if="!isCompositeProfile" :loading="busy" :disabled="!configValid" @click="dryRun">试算 100 条</el-button>
@@ -1547,7 +1541,7 @@ onBeforeUnmount(() => {
     <div v-else-if="stage === 2" class="panel">
       <div class="section-head">
         <h3 style="margin:0">人工调整(待确认 {{ reviewSummary.pending_review ?? 0 }})</h3>
-        <el-input v-model="searchQ" placeholder="按物料编码/描述/集团码模糊搜索…" clearable style="width:320px" prefix-icon="Search"/>
+        <el-input v-model="searchQ" placeholder="按物料编码/描述/集团码搜索…" clearable style="width:320px" prefix-icon="Search"/>
       </div>
       <div class="muted" style="margin-bottom:12px">任务开始时间 {{ formatTimePoint(task?.started_at) }} · 自动计算耗时 {{ formatDurationMs(task?.compute_duration_ms) }}</div>
       <div class="stats">
@@ -1559,8 +1553,7 @@ onBeforeUnmount(() => {
       <div class="threshold-card">
         <span class="muted">调整阈值即时重判(不影响已人工处理行):</span>
         <span>自动 ≥</span><el-slider v-model="thrSuccess" :min="1" :max="100" style="width:150px" :disabled="finalized"/>
-        <span>复核 ≥</span><el-slider v-model="thrReview" :min="0" :max="99" style="width:150px" :disabled="finalized"/>
-        <el-button size="small" type="primary" plain :loading="redecideBusy" :disabled="finalized || thrReview >= thrSuccess" @click="reDecide">按新阈值重判</el-button>
+        <el-button size="small" type="primary" plain :loading="redecideBusy" :disabled="finalized" @click="reDecide">按新阈值重判</el-button>
         <el-tag v-if="finalized" type="info" size="small">结果已生成,阈值已锁定</el-tag>
       </div>
       <div class="quick">

@@ -16,7 +16,7 @@ for (const forbidden of ['完全一致', '模糊相似', '综合(字符+语义)'
   if (selector.includes(forbidden)) throw new Error(`field matcher UI leaks legacy/algorithm option: ${forbidden}`)
 }
 
-if (!workspace.includes("adaptRulesFromApi(cloneDocument(value.rules))")) throw new Error('API -> business matcher adapter is not used')
+if (!workspace.includes('adaptRulesFromApi(') || !workspace.includes('cloneDocument(value.rules)')) throw new Error('API -> business matcher adapter is not used')
 if (!workspace.includes('adaptRulesToApi(rules.value)')) throw new Error('business matcher -> API adapter is not used')
 if (!workspace.includes('setBusinessMatchMode(rule, value)')) throw new Error('explicit matcher changes must update API matcher state')
 

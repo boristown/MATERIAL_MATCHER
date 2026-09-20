@@ -118,7 +118,7 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
     assert candidate_score.display_score == round(candidate_score.raw_score * 100.0, 4)
     assert len(candidate_score.field_scores) == 1
     assert candidate_score.display_score == round(candidate_score.field_scores[0].score * 100.0, 4)
-    assert decide_status(candidate_score.display_score, config) == "UNMATCHED"
+    assert decide_status(candidate_score.display_score, config) == "REVIEW"
 
     from material_matcher.matching.engine import CandidateResult, RowResult
 
@@ -139,7 +139,7 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
                 source_row_id=str(index),
                 source_id=f"S-{index}",
                 source_payload={**source, "物料号": f"S-{index}"},
-                status="UNMATCHED",
+                status="REVIEW",
                 final_group_code=None,
                 first_score=candidate_score.display_score,
                 second_score=0.0,
@@ -152,7 +152,7 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
 
     _seed_task(meta, config)
     service._persist_rows("t-score", rows)
-    assert service.summary("t-score")["unmatched"] == 150
+    assert service.summary("t-score")["pending_review"] == 150
     with meta.connect() as connection:
         stored = connection.execute(
             "SELECT source_row_number,top1_score,current_status FROM match_items WHERE task_id='t-score' AND source_row_id='1'"
@@ -162,11 +162,11 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
         ).fetchone()
     assert int(stored["source_row_number"]) == 5
     assert float(stored["top1_score"]) == candidate_score.display_score
-    assert str(stored["current_status"]) == "UNMATCHED"
+    assert str(stored["current_status"]) == "REVIEW"
     assert int(stored_candidate["target_row_number"]) == 7
     assert float(stored_candidate["score"]) == candidate_score.display_score
 
-    finalized = service.finalize("t-score")
+    finalized = service.finalize("t-score", allow_unresolved_review=True)
     result_record = files.get(str(finalized["result_file_id"]))
     exported = load_workbook(Path(str(result_record["stored_path"])), data_only=True)
     try:
@@ -176,7 +176,7 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
         result = exported["最终匹配结果"]
         assert result.cell(3, 1).value == 5
         assert result.cell(3, 2).value == "S-1"
-        assert result.cell(3, 5).value == "未匹配"
+        assert result.cell(3, 5).value == "待处理"
         assert float(result.cell(3, 7).value) == candidate_score.display_score
         assert result.cell(3, 11).value is None
 
