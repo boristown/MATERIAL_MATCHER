@@ -24,6 +24,9 @@ class FieldScore:
     conflict: bool
     source_trace: list[dict[str, object]]
     target_trace: list[dict[str, object]]
+    source_value_before_mapping: str = ""
+    value_mapping_applied: bool = False
+    unconfigured_source_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -210,6 +213,11 @@ def score_field_rule(
     *,
     semantic_score: float | None = None,
 ) -> FieldScore | None:
+    source_values_before_mapping = [
+        value
+        for value in prepare_side_values(source_row, rule.source)
+        if not value.is_missing and value.text not in {None, ""}
+    ]
     source_values = [
         value
         for value in prepare_side_values(source_row, rule.source, value_mapping=rule.value_mapping)
@@ -234,16 +242,29 @@ def score_field_rule(
                 best_target = target
     assert best_source is not None and best_target is not None
     conflict = bool(rule.critical and best_score <= 0.0)
+    mapping = {str(key): str(value) for key, value in rule.value_mapping.items()}
+    before_texts = [value.text or "" for value in source_values_before_mapping]
+    unconfigured = tuple(
+        text for text in before_texts
+        if mapping and text and text not in mapping
+    )
+    mapping_applied = bool(mapping) and any(
+        text in mapping and mapping[text] != text
+        for text in before_texts
+    )
     return FieldScore(
-        rule.id,
-        _clamp01(float(best_score)),
-        rule.weight,
-        best_source.text or "",
-        best_target.text or "",
-        rule.critical,
-        conflict,
-        _trace_dicts(best_source),
-        _trace_dicts(best_target),
+        rule_id=rule.id,
+        score=_clamp01(float(best_score)),
+        weight=rule.weight,
+        source_value=best_source.text or "",
+        target_value=best_target.text or "",
+        critical=rule.critical,
+        conflict=conflict,
+        source_trace=_trace_dicts(best_source),
+        target_trace=_trace_dicts(best_target),
+        source_value_before_mapping=" / ".join(before_texts),
+        value_mapping_applied=mapping_applied,
+        unconfigured_source_values=unconfigured,
     )
 
 
