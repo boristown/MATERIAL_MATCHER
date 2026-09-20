@@ -276,6 +276,30 @@ def main() -> int:
 
     import copy as _copy
 
+    def _xlsx_headers(fp):
+        import zipfile
+        from xml.etree import ElementTree as ET
+        ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        with zipfile.ZipFile(fp) as z:
+            shared = []
+            if "xl/sharedStrings.xml" in z.namelist():
+                root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+                for si in root.findall(ns + "si"):
+                    shared.append("".join(s.text or "" for s in si.iter(ns + "t")))
+            sheet = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+            row = next(sheet.iter(ns + "row"), None)
+            hdr = []
+            if row is not None:
+                for cell in row.iter(ns + "c"):
+                    v = cell.find(ns + "v"); ist = cell.find(ns + "is")
+                    if ist is not None:
+                        hdr.append("".join(x.text or "" for x in ist.iter(ns + "t")))
+                    elif v is not None and cell.get("t") == "s":
+                        hdr.append(shared[int(v.text)])
+                    elif v is not None:
+                        hdr.append(v.text or "")
+            return hdr
+
     profile_task_ok = False
     task_id, task = "", {}
     a007 = next((p for p in profile_rows if str(p.get("name", "")).startswith("A007")), None)
@@ -304,6 +328,16 @@ def main() -> int:
                 profile_task_ok, task_id, task = run_task_with(trial, f"child:{str(ref.get('name', ''))[:12]}")
                 if profile_task_ok:
                     break
+                src_cols = set(_xlsx_headers(pathlib.Path(args.smoke_dir) / "smoke-待匹配数据.xlsx"))
+                tgt_cols = set(_xlsx_headers(pathlib.Path(args.smoke_dir) / "smoke-集团标准数据.xlsx"))
+                kept = [r for r in trial.get("rules", [])
+                        if all(f in src_cols for f in (r.get("source") or {}).get("fields", []))
+                        and all(f in tgt_cols for f in (r.get("target") or {}).get("fields", []))]
+                if kept:
+                    trial["rules"] = kept
+                    profile_task_ok, task_id, task = run_task_with(trial, f"child-adapted:{str(ref.get('name', ''))[:10]}")
+                    if profile_task_ok:
+                        break
         elif code == 200 and isinstance(profile_document, dict) and profile_document.get("rules"):
             profile_config = _copy.deepcopy(profile_document)
             profile_config["source_id_column"] = "物料编码"
