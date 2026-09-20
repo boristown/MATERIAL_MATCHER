@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from material_matcher.domain.models import FieldRule, FieldSide, MatchingConfig, ProcessingStep
+from material_matcher.embedding.text import build_retrieval_text, retrieval_text_signature
 from material_matcher.matching.scorer import score_candidate
 from material_matcher.services.profile_service import ProfileService
 from material_matcher.storage.metadata import MetadataRepository
@@ -37,6 +38,15 @@ def test_value_mapping_converts_source_value_before_scoring() -> None:
     assert result.display_score == 100.0
     assert result.field_scores[0].source_value == "国产"
     assert result.field_scores[0].target_value == "国产"
+
+
+def test_value_mapping_is_used_by_default_source_retrieval_text() -> None:
+    mapped = _config({"10": "国产", "11": "进口"})
+    unmapped = _config({})
+
+    assert build_retrieval_text({"物料编码": "S-1", "国产进口": "10"}, mapped, "source") == "国产"
+    assert build_retrieval_text({"物料编码": "S-1", "国产进口": "10"}, unmapped, "source") == "10"
+    assert retrieval_text_signature(mapped, "source") != retrieval_text_signature(unmapped, "source")
 
 
 def test_unmapped_value_is_kept_and_never_auto_converted() -> None:
