@@ -291,6 +291,77 @@ function columnsFromInspection(inspection: any): ColumnInfo[] {
 function findHint(columns: ColumnInfo[], hint: string): string {
   return columns.find(column => column.business_hint === hint)?.header ?? ''
 }
+function compositeCompatibility(child: CompositeChild, input: CompositeTargetInput): { matched: number; total: number; score: number } {
+  const available = new Set(input.columns.map(column => column.header))
+  const required = uniqueFields([...child.target_fields, child.group_code_field])
+  const matched = required.filter(field => available.has(field)).length
+  const total = required.length
+  return { matched, total, score: total ? matched / total : 0 }
+}
+
+function autoAssignCompositeTargets(): void {
+  if (!isCompositeProfile.value || !compositeChildren.value.length || !compositeTargetInputs.value.length) return
+  const next: Record<string, CompositeAssignment> = { ...compositeAssignments.value }
+  const used = new Set<string>()
+
+  for (const child of compositeChildren.value) {
+    const current = next[child.profile_id]
+    if (current && compositeInput(current.file_id)) used.add(current.file_id)
+    else delete next[child.profile_id]
+  }
+
+  for (const child of compositeChildren.value) {
+    if (next[child.profile_id]) continue
+    const ranked = compositeTargetInputs.value
+      .filter(input => !used.has(input.file.file_id))
+      .map(input => ({ input, compatibility: compositeCompatibility(child, input) }))
+      .sort((a, b) => b.compatibility.score - a.compatibility.score || b.compatibility.matched - a.compatibility.matched)
+    const best = ranked[0]
+    if (!best || (best.compatibility.total > 0 && best.compatibility.matched === 0)) continue
+    const headers = best.input.columns.map(column => column.header)
+    const detectedGroupCode = headers.includes(child.group_code_field)
+      ? child.group_code_field
+      : findHint(best.input.columns, 'group_code')
+    next[child.profile_id] = {
+      file_id: best.input.file.file_id,
+      group_code_column: detectedGroupCode,
+    }
+    used.add(best.input.file.file_id)
+  }
+  compositeAssignments.value = next
+}
+
+function onCompositeAssignmentFileChange(child: CompositeChild, fileId: string): void {
+  const input = compositeInput(fileId)
+  if (!input) {
+    delete compositeAssignments.value[child.profile_id]
+    compositeAssignments.value = { ...compositeAssignments.value }
+    return
+  }
+  const headers = input.columns.map(column => column.header)
+  const groupCode = headers.includes(child.group_code_field)
+    ? child.group_code_field
+    : findHint(input.columns, 'group_code')
+  compositeAssignments.value = {
+    ...compositeAssignments.value,
+    [child.profile_id]: { file_id: fileId, group_code_column: groupCode },
+  }
+}
+
+function removeCompositeTarget(fileId: string): void {
+  compositeTargetInputs.value = compositeTargetInputs.value.filter(item => item.file.file_id !== fileId)
+  targetFiles.value = compositeTargetInputs.value.map(item => item.file)
+  const next: Record<string, CompositeAssignment> = {}
+  for (const [profileId, assignment] of Object.entries(compositeAssignments.value)) {
+    if (assignment.file_id !== fileId) next[profileId] = assignment
+  }
+  compositeAssignments.value = next
+  if (target.value?.file_id === fileId) {
+    target.value = compositeTargetInputs.value[0]?.file ?? null
+    targetColumns.value = compositeTargetInputs.value[0]?.columns ?? []
+  }
+  autoAssignCompositeTargets()
+}
 async function loadFileColumns(fileId: string, kind: 'source' | 'target'): Promise<void> {
   const response = (await api.get(`/files/${fileId}/inspection`)).data
   const columns = columnsFromInspection(response.inspection)
