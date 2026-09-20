@@ -41,6 +41,7 @@ REQUIRED_FILES = REQUIRED_EXECUTABLES + (
     "README.md",
     "doc.md",
     "ops.md",
+    "use.md",
     "BUILD_INFO.txt",
     "SHA256SUMS",
     "docker/engine/docker-27.1.1.tgz",

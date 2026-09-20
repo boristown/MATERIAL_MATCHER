@@ -238,6 +238,7 @@ def verify_bundle(root: Path, *, skip_arch: bool = False) -> dict[str, object]:
         "SHA256SUMS",
         "docs/doc.md",
         "docs/ops.md",
+        "docs/use.md",
         "docs/faq.md",
         "bootstrap/python/bin/python3",
         "smoke/smoke-待匹配数据.xlsx",

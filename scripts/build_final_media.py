@@ -37,7 +37,7 @@ ROOT_README = """物料集团码智能匹配平台 · 最终离线交付介质
 两种方式的服务器都必须先做一件事：把所需目录完整复制到服务器本地磁盘（不要直接从 U 盘运行安装）。
 
 客户端浏览器工具包（装在客户 Windows 7 电脑上，不装在服务器上）：
-  win7/                 Firefox ESR（首选）等，见其 README.md
+  win7/                 Firefox ESR、VSCode（Win7 可用版）等，见其 README.md
 
 每种方式的详细中文步骤见各自目录内的安装手册。全程离线，无需公网。
 """
@@ -51,6 +51,14 @@ BROWSER_README = """客户端浏览器工具包（Windows 7 终端专用）
 首选：Firefox ESR（本目录 Firefox Setup *.exe，Win7 x64）
   - 官方 archive.mozilla.org 发布，SHA256 已对官方 SHA256SUMS 校验；
   - 支持 Windows 7 SP1 x64，随 ESR 系列获得维护更新。
+
+VSCode 1.82.3（现场改代码用，安装在工程师自备电脑）
+  1.82.3 是支持 Windows 7 的最后一个官方版本（1.83 起要求 Win10+）。
+  下载来源（官方）：https://update.code.visualstudio.com/1.82.3/win32-x64-user/stable
+  （302 至微软 CDN vscode.download.prss.microsoft.com commit fdb98833154679dbaa7af67a5a29fe19e55c2b73）
+  SHA256：811dc91817a5e8e47d23d67254bd6ea96c682f46ea28e9629c566ee39e7fbc64（见本目录 SHA256SUMS.txt）
+  许可证：微软官方免费分发（Visual Studio Code License Terms），未修改安装包。
+  用法：《使用手册 use.md》第 7 节"现场改代码指引"。
 
 Chrome 109（Win7 备用内核）——客户已确认豁免（2026-09-18）：
   - Google 官方已停止公开分发 109 离线安装包（见 lic.txt 核查记录）；
