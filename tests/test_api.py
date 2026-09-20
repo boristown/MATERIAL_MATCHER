@@ -71,7 +71,10 @@ def test_task_workspace_draft_survives_relogin_with_full_step1_state(authed: Tes
     # “任务名称” has been removed as a business concept: legacy name payloads are
     # accepted and ignored; the draft keeps its system-generated internal name.
     assert saved.json()['name']==draft['name'] and str(draft['name']).startswith('run-')
-    assert saved.json()['config_document']==document
+    saved_document=saved.json()['config_document']
+    assert saved_document['decision']['success_threshold']==91
+    assert saved_document['decision']['top_n']==7
+    assert 'review_threshold' not in saved_document['decision']
 
     assert authed.post('/api/auth/logout').status_code==200
     assert authed.post('/api/auth/login',json={'username':'admin','password':'ChangedAdmin123'}).status_code==200
@@ -84,7 +87,9 @@ def test_task_workspace_draft_survives_relogin_with_full_step1_state(authed: Tes
     assert body['config_document']['rules'][0]['matcher']=='hybrid'
     assert body['config_document']['rules'][0]['weight']==73
     assert body['config_document']['rules'][0]['critical'] is True
-    assert body['config_document']['decision']==document['decision']
+    assert body['config_document']['decision']['success_threshold']==91
+    assert body['config_document']['decision']['top_n']==7
+    assert 'review_threshold' not in body['config_document']['decision']
     assert body['config_document']['retrieval']['max_length']==512
 
 def test_chunk_upload_validates_hash_and_order(authed: TestClient)->None:
