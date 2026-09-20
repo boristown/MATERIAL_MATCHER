@@ -107,12 +107,14 @@ function uniqueFields(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map(value => String(value ?? '').trim()).filter(Boolean))]
 }
 const profileSourceFields = computed(() => uniqueFields([
+  ...srcHeaders.value,
   sourceIdColumn.value,
   filterField.value,
   scopeSourceField.value,
   ...rules.value.flatMap(rule => rule.source.fields),
 ]))
 const profileTargetFields = computed(() => uniqueFields([
+  ...tgtHeaders.value,
   scopeTargetField.value,
   ...rules.value.flatMap(rule => rule.target.fields),
 ]))
@@ -938,11 +940,12 @@ onBeforeUnmount(() => {
         <el-alert type="info" :closable="false" title="这是本次匹配的初始配置；后续调整只作用于本次匹配，不会修改已发布方案。"/>
       </div>
 
-      <div v-if="!isProfileEditorMode" class="panel step1-data-panel">
+      <div class="panel step1-data-panel">
         <div class="section-head step1-heading">
           <div>
-            <h3 style="margin:0">数据上传</h3>
-            <p class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
+            <h3 style="margin:0">{{ isProfileEditorMode ? '模板字段识别' : '数据上传' }}</h3>
+            <p v-if="isProfileEditorMode" class="step1-subtitle">字段很多时无需逐个录入。上传客户物料模板和集团码模板，系统自动识别两侧字段，并据此生成后续字段映射。</p>
+            <p v-else class="step1-subtitle">只需要告诉系统“左边这份数据，要和右边这份集团码标准数据匹配”。其余准备工作由系统自动完成。</p>
           </div>
         </div>
         <DualExcelUploadPanel
@@ -952,9 +955,17 @@ onBeforeUnmount(() => {
           :target-columns="targetColumns"
           :source-id-column="sourceIdColumn"
           :group-code-column="groupCodeColumn"
+          :mode="isProfileEditorMode ? 'template' : 'data'"
           @parsed="onWorkbookParsed"
           @update:sourceIdColumn="onSourceIdColumnChange"
           @update:groupCodeColumn="onGroupCodeColumnChange"
+        />
+        <el-alert
+          v-if="isProfileEditorMode"
+          class="profile-compatibility-alert"
+          type="info"
+          :closable="false"
+          title="这里上传的两份模板只用于识别字段和辅助配置方案；方案发布后保存的是字段规则，不会把模板当作本次匹配数据。"
         />
         <template v-if="isProfileTaskCreateMode">
           <el-alert v-if="profileTaskIssues.length" class="profile-compatibility-alert" type="warning" :closable="false" title="当前两份数据与方案配置还需要确认">
@@ -975,7 +986,10 @@ onBeforeUnmount(() => {
             <p v-if="!isProfileEditorMode" class="section-note">系统会自动推荐映射；点击左侧字段再点击右侧字段可快速连线，也可在下方规则中直接选择多个字段实现多对一 / 一对多。</p>
           </div>
           <div>
-            <el-button v-if="isProfileEditorMode" size="small" type="primary" plain @click="addProfileRule">＋ 添加字段映射</el-button>
+            <template v-if="isProfileEditorMode">
+              <el-button size="small" type="primary" plain :disabled="!sourceColumns.length || !targetColumns.length" @click="autoMap">自动推荐映射</el-button>
+              <el-button size="small" @click="addProfileRule">＋ 添加字段映射</el-button>
+            </template>
             <template v-else>
               <el-button size="small" type="primary" plain :disabled="!sourceColumns.length || !targetColumns.length" @click="autoMap">自动推荐映射</el-button>
               <el-button size="small" :disabled="!sourceColumns.length || !targetColumns.length" @click="rules.push(defaultRule()); normalizeWeights()">手动加一条</el-button>
@@ -998,7 +1012,7 @@ onBeforeUnmount(() => {
             @target-click="onTargetChip"
           />
         </template>
-        <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。添加后填写客户字段、集团字段、匹配方式和权重。" :image-size="64"/>
+        <el-empty v-if="isProfileEditorMode && !rules.length" description="尚无字段映射。建议先上传左右两份模板自动识别字段，系统会自动推荐映射；也可以手工添加。" :image-size="64"/>
         <el-table v-if="rules.length" :data="rules" row-key="id" size="small" class="rules-table">
           <el-table-column label="源字段" min-width="200"><template #default="scope">
             <el-select v-if="isProfileEditorMode" v-model="scope.row.source.fields" multiple filterable allow-create default-first-option placeholder="客户字段"><el-option v-for="field in profileSourceFields" :key="field" :label="field" :value="field"/></el-select>
