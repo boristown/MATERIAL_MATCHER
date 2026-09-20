@@ -355,6 +355,13 @@ function loadDocument(document: any): void {
   const value = document && typeof document === 'object' ? cloneDocument(document) : {}
   documentBase.value = value
   rules.value = Array.isArray(value.rules) ? cloneDocument(value.rules) : []
+  if (isProfileEditorMode.value) {
+    const templateSchema = value.advanced?.template_schema
+    const rememberedSourceFields = Array.isArray(templateSchema?.source_fields) ? templateSchema.source_fields.map(String) : []
+    const rememberedTargetFields = Array.isArray(templateSchema?.target_fields) ? templateSchema.target_fields.map(String) : []
+    if (!sourceColumns.value.length && rememberedSourceFields.length) sourceColumns.value = rememberedSourceFields.map(header => ({ header }))
+    if (!targetColumns.value.length && rememberedTargetFields.length) targetColumns.value = rememberedTargetFields.map(header => ({ header }))
+  }
   sourceIdColumn.value = String(value.source_id_column ?? '')
   scopeMode.value = value.scope_mode ?? 'GLOBAL'
   scopeSourceField.value = String(value.scope?.source_field ?? '')
@@ -387,6 +394,12 @@ function documentBody(includeWorkspaceTarget = true): Record<string, unknown> {
   const baseDecision = base.decision && typeof base.decision === 'object' ? base.decision : {}
   const baseAdvanced = base.advanced && typeof base.advanced === 'object' ? cloneDocument(base.advanced) : {}
   delete baseAdvanced.workspace_target
+  if (isProfileEditorMode.value && (srcHeaders.value.length || tgtHeaders.value.length)) {
+    baseAdvanced.template_schema = {
+      source_fields: [...srcHeaders.value],
+      target_fields: [...tgtHeaders.value],
+    }
+  }
   if (includeWorkspaceTarget && target.value) {
     baseAdvanced.workspace_target = {
       file_id: target.value.file_id,
