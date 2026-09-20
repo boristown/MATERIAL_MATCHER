@@ -372,6 +372,64 @@ async function loadProfiles(): Promise<void> {
 async function getProfileDetail(profileId: string): Promise<ProfileDetail> {
   return (await api.get(`/profiles/${profileId}`)).data as ProfileDetail
 }
+async function getPublishedProfileVersion(profileId: string, versionNo?: number): Promise<{ name: string; version_no: number; document: Record<string, any> }> {
+  const detail = await getProfileDetail(profileId)
+  if (!versionNo) {
+    const published = detail.latest_published
+    if (!published) throw new Error(`子方案「${detail.name}」尚未发布`)
+    return { name: detail.name, version_no: Number(published.version_no), document: published.document ?? {} }
+  }
+  if (Number(detail.latest_published?.version_no ?? 0) === versionNo && detail.latest_published) {
+    return { name: detail.name, version_no: versionNo, document: detail.latest_published.document ?? {} }
+  }
+  const versions = ((await api.get(`/profiles/${profileId}/versions`)).data ?? []) as ProfileVersion[]
+  const version = versions.find(item => Number(item.version_no) === versionNo && item.status === 'PUBLISHED')
+  if (!version) throw new Error(`子方案「${detail.name}」v${versionNo} 不存在或未发布`)
+  return { name: detail.name, version_no: versionNo, document: version.document ?? {} }
+}
+
+function childDefinition(profileId: string, versionNo: number, name: string, document: Record<string, any>): CompositeChild {
+  const schema = document.advanced?.template_schema ?? {}
+  const sourceFields = uniqueFields([
+    ...(Array.isArray(schema.source_fields) ? schema.source_fields.map(String) : []),
+    document.source_id_column,
+    document.source_filter?.field,
+    ...(Array.isArray(document.rules) ? document.rules.flatMap((rule: any) => rule?.source?.fields ?? []) : []),
+  ])
+  const targetFields = uniqueFields([
+    ...(Array.isArray(schema.target_fields) ? schema.target_fields.map(String) : []),
+    ...(Array.isArray(document.rules) ? document.rules.flatMap((rule: any) => rule?.target?.fields ?? []) : []),
+  ])
+  return {
+    profile_id: profileId,
+    version_no: versionNo,
+    name,
+    source_fields: sourceFields,
+    target_fields: targetFields,
+    group_code_field: String(schema.group_code_field ?? ''),
+  }
+}
+
+async function onCompositeChildSelection(ids: string[]): Promise<void> {
+  const next: CompositeChild[] = []
+  for (const profileId of ids) {
+    const existing = compositeChildren.value.find(item => item.profile_id === profileId)
+    if (existing) {
+      next.push(existing)
+      continue
+    }
+    const published = await getPublishedProfileVersion(profileId)
+    const advanced = published.document.advanced ?? {}
+    if (String(advanced.profile_kind ?? 'single') === 'composite') {
+      ElMessage.warning(`「${published.name}」本身是组合方案，暂不能作为子方案`)
+      continue
+    }
+    next.push(childDefinition(profileId, published.version_no, published.name, published.document))
+  }
+  compositeChildren.value = next
+  compositeChildIds.value = next.map(item => item.profile_id)
+  autoAssignCompositeTargets()
+}
 async function applyProfile(profileId: string): Promise<void> {
   if (!profileId) return
   const detail = await getProfileDetail(profileId)
