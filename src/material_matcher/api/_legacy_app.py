@@ -95,6 +95,10 @@ class CatalogCreate(BaseModel):
     group_code_column: str = Field(min_length=1, max_length=200)
 
 
+class TargetCombineRequest(BaseModel):
+    file_ids: list[str] = Field(min_length=2, max_length=20)
+
+
 class CatalogVersionCreate(BaseModel):
     source_file_id: str
     group_code_column: str = Field(min_length=1, max_length=200)
@@ -347,6 +351,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/files/{file_id}/inspection")
     def inspect_file(file_id: str) -> dict[str, object]: record = files.get(file_id); return {"file": record, "inspection": inspect_tabular_file(Path(str(record["stored_path"])))}
+
+    @app.post("/api/files/combine-targets")
+    def combine_target_files(payload: TargetCombineRequest) -> dict[str, object]:
+        return catalogs.combine_target_files(payload.file_ids)
 
     @app.post("/api/uploads/init")
     def init_upload(payload: UploadInit) -> dict[str, object]:
