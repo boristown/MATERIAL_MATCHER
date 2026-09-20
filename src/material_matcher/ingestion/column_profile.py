@@ -14,11 +14,11 @@ DEFAULT_TOP_VALUES_LIMIT = 20
 MAX_ENUM_UNIQUE_VALUES = 20
 SAMPLE_VALUES_LIMIT = 5
 
-_INTEGER_RE = re.compile(r"^[+-]?\\d+$")
-_NUMBER_RE = re.compile(r"^[+-]?(?:\\d+\\.\\d*|\\d*\\.\\d+)(?:[eE][+-]?\\d+)?$")
-_DATE_RE = re.compile(r"^\\d{4}-\\d{2}-\\d{2}$")
+_INTEGER_RE = re.compile(r"^[+-]?\d+$")
+_NUMBER_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\d*\.\d+)(?:[eE][+-]?\d+)?$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DATETIME_RE = re.compile(
-    r"^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?(?:Z|[+-]\\d{2}:?\\d{2})?$"
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$"
 )
 
 
