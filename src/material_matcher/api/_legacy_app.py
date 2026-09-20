@@ -18,7 +18,12 @@ from pydantic import BaseModel, Field
 from material_matcher import __version__
 from material_matcher.domain.errors import DomainError
 from material_matcher.embedding.providers import embedding_runtime_status
-from material_matcher.ingestion.inspector import inspect_tabular_file
+from material_matcher.ingestion.column_profile import (
+    DEFAULT_COLUMN_PROFILE_SCAN_LIMIT,
+    MAX_COLUMN_PROFILE_SCAN_LIMIT,
+    inspect_tabular_file_with_profiles,
+    profile_tabular_columns,
+)
 from material_matcher.security.session import SessionStore
 from material_matcher.security.users import ROLES, UserService
 from material_matcher.services.benchmark_service import BenchmarkService
@@ -346,7 +351,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if suffix == ".xls": raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
         if suffix not in _ALLOWED_SUFFIXES: raise DomainError("UNSUPPORTED_FILE", "仅支持 .xlsx / .xlsm / .csv", status_code=400)
         record = files.save_stream(file.filename or "upload", role, file.file, cfg.max_upload_bytes)
-        try: inspection = inspect_tabular_file(Path(str(record["stored_path"])))
+        try: inspection = inspect_tabular_file_with_profiles(Path(str(record["stored_path"])))
         except Exception as exc: raise DomainError("FILE_PARSE_FAILED", "表格无法解析，请确认文件格式和内容", status_code=400) from exc
         return {"file": record, "inspection": inspection}
 
@@ -354,7 +359,95 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_files() -> list[dict[str, object]]: return files.list()
 
     @app.get("/api/files/{file_id}/inspection")
-    def inspect_file(file_id: str) -> dict[str, object]: record = files.get(file_id); return {"file": record, "inspection": inspect_tabular_file(Path(str(record["stored_path"])))}
+    def inspect_file(file_id: str) -> dict[str, object]: record = files.get(file_id); return {"file": record, "inspection": inspect_tabular_file_with_profiles(Path(str(record["stored_path"])))}
+
+    @app.get("/api/files/{file_id}/column-profiles")
+    def file_column_profiles(
+        file_id: str,
+        sheet_name: str | None = Query(default=None),
+        scan_limit: int = Query(
+            default=DEFAULT_COLUMN_PROFILE_SCAN_LIMIT,
+            ge=1,
+            le=MAX_COLUMN_PROFILE_SCAN_LIMIT,
+        ),
+    ) -> dict[str, object]:
+        record = files.get(file_id)
+        try:
+            profile = profile_tabular_columns(
+                Path(str(record["stored_path"])),
+                sheet_name=sheet_name,
+                scan_limit=scan_limit,
+            )
+        except ValueError as exc:
+            raise DomainError("COLUMN_PROFILE_FAILED", str(exc), status_code=422) from exc
+        return {"file_id": file_id, **profile}
+
+    @app.get("/api/files/{file_id}/column-values")
+    def file_column_values(
+        file_id: str,
+        field_name: str = Query(..., min_length=1, max_length=200),
+        sheet_name: str | None = Query(default=None),
+        column_index: int | None = Query(default=None, ge=1),
+        scan_limit: int = Query(
+            default=DEFAULT_COLUMN_PROFILE_SCAN_LIMIT,
+            ge=1,
+            le=MAX_COLUMN_PROFILE_SCAN_LIMIT,
+        ),
+    ) -> dict[str, object]:
+        record = files.get(file_id)
+        try:
+            profile = profile_tabular_columns(
+                Path(str(record["stored_path"])),
+                sheet_name=sheet_name,
+                scan_limit=scan_limit,
+            )
+        except ValueError as exc:
+            raise DomainError("COLUMN_PROFILE_FAILED", str(exc), status_code=422) from exc
+
+        matches = [
+            item
+            for item in profile["columns"]
+            if item["field_name"] == field_name
+            and (column_index is None or int(item["column_index"]) == column_index)
+        ]
+        if not matches:
+            raise DomainError(
+                "COLUMN_NOT_FOUND",
+                "字段不存在",
+                status_code=404,
+                details={"field_name": field_name, "column_index": column_index},
+            )
+        if len(matches) > 1:
+            raise DomainError(
+                "AMBIGUOUS_COLUMN",
+                "存在同名字段，请指定 column_index",
+                status_code=409,
+                details={
+                    "field_name": field_name,
+                    "column_indexes": [int(item["column_index"]) for item in matches],
+                },
+            )
+
+        selected = matches[0]
+        top_values = list(selected["top_values"])
+        values_complete = (
+            not bool(profile["truncated"])
+            and len(top_values) >= int(selected["unique_count"])
+        )
+        values = [item["value"] for item in top_values] if selected["enum_candidate"] else []
+        return {
+            "file_id": file_id,
+            "sheet_name": profile["sheet_name"],
+            "field_name": selected["field_name"],
+            "column_index": selected["column_index"],
+            "datatype": selected["datatype"],
+            "unique_count": selected["unique_count"],
+            "enum_candidate": selected["enum_candidate"],
+            "values": values,
+            "top_values": top_values,
+            "values_complete": values_complete,
+            "truncated": profile["truncated"],
+        }
 
     @app.post("/api/uploads/init")
     def init_upload(payload: UploadInit) -> dict[str, object]:
@@ -391,7 +484,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with path.open("rb") as stream: record=files.save_stream(str(row["original_name"]),str(row["role"]),stream,cfg.max_total_upload_bytes)
         path.unlink(missing_ok=True)
         with metadata.connect() as connection: connection.execute("DELETE FROM upload_sessions WHERE upload_id=?",(upload_id,))
-        return {"file":record,"inspection":inspect_tabular_file(Path(str(record["stored_path"])))}
+        return {"file":record,"inspection":inspect_tabular_file_with_profiles(Path(str(record["stored_path"])))}
 
     @app.post("/api/catalogs")
     def create_catalog(payload: CatalogCreate) -> dict[str, object]: return catalogs.create(payload.name, payload.source_file_id, payload.group_code_column)
