@@ -207,6 +207,170 @@ class TaskService:
         name = str(row["name"] or "").strip()
         return name or None
 
+    def _profile_contract(
+        self,
+        profile_id: object | None,
+        version_no: object | None,
+    ) -> tuple[str, list[dict[str, object]]]:
+        if not profile_id or version_no is None:
+            return "single", []
+        with self.repo.connect() as connection:
+            row = connection.execute(
+                "SELECT document,status FROM profile_versions WHERE profile_id=? AND version_no=?",
+                (str(profile_id), int(version_no)),
+            ).fetchone()
+        if row is None or str(row["status"] or "") != "PUBLISHED":
+            raise DomainError(
+                "PROFILE_VERSION_NOT_FOUND",
+                "任务引用的匹配方案发布版本不存在",
+                status_code=422,
+                details={"profile_id": str(profile_id), "version_no": int(version_no)},
+            )
+        try:
+            document = json.loads(str(row["document"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            raise DomainError("INVALID_PROFILE", "匹配方案版本内容无法解析", status_code=422) from exc
+        advanced = document.get("advanced") if isinstance(document, dict) else {}
+        kind = str(advanced.get("profile_kind") or "single").strip().lower() if isinstance(advanced, dict) else "single"
+        if kind != "composite":
+            return "single", []
+        raw_children = advanced.get("composite_children") if isinstance(advanced, dict) else None
+        if not isinstance(raw_children, list) or len(raw_children) < 2:
+            raise DomainError("INVALID_PROFILE", "组合匹配方案缺少已冻结的子方案版本", status_code=422)
+        children: list[dict[str, object]] = []
+        seen_profiles: set[str] = set()
+        for index, raw in enumerate(raw_children, start=1):
+            if not isinstance(raw, dict):
+                raise DomainError("INVALID_PROFILE", f"第 {index} 个子方案引用格式不正确", status_code=422)
+            child_id = str(raw.get("profile_id") or "").strip()
+            try:
+                child_version = int(raw.get("version_no"))
+            except (TypeError, ValueError):
+                child_version = 0
+            if not child_id or child_version <= 0:
+                raise DomainError("INVALID_PROFILE", f"第 {index} 个子方案版本不完整", status_code=422)
+            if child_id in seen_profiles:
+                raise DomainError(
+                    "INVALID_PROFILE",
+                    "同一个子方案不能在一次组合任务中绑定多个目标文件",
+                    status_code=422,
+                    details={"profile_id": child_id},
+                )
+            self._validate_template_source(child_id, child_version)
+            seen_profiles.add(child_id)
+            children.append({"profile_id": child_id, "version_no": child_version})
+        return "composite", children
+
+    def _draft_targets(self, draft_id: str) -> list[dict[str, object]]:
+        with self.repo.connect() as connection:
+            rows = connection.execute(
+                """SELECT profile_id,profile_version,catalog_version_id,binding_order
+                   FROM task_draft_targets WHERE draft_id=?
+                   ORDER BY binding_order,profile_id""",
+                (draft_id,),
+            ).fetchall()
+        return [
+            {
+                "profile_id": str(row["profile_id"]),
+                "version_no": int(row["profile_version"]),
+                "catalog_version_id": str(row["catalog_version_id"]) if row["catalog_version_id"] else None,
+            }
+            for row in rows
+        ]
+
+    def _replace_draft_targets(
+        self,
+        draft_id: str,
+        bindings: object,
+        *,
+        expected_children: list[dict[str, object]] | None = None,
+    ) -> None:
+        if bindings is None:
+            bindings = []
+        if not isinstance(bindings, list):
+            raise DomainError("INVALID_REQUEST", "组合任务目标文件映射必须是列表", status_code=422)
+        normalized: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for index, raw in enumerate(bindings, start=1):
+            if not isinstance(raw, dict):
+                raise DomainError("INVALID_REQUEST", f"第 {index} 个目标文件映射格式不正确", status_code=422)
+            profile_id = str(raw.get("profile_id") or "").strip()
+            try:
+                version_no = int(raw.get("version_no"))
+            except (TypeError, ValueError):
+                version_no = 0
+            catalog_version_id = str(raw.get("catalog_version_id") or "").strip() or None
+            if not profile_id or version_no <= 0:
+                raise DomainError("INVALID_REQUEST", f"第 {index} 个目标文件必须关联明确的子方案版本", status_code=422)
+            if profile_id in seen:
+                raise DomainError("INVALID_REQUEST", "同一个子方案只能绑定一个目标文件", status_code=422)
+            seen.add(profile_id)
+            normalized.append(
+                {
+                    "profile_id": profile_id,
+                    "version_no": version_no,
+                    "catalog_version_id": catalog_version_id,
+                }
+            )
+        if expected_children is not None:
+            expected = {(str(item["profile_id"]), int(item["version_no"])) for item in expected_children}
+            actual = {(str(item["profile_id"]), int(item["version_no"])) for item in normalized}
+            if actual != expected:
+                raise DomainError(
+                    "COMPOSITE_TARGET_MISMATCH",
+                    "组合任务的目标文件必须与已发布子方案版本一一对应",
+                    status_code=422,
+                    details={
+                        "expected": [
+                            {"profile_id": profile_id, "version_no": version_no}
+                            for profile_id, version_no in sorted(expected)
+                        ],
+                        "actual": [
+                            {"profile_id": profile_id, "version_no": version_no}
+                            for profile_id, version_no in sorted(actual)
+                        ],
+                    },
+                )
+        with self.repo.connect() as connection:
+            connection.execute("DELETE FROM task_draft_targets WHERE draft_id=?", (draft_id,))
+            for order, item in enumerate(normalized):
+                connection.execute(
+                    """INSERT INTO task_draft_targets(
+                           draft_id,profile_id,profile_version,catalog_version_id,binding_order
+                       ) VALUES(?,?,?,?,?)""",
+                    (
+                        draft_id,
+                        str(item["profile_id"]),
+                        int(item["version_no"]),
+                        item["catalog_version_id"],
+                        order,
+                    ),
+                )
+
+    def _sync_template_targets(
+        self,
+        draft_id: str,
+        profile_id: object | None,
+        version_no: object | None,
+    ) -> tuple[str, list[dict[str, object]]]:
+        kind, children = self._profile_contract(profile_id, version_no)
+        if kind != "composite":
+            self._replace_draft_targets(draft_id, [])
+            return kind, children
+        existing = {
+            (str(item["profile_id"]), int(item["version_no"])): item.get("catalog_version_id")
+            for item in self._draft_targets(draft_id)
+        }
+        seeded = [
+            {
+                **child,
+                "catalog_version_id": existing.get((str(child["profile_id"]), int(child["version_no"]))),
+            }
+            for child in children
+        ]
+        self._replace_draft_targets(draft_id, seeded, expected_children=children)
+        return kind, children
+
     @staticmethod
     @staticmethod
     def snapshot_scheme_name(snapshot: object) -> str | None:
@@ -294,27 +458,31 @@ class TaskService:
                         created_at,
                     ),
                 )
+        if template_profile_id is not None and template_profile_version is not None:
+            self._sync_template_targets(draft_id, template_profile_id, template_profile_version)
         return self.get_draft(draft_id)
 
     def list_drafts(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
             rows = connection.execute("SELECT * FROM task_drafts ORDER BY updated_at DESC").fetchall()
-        return [self.repo.decode(row, ("config_document",)) or {} for row in rows]
+        result: list[dict[str, object]] = []
+        for row in rows:
+            item = self.repo.decode(row, ("config_document",)) or {}
+            item["composite_targets"] = self._draft_targets(str(item["draft_id"]))
+            result.append(item)
+        return result
 
     def get_draft(self, draft_id: str) -> dict[str, object]:
         with self.repo.connect() as connection:
             row = connection.execute("SELECT * FROM task_drafts WHERE draft_id=?", (draft_id,)).fetchone()
         if row is None:
             raise DomainError("TASK_DRAFT_NOT_FOUND", "任务草稿不存在", status_code=404)
-        return self.repo.decode(row, ("config_document",)) or {}
+        item = self.repo.decode(row, ("config_document",)) or {}
+        item["composite_targets"] = self._draft_targets(draft_id)
+        return item
 
     def patch_draft(self, draft_id: str, payload: dict[str, Any]) -> dict[str, object]:
-        """Persist an in-progress workspace without requiring a runnable MatchingConfig.
-
-        STEP1 is intentionally allowed to be incomplete: users can have only a source file,
-        half-finished field mappings, or temporarily invalid thresholds while editing. Full
-        validation still happens in ``save_rules`` / ``start`` before execution.
-        """
+        """Persist an incomplete workspace, including composite child target bindings."""
         draft = self.get_draft(draft_id)
         allowed = {
             "name",
@@ -323,6 +491,7 @@ class TaskService:
             "template_profile_id",
             "template_profile_version",
             "config_document",
+            "composite_targets",
         }
         unknown = set(payload) - allowed
         if unknown:
@@ -336,11 +505,12 @@ class TaskService:
         template_profile_id = payload.get("template_profile_id", draft.get("template_profile_id"))
         template_profile_version = payload.get("template_profile_version", draft.get("template_profile_version"))
         if template_profile_id is None and template_profile_version is None:
-            pass
+            kind, children = "single", []
         elif template_profile_id is None or template_profile_version is None:
             raise DomainError("PROFILE_VERSION_NOT_FOUND", "匹配方案来源必须同时包含方案和版本", status_code=422)
         else:
             self._validate_template_source(str(template_profile_id), int(template_profile_version))
+            kind, children = self._profile_contract(template_profile_id, template_profile_version)
 
         updates: list[str] = []
         values: list[object] = []
@@ -351,14 +521,15 @@ class TaskService:
             "template_profile_id",
             "template_profile_version",
         ):
-            if field in payload:
-                value = payload[field]
-                if field == "name":
-                    # Legacy clients may still send name; it is accepted for API
-                    # compatibility and then ignored — drafts have no business name.
-                    continue
-                updates.append(f"{field}=?")
-                values.append(value)
+            if field not in payload:
+                continue
+            value = payload[field]
+            if field == "name":
+                continue
+            if field == "catalog_version_id" and kind == "composite":
+                value = None
+            updates.append(f"{field}=?")
+            values.append(value)
 
         if "config_document" in payload:
             document = payload.get("config_document")
@@ -369,18 +540,38 @@ class TaskService:
             updates.append("config_document=?")
             values.append(_canonical(document))
 
-        if not updates:
-            return draft
-        if any(key in payload for key in ("source_file_id", "catalog_version_id", "config_document")):
-            updates.append("current_step=2")
-        updates.append("updated_at=?")
-        values.append(_now())
-        values.append(draft_id)
-        with self.repo.connect() as connection:
-            connection.execute(
-                f"UPDATE task_drafts SET {', '.join(updates)} WHERE draft_id=?",
-                tuple(values),
-            )
+        if updates:
+            if any(key in payload for key in ("source_file_id", "catalog_version_id", "config_document", "composite_targets")):
+                updates.append("current_step=2")
+            updates.append("updated_at=?")
+            values.append(_now())
+            values.append(draft_id)
+            with self.repo.connect() as connection:
+                connection.execute(
+                    f"UPDATE task_drafts SET {', '.join(updates)} WHERE draft_id=?",
+                    tuple(values),
+                )
+
+        template_changed = any(key in payload for key in ("template_profile_id", "template_profile_version"))
+        if kind == "composite":
+            if "composite_targets" in payload:
+                self._replace_draft_targets(
+                    draft_id,
+                    payload.get("composite_targets"),
+                    expected_children=children,
+                )
+            elif template_changed:
+                self._sync_template_targets(draft_id, template_profile_id, template_profile_version)
+        elif template_changed or "composite_targets" in payload:
+            if payload.get("composite_targets"):
+                raise DomainError("INVALID_REQUEST", "普通匹配方案不能配置多个目标文件", status_code=422)
+            self._replace_draft_targets(draft_id, [])
+        if "composite_targets" in payload:
+            with self.repo.connect() as connection:
+                connection.execute(
+                    "UPDATE task_drafts SET current_step=2,updated_at=? WHERE draft_id=?",
+                    (_now(), draft_id),
+                )
         return self.get_draft(draft_id)
 
     def save_data(self, draft_id: str, payload: dict[str, Any]) -> dict[str, object]:
@@ -391,12 +582,36 @@ class TaskService:
             template_profile_id = draft.get("template_profile_id")
         if template_profile_version is None:
             template_profile_version = draft.get("template_profile_version")
+        if template_profile_id is None and template_profile_version is None:
+            kind, children = "single", []
+        elif template_profile_id is None or template_profile_version is None:
+            raise DomainError("PROFILE_VERSION_NOT_FOUND", "匹配方案来源必须同时包含方案和版本", status_code=422)
+        else:
+            self._validate_template_source(str(template_profile_id), int(template_profile_version))
+            kind, children = self._profile_contract(template_profile_id, template_profile_version)
+
+        source_file_id = payload.get("source_file_id")
+        if not source_file_id:
+            raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择待匹配源数据", status_code=422)
+
+        catalog_version_id = payload.get("catalog_version_id")
+        if kind == "composite":
+            bindings = payload.get("composite_targets", draft.get("composite_targets"))
+            self._replace_draft_targets(draft_id, bindings, expected_children=children)
+            catalog_version_id = None
+        elif not catalog_version_id:
+            raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择集团码标准数据", status_code=422)
+        else:
+            self._replace_draft_targets(draft_id, [])
+
         with self.repo.connect() as connection:
             connection.execute(
-                """UPDATE task_drafts SET source_file_id=?, catalog_version_id=?, template_profile_id=?, template_profile_version=?, current_step=2, updated_at=? WHERE draft_id=?""",
+                """UPDATE task_drafts SET source_file_id=?, catalog_version_id=?,
+                          template_profile_id=?, template_profile_version=?,
+                          current_step=2, updated_at=? WHERE draft_id=?""",
                 (
-                    payload.get("source_file_id"),
-                    payload.get("catalog_version_id"),
+                    source_file_id,
+                    catalog_version_id,
                     template_profile_id,
                     template_profile_version,
                     _now(),
@@ -436,24 +651,67 @@ class TaskService:
         input_assets: dict[str, dict[str, object]] | None = None,
     ) -> dict[str, object]:
         draft = self.get_draft(draft_id)
-        if not draft.get("source_file_id") or not draft.get("catalog_version_id"):
-            raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据和集团码目录", status_code=422)
+        if not draft.get("source_file_id"):
+            raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择客户物料数据", status_code=422)
+        kind, children = self._profile_contract(
+            draft.get("template_profile_id"),
+            draft.get("template_profile_version"),
+        )
+        bindings = list(draft.get("composite_targets") or [])
+        if kind == "composite":
+            expected = {(str(item["profile_id"]), int(item["version_no"])) for item in children}
+            actual = {
+                (str(item.get("profile_id") or ""), int(item.get("version_no") or 0))
+                for item in bindings
+                if item.get("catalog_version_id")
+            }
+            if actual != expected:
+                raise DomainError(
+                    "TASK_DRAFT_INCOMPLETE",
+                    "请为组合方案的每个子方案选择对应的集团码目标文件",
+                    status_code=422,
+                )
+            compatibility_catalog_version_id = str(bindings[0]["catalog_version_id"])
+        else:
+            if not draft.get("catalog_version_id"):
+                raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择集团码目录", status_code=422)
+            compatibility_catalog_version_id = str(draft["catalog_version_id"])
+
         bound_document = self.dictionaries.bind_references(dict(draft.get("config_document") or {}))
         config = MatchingConfig.model_validate(bound_document)
-        if not config.rules:
+        if kind != "composite" and not config.rules:
             raise DomainError("INVALID_PROFILE", "至少配置一条字段对应关系后才能开始比对", status_code=422)
         snapshot = config.model_dump(mode="json")
+        advanced = dict(snapshot.get("advanced") or {})
+        if kind == "composite":
+            advanced["profile_kind"] = "composite"
+            advanced["composite_run"] = [
+                {
+                    "profile_id": str(item["profile_id"]),
+                    "version_no": int(item["version_no"]),
+                    "catalog_version_id": str(item["catalog_version_id"]),
+                }
+                for item in bindings
+            ]
+        snapshot["advanced"] = advanced
         scheme_name = self._freeze_scheme_name(snapshot, draft)
         if input_assets:
             advanced = dict(snapshot.get("advanced") or {})
             advanced[INPUT_ASSET_SNAPSHOT_KEY] = {
                 role: {
                     key: asset.get(key)
-                    for key in ("file_id", "original_name", "uploaded_at", "catalog_version_id")
+                    for key in (
+                        "file_id",
+                        "original_name",
+                        "uploaded_at",
+                        "catalog_version_id",
+                        "profile_id",
+                        "profile_version",
+                    )
                     if asset.get(key) is not None
                 }
                 for role, asset in input_assets.items()
-                if role in {"source", "target"}
+                if role in {"source", "target"} or role.startswith("target.")
             }
             snapshot["advanced"] = advanced
         encoded = _canonical(snapshot)
@@ -469,7 +727,7 @@ class TaskService:
                     task_id,
                     internal_name,
                     draft["source_file_id"],
-                    draft["catalog_version_id"],
+                    compatibility_catalog_version_id,
                     draft.get("template_profile_id"),
                     draft.get("template_profile_version"),
                     encoded,
@@ -488,14 +746,16 @@ class TaskService:
                 ),
             )
             if input_assets:
-                for role in ("source", "target"):
-                    asset = input_assets.get(role)
+                for role, asset in input_assets.items():
+                    if role not in {"source", "target"} and not role.startswith("target."):
+                        continue
                     if not asset:
                         continue
                     connection.execute(
                         """INSERT INTO task_input_assets(
-                               task_id,asset_role,file_id,original_name,uploaded_at,frozen_at,catalog_version_id
-                           ) VALUES(?,?,?,?,?,?,?)""",
+                               task_id,asset_role,file_id,original_name,uploaded_at,frozen_at,
+                               catalog_version_id,profile_id,profile_version
+                           ) VALUES(?,?,?,?,?,?,?,?,?)""",
                         (
                             task_id,
                             role,
@@ -504,6 +764,8 @@ class TaskService:
                             str(asset.get("uploaded_at") or "") or None,
                             created_at,
                             str(asset.get("catalog_version_id") or "") or None,
+                            str(asset.get("profile_id") or "") or None,
+                            int(asset["profile_version"]) if asset.get("profile_version") is not None else None,
                         ),
                     )
             connection.execute(
@@ -523,6 +785,8 @@ class TaskService:
                         "created_by": actor_name,
                         "started_by": actor_name,
                         "input_assets_frozen": bool(input_assets),
+                        "input_asset_count": len(input_assets or {}),
+                        "composite": kind == "composite",
                     }),
                     created_at,
                 ),

@@ -12,6 +12,9 @@ const requiredResults = [
   '下载原始文件',
   '本次匹配结果',
   '输出资料',
+  'latestInputAssets.targets',
+  'profile_name',
+  'compositeTargetLabel',
 ]
 for (const token of requiredResults) {
   if (!results.includes(token)) throw new Error(`ResultsView missing task-input traceability token: ${token}`)
@@ -24,6 +27,8 @@ const requiredWorkspace = [
   '本次使用的原始文件',
   '下载原始文件',
   '输出资料',
+  'taskInputAssets.targets',
+  'taskInputTargetLabel',
 ]
 for (const token of requiredWorkspace) {
   if (!workspace.includes(token)) throw new Error(`TaskWorkspaceBase missing task-input traceability token: ${token}`)

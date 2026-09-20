@@ -321,6 +321,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type=str(download["media_type"]),
         )
 
+    @app.get("/api/tasks/{task_id}/input-files/targets/{profile_id}")
+    def composite_task_target_file(task_id: str, profile_id: str) -> FileResponse:
+        download = task_input_assets.download_target(task_id, profile_id)
+        return FileResponse(
+            path=Path(download["path"]),
+            filename=str(download["filename"]),
+            media_type=str(download["media_type"]),
+        )
+
     @app.get("/api/tasks/{task_id}/calibration")
     def calibration_statistics(task_id: str) -> dict[str, object]:
         return calibration.statistics(task_id)

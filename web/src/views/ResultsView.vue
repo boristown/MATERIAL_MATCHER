@@ -71,11 +71,17 @@ type InputAssetInfo = {
   available: boolean
   download_url?: string | null
   message?: string | null
+  profile_id?: string | null
+  profile_name?: string | null
+  profile_version?: number | null
+  catalog_version_id?: string | null
 }
 
 type InputAssetBundle = {
+  composite?: boolean
   source?: InputAssetInfo | null
   target?: InputAssetInfo | null
+  targets?: InputAssetInfo[]
 }
 
 const router = useRouter()
@@ -88,7 +94,7 @@ const latestInputAssets = ref<InputAssetBundle>({})
 const loading = ref(true)
 const downloadingTaskId = ref('')
 const downloadingExportKey = ref('')
-const downloadingInputRole = ref<'source' | 'target' | ''>('')
+const downloadingInputRole = ref('')
 
 const stageLabels: Record<string, string> = { CALCULATE: '比对计算', REVIEW: '人工处理', RESULT: '生成结果' }
 const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING']
@@ -374,7 +380,13 @@ function inputAssetMeta(asset: InputAssetInfo | null | undefined): string {
   return '任务启动时已冻结原始文件引用'
 }
 
-function downloadInputAsset(asset: InputAssetInfo | null | undefined, role: 'source' | 'target'): void {
+function compositeTargetLabel(asset: InputAssetInfo, index: number): string {
+  const name = String(asset.profile_name || '').trim()
+  const version = asset.profile_version ? ` · v${asset.profile_version}` : ''
+  return `${name || `子方案 ${index + 1}`}${version}`
+}
+
+function downloadInputAsset(asset: InputAssetInfo | null | undefined, role: string): void {
   if (!asset?.available || !asset.download_url) {
     ElMessage.warning(asset?.message || '该历史任务的原始文件已无法确认')
     return
@@ -487,7 +499,27 @@ onMounted(load)
                   @click="downloadInputAsset(latestInputAssets.source, 'source')"
                 >下载原始文件</el-button>
               </div>
-              <div class="result-input-asset-row">
+              <template v-if="latestInputAssets.composite">
+                <div
+                  v-for="(asset, index) in (latestInputAssets.targets ?? [])"
+                  :key="`${asset.profile_id ?? index}-${asset.profile_version ?? ''}`"
+                  class="result-input-asset-row"
+                >
+                  <div class="result-input-asset-kind">{{ compositeTargetLabel(asset, index) }}</div>
+                  <div class="result-input-asset-file">
+                    <b>{{ inputAssetDisplayName(asset) }}</b>
+                    <span>{{ inputAssetMeta(asset) }}</span>
+                  </div>
+                  <el-button
+                    type="primary"
+                    plain
+                    :loading="downloadingInputRole === `target.${asset.profile_id ?? index}`"
+                    :disabled="!asset.available"
+                    @click="downloadInputAsset(asset, `target.${asset.profile_id ?? index}`)"
+                  >下载原始文件</el-button>
+                </div>
+              </template>
+              <div v-else class="result-input-asset-row">
                 <div class="result-input-asset-kind">集团码标准数据</div>
                 <div class="result-input-asset-file">
                   <b>{{ inputAssetDisplayName(latestInputAssets.target) }}</b>

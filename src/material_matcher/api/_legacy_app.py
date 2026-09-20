@@ -73,20 +73,28 @@ class DraftCreate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
 
 
+class CompositeTargetBinding(BaseModel):
+    profile_id: str = Field(min_length=1, max_length=120)
+    version_no: int = Field(ge=1)
+    catalog_version_id: str | None = Field(default=None, min_length=1)
+
+
 class DraftPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     source_file_id: str | None = None
     catalog_version_id: str | None = None
     template_profile_id: str | None = None
     template_profile_version: int | None = None
+    composite_targets: list[CompositeTargetBinding] | None = None
     config_document: dict[str, object] | None = None
 
 
 class DraftData(BaseModel):
     source_file_id: str
-    catalog_version_id: str
+    catalog_version_id: str | None = None
     template_profile_id: str | None = None
     template_profile_version: int | None = None
+    composite_targets: list[CompositeTargetBinding] | None = None
 
 
 class CatalogCreate(BaseModel):
@@ -465,10 +473,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             files.get(str(source_file_id))
         if catalog_version_id is not None:
             get_catalog_version(str(catalog_version_id))
+        for binding in changes.get("composite_targets") or []:
+            if binding.get("catalog_version_id"):
+                get_catalog_version(str(binding["catalog_version_id"]))
         return tasks.patch_draft(draft_id, changes)
 
     @app.put("/api/task-drafts/{draft_id}/data")
-    def save_draft_data(draft_id: str, payload: DraftData) -> dict[str, object]: files.get(payload.source_file_id); get_catalog_version(payload.catalog_version_id); return tasks.save_data(draft_id,payload.model_dump())
+    def save_draft_data(draft_id: str, payload: DraftData) -> dict[str, object]:
+        files.get(payload.source_file_id)
+        if payload.catalog_version_id:
+            get_catalog_version(payload.catalog_version_id)
+        data = payload.model_dump()
+        for binding in data.get("composite_targets") or []:
+            if binding.get("catalog_version_id"):
+                get_catalog_version(str(binding["catalog_version_id"]))
+        return tasks.save_data(draft_id, data)
     @app.put("/api/task-drafts/{draft_id}/rules")
     async def save_draft_rules(draft_id: str, request: Request) -> dict[str, object]:
         document=await request.json()
