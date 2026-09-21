@@ -47,6 +47,7 @@ def _config() -> MatchingConfig:
                 },
             ],
             "decision": {
+                "tie_break": "review",
                 "success_threshold": 78,
                 "review_enabled": True,
                 "review_threshold": 50,

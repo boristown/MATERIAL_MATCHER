@@ -50,3 +50,9 @@ def test_critical_conflict_blocks_auto_match_without_zeroing_total_score():
     assert score.display_score == 90
     assert score.critical_conflict is True
     assert score.auto_match_safe is False
+
+
+def test_tie_break_default_auto_selects_first_candidate():
+    from material_matcher.domain.models import DecisionConfig
+    assert DecisionConfig().tie_break == "top1"
+    assert DecisionConfig(tie_break="review").tie_break == "review"

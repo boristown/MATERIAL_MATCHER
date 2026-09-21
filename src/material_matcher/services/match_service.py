@@ -470,6 +470,11 @@ class MatchService:
             if task is None: raise DomainError("TASK_NOT_FOUND","任务不存在",status_code=404)
             if task["status"] != "COMPLETED": raise DomainError("TASK_STATE_CONFLICT","任务尚未完成比对,不能调整阈值",status_code=409)
             if task["result_file_id"]: raise DomainError("TASK_STATE_CONFLICT","最终结果已生成;调整阈值请先联系管理员重置结果或新建任务",status_code=409)
+            tie_break="top1"
+            try:
+                tie_break=str((json.loads(str(task["config_snapshot"] or "{}")).get("decision") or {}).get("tie_break","top1"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
             rows=connection.execute("""SELECT m.source_row_id,m.current_status,m.final_group_code,m.top1_score,m.second_score,m.top1_group_code,m.critical_conflict,c2.target_group_code AS second_group_code FROM match_items m LEFT JOIN match_candidates c2 ON c2.task_id=m.task_id AND c2.source_row_id=m.source_row_id AND c2.rank=2 WHERE m.task_id=? AND m.current_status IN ('MATCHED','REVIEW','UNMATCHED') AND NOT EXISTS(SELECT 1 FROM reviews r WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id)""",(task_id,)).fetchall()
             before={"matched":0,"review":0,"unmatched":0}; after={"matched":0,"review":0,"unmatched":0}; changes=[]; critical_protected=0; ambiguity_protected=0; protected_rows:set[str]=set()
             for row in rows:
@@ -480,8 +485,8 @@ class MatchService:
                 if new=="MATCHED":
                     critical=bool(row["critical_conflict"]); second_group=row["second_group_code"]; ambiguous=second_group is not None and row["top1_group_code"] is not None and float(row["second_score"] or 0.0)==score and str(second_group)!=str(row["top1_group_code"])
                     if critical: critical_protected+=1; protected_rows.add(str(row["source_row_id"]))
-                    if ambiguous: ambiguity_protected+=1; protected_rows.add(str(row["source_row_id"]))
-                    if critical or ambiguous: new,final="REVIEW",None
+                    if ambiguous and tie_break=="review": ambiguity_protected+=1; protected_rows.add(str(row["source_row_id"]))
+                    if critical or (ambiguous and tie_break=="review"): new,final="REVIEW",None
                 after["matched" if new=="MATCHED" else ("review" if new=="REVIEW" else "unmatched")]+=1
                 if new != old or (new=="MATCHED" and final != row["final_group_code"]): changes.append((new,final,str(row["source_row_id"])))
             if mode=="apply":

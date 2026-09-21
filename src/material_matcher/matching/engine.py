@@ -228,10 +228,11 @@ def _row_result(
         if competitor is not None and first - competitor.score < required_gap:
             status = _unsafe_match_status(config)
 
-    # Backward-compatible ambiguity protection: an exact tied alternative with a
-    # different group code is never auto-released.
+    # 并列保护策略：tie_break=top1（默认）时同分并列自动取第一条；
+    # tie_break=review 时同分不同码转人工。最小分差与 critical 冲突保护始终生效。
     if (
         status == "MATCHED"
+        and config.decision.tie_break == "review"
         and config.decision.review_enabled
         and len(candidates) > 1
         and candidates[1].score == first
