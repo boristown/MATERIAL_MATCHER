@@ -464,7 +464,7 @@ class TaskService:
 
     def list_drafts(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
-            rows = connection.execute("SELECT * FROM task_drafts ORDER BY updated_at DESC").fetchall()
+            rows = connection.execute("SELECT * FROM task_drafts WHERE source_file_id IS NOT NULL OR catalog_version_id IS NOT NULL ORDER BY updated_at DESC").fetchall()
         result: list[dict[str, object]] = []
         for row in rows:
             item = self.repo.decode(row, ("config_document",)) or {}

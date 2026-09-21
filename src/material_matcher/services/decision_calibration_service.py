@@ -290,7 +290,7 @@ class DecisionCalibrationService:
         try:
             document = json.loads(str(task["config_snapshot"] or "{}"))
             decision = document.get("decision", {}) if isinstance(document, dict) else {}
-            return float(decision.get("success_threshold", 88)), float(decision.get("review_threshold", 75))
+            return float(decision.get("success_threshold", 50)), float(decision.get("review_threshold", 75))
         except (TypeError, ValueError, json.JSONDecodeError):
             return 88.0, 75.0
 

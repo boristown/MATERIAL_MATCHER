@@ -3537,7 +3537,7 @@
       "decision": {
        "review_enabled": true,
        "review_threshold": 75,
-       "success_threshold": 88,
+       "success_threshold": 50,
        "top_n": 5
       },
       "retrieval": {
@@ -5757,7 +5757,7 @@
       "decision": {
        "review_enabled": true,
        "review_threshold": 75,
-       "success_threshold": 88,
+       "success_threshold": 50,
        "top_n": 5
       },
       "retrieval": {
@@ -8236,7 +8236,7 @@
       "decision": {
        "review_enabled": true,
        "review_threshold": 75,
-       "success_threshold": 88,
+       "success_threshold": 50,
        "top_n": 5
       },
       "retrieval": {
@@ -10569,7 +10569,7 @@
       "decision": {
        "review_enabled": true,
        "review_threshold": 75,
-       "success_threshold": 88,
+       "success_threshold": 50,
        "top_n": 5
       },
       "retrieval": {
@@ -12654,7 +12654,7 @@
       "decision": {
        "review_enabled": true,
        "review_threshold": 75,
-       "success_threshold": 88,
+       "success_threshold": 50,
        "top_n": 5
       },
       "retrieval": {
@@ -14552,7 +14552,7 @@
       "scope_mode": "GLOBAL",
       "rules": [],
       "decision": {
-       "success_threshold": 88,
+       "success_threshold": 50,
        "review_enabled": true,
        "review_threshold": 75,
        "top_n": 5
