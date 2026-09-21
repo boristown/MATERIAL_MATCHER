@@ -195,3 +195,27 @@ print('done')
 exit
 ```
 页面刷新即净。以后每次大批量编辑方案后可重复 12.3（约 20 秒）。
+
+## 13. 现场排障记录：过滤器"装了没生效"（2026-09-21，先存档再操作）
+现象：客户机 `grep -n "FROM task_drafts" services/task_service.py` 显示两行，
+**第一行（列表查询）没有 WHERE** —— 说明当初第 2 节那条 sed 实际没落上
+（常见原因：当时在错误目录/错误文件敲、或敲后未重启容器）。
+第二行是"按 draft_id 查单条"，本来就不应有过滤，忽略。
+
+正确补法（容器内，逐行看回显）：
+```
+cd /opt/material_matcher/current/app/material_matcher
+sed -i 's|task_drafts ORDER BY|task_drafts WHERE source_file_id IS NOT NULL ORDER BY|' services/task_service.py
+grep -c "IS NOT NULL" services/task_service.py        # 必须回显 1
+python3 -m py_compile services/task_service.py        # 必须无输出
+```
+回宿主机：
+```
+exit
+docker restart material_matcher-app
+```
+浏览器 Ctrl+F5。此后 STEP2 列表接口层面不再返回空壳草稿；
+编辑方案若做过"传文件试算"，产生的带文件草稿仍会短暂可见——用 12.3 的 REPL 清理即可（v1.3.17 根因修复后不再产生）。
+
+注意：12.2 的旧 sed 模式串是 `task_drafts ORDER`（无 BY），若该字符串在目标文件出现于别处也可能误替换；
+本节模式 `task_drafts ORDER BY` 更精确，以此为准。改错可用 services/task_service.py.bak2（12.2 有备份习惯）或重敲反向 sed 还原。
