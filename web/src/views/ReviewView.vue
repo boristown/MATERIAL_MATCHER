@@ -195,8 +195,8 @@ const selectedFieldIds = ref<string[]>([])
 const fieldSelectionTouched = ref(false)
 const showAllFields = ref(false)
 
-const currentSuccessThreshold = ref(88)
-const draftSuccessThreshold = ref(88)
+const currentSuccessThreshold = ref(50)
+const draftSuccessThreshold = ref(50)
 const thresholdPreview = ref<ThresholdPreview | null>(null)
 const thresholdPreviewSignature = ref('')
 const previewBusy = ref(false)
@@ -677,7 +677,7 @@ async function loadCalibration(taskId: string, fallbackConfig?: any): Promise<vo
     top1Histogram.value = normalizeHistogram(data?.top1_score_histogram)
     gapHistogram.value = normalizeHistogram(data?.top1_top2_gap_histogram)
   } catch (error) {
-    currentSuccessThreshold.value = Number.isFinite(fallbackSuccess) ? fallbackSuccess : 88
+    currentSuccessThreshold.value = Number.isFinite(fallbackSuccess) ? fallbackSuccess : 50
     draftSuccessThreshold.value = currentSuccessThreshold.value
     top1Histogram.value = []
     gapHistogram.value = []

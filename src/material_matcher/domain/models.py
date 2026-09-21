@@ -51,7 +51,7 @@ class FieldRule(BaseModel):
 
 
 class DecisionConfig(BaseModel):
-    success_threshold: int = Field(default=88, ge=0, le=100)
+    success_threshold: int = Field(default=50, ge=0, le=100)
     review_enabled: bool = True
     top_n: int = Field(default=5, ge=1, le=50)
     tie_break: Literal["review", "top1"] = "top1"
