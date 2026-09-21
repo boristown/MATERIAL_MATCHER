@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "material-matcher"
-version = "1.3.12"
+version = "1.3.13"
 description = "Configurable material group-code matching engine"
 readme = "README.md"
 requires-python = ">=3.10"

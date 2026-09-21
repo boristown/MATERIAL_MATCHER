@@ -131,11 +131,12 @@ const waitingState = computed(() => {
   }
   if (task.status === 'COMPLETED' && task.stage === 'REVIEW') {
     return {
-      title: '正在等待第三步人工处理完成',
-      description: `方案「${task.scheme_name}」已完成计算，但仍有记录需要人工处理，完成后才能形成正式结果。`,
+      title: '第三步人工处理尚未全部完成',
+      description: `方案「${task.scheme_name}」已完成计算。可以只处理一部分后先行生成结果：未处理行的集团码会留空并列入“未匹配清单”，稍后继续处理并重新生成即可。`,
       action: '进入人工处理',
       path: `/tasks/${task.id}`,
       showProgress: false,
+      forceGenerate: true,
     }
   }
   if (task.status === 'COMPLETED' && task.stage === 'RESULT') {
@@ -336,6 +337,21 @@ async function loadLatestDetails(task: TaskRow): Promise<void> {
   latestRows.value = summaryResponse.data?.preview_rows ?? previewResponse.data?.rows ?? []
   latestExports.value = exportResponse.data ?? {}
   latestInputAssets.value = inputAssetsResponse.data ?? {}
+}
+
+const forceBusy = ref(false)
+async function forceGenerate(): Promise<void> {
+  if (!pendingTask.value) return
+  forceBusy.value = true
+  try {
+    await api.post(`/tasks/${pendingTask.value.id}/finalize`, { allow_unresolved_review: true })
+    ElMessage.success('最终结果已生成：未处理行集团码留空并列入未匹配清单，可稍后继续处理并重新生成')
+    await load()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    forceBusy.value = false
+  }
 }
 
 async function load(): Promise<void> {
@@ -684,6 +700,7 @@ onMounted(load)
             <el-progress v-if="waitingState.showProgress" :percentage="Math.round(pendingTask.progress)" :stroke-width="10" class="result-wait-progress"/>
             <div class="result-state-actions">
               <el-button type="primary" @click="router.push(waitingState.path)">{{ waitingState.action }}</el-button>
+              <el-button v-if="waitingState.forceGenerate" :loading="forceBusy" @click="forceGenerate">生成最终结果（未处理行留空）</el-button>
               <el-button @click="router.push('/tasks')">查看匹配列表</el-button>
             </div>
           </div>

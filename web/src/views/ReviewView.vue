@@ -645,6 +645,27 @@ async function refreshSummary(taskId: string): Promise<void> {
     row.total = row.matched + row.review + row.confirmed + row.unmatched
   }
 }
+const finalBusy = ref(false)
+async function finalizeNow(): Promise<void> {
+  if (!activeTaskId.value) { ElMessage.info('请先在上方选择任务'); return }
+  const pending = Number(summary.value.pending_review ?? 0)
+  if (pending > 0) {
+    try {
+      await ElMessageBox.confirm(`仍有 ${pending} 条待人工确认。继续生成后这些行集团码留空并列入“未匹配清单”，可稍后继续处理并重新生成。`, '生成最终结果', { confirmButtonText: '继续生成', cancelButtonText: '返回处理', type: 'warning' })
+    } catch { return }
+  }
+  finalBusy.value = true
+  try {
+    await api.post(`/tasks/${activeTaskId.value}/finalize`, { allow_unresolved_review: true })
+    ElMessage.success('最终结果已生成，正在打开第四步')
+    router.push(`/results?task=${activeTaskId.value}`)
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '生成最终结果失败'))
+  } finally {
+    finalBusy.value = false
+  }
+}
+
 async function loadCalibration(taskId: string, fallbackConfig?: any): Promise<void> {
   const fallbackDecision = fallbackConfig?.decision ?? {}
   const fallbackSuccess = Number(fallbackDecision.success_threshold ?? 88)
@@ -953,6 +974,7 @@ onBeforeUnmount(() => {
         <template v-if="activeTaskId">
           <el-button @click="downloadManualWorkbook(activeTaskId)">下载人工匹配 Excel</el-button>
           <el-button :loading="importBusy" @click="startManualUpload">上传人工匹配结果</el-button>
+          <el-button type="primary" :loading="finalBusy" @click="finalizeNow">生成最终结果</el-button>
           <input ref="importInput" class="review-hidden-file" type="file" accept=".xlsx,.xlsm" @change="onManualUpload" />
         </template>
         <el-button :loading="loading" @click="load">刷新</el-button>
