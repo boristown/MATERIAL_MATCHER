@@ -259,3 +259,11 @@ def test_cancel_unmatched_and_restore_algorithm_are_traceable(tmp_path):
         assert c.execute("SELECT current_status FROM match_items WHERE source_row_id='0'").fetchone()[0] == "REVIEW"
         actions=[r[0] for r in c.execute("SELECT operation_type FROM match_operation_logs ORDER BY rowid").fetchall()]
     assert actions == ["MARK_UNMATCHED","CANCEL_UNMATCHED"]
+
+
+def test_apply_value_mapping_helper():
+    from material_matcher.services.review_workbench_service import ReviewWorkbenchService as R
+    m = {"国产/进口": {"10": "国产", "11": "进口"}}
+    assert R._apply_value_mapping({"国产/进口": "10"}, m)["国产/进口"] == "国产"
+    assert R._apply_value_mapping({"其他": "x"}, m)["其他"] == "x"
+    assert R._apply_value_mapping({"国产/进口": "12"}, m)["国产/进口"] == "12"
