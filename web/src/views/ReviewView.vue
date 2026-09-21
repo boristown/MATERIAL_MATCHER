@@ -73,6 +73,10 @@ type ProgressState = {
 type FieldScore = {
   rule_id: string
   score: number
+  source_value?: string | null
+  target_value?: string | null
+  source_value_before_mapping?: string | null
+  value_mapping_applied?: boolean
   unconfigured_source_values?: unknown[]
 }
 
@@ -357,8 +361,14 @@ function comparisonKind(item: WorkbenchItem, candidate: Candidate, field: FieldD
   const source = fieldValue(item.source_payload, field.sourceFields)
   const target = fieldValue(candidate.target_payload, field.targetFields)
   if (!source || !target) return 'empty'
-  if (normalizedText(source) === normalizedText(target)) return 'exact'
   const fieldScore = candidate.field_scores?.find(score => score.rule_id === field.ruleId)
+  // 值映射字段：以映射后的取值对比（10→国产 视为与"国产"一致），原始值仍照常展示
+  const mappedSource = fieldScore && fieldScore.source_value !== undefined && fieldScore.source_value !== null
+    ? String(fieldScore.source_value) : source
+  const mappedTarget = fieldScore && fieldScore.target_value !== undefined && fieldScore.target_value !== null
+    ? String(fieldScore.target_value) : target
+  if (normalizedText(mappedSource) === normalizedText(mappedTarget)) return 'exact'
+  if (normalizedText(source) === normalizedText(target)) return 'exact'
   const fieldPercent = scoreAsPercent(fieldScore?.score)
   if (fieldPercent !== null && fieldPercent >= 55) return 'partial'
   return 'different'
