@@ -129,3 +129,69 @@ for pid,name in ids:
 ```
 预期输出：每个仍是 88 的方案打印一行 `已发布50: 方案名`；已是 50 或被人改过的自动跳过。
 实测记录（同日）：线上 7 案全部发布新版本（A001 v8→v9 等）；客户测试床 6 案（A001→v9、A002/3/5/6→v6、A007→v6）。复验 decision.success_threshold=50。
+
+## 12. 短行手敲版（现场推荐；每行敲完看回显再下一行）
+> 说明：编辑器"保存草稿"产生任务草稿的**根因修复在 v1.3.17 源码**（前端需重新构建，现场无法手敲替换打包文件）。
+> 现场用本节两步维持：①确认列表过滤器生效 ②一键清草稿。每行都很短。
+
+### 12.1 准备（一次性定义短变量）
+```
+A=/opt/material_matcher/current
+```
+```
+cd $A/app/material_matcher
+```
+
+### 12.2 确认/补上"空草稿过滤"（每行看回显）
+```
+grep -c "IS NOT NULL" services/task_service.py
+```
+- 回显 ≥1 → 过滤已在，跳到 12.3
+- 回显 0 → 依次敲：
+```
+cp services/task_service.py services/task_service.py.bak2
+```
+```
+sed -i 's/task_drafts ORDER/task_drafts WHERE source_file_id IS NOT NULL ORDER/' services/task_service.py
+```
+```
+grep -c "IS NOT NULL" services/task_service.py
+```
+```
+python3 -m py_compile services/task_service.py
+```
+```
+cd
+```
+```
+exit
+```
+（然后宿主机 `docker restart material_matcher-app`）
+
+### 12.3 清空草稿表（REPL 逐行，每行有回显）
+```
+python3
+```
+```
+import sqlite3
+```
+```
+c=sqlite3.connect('/var/lib/material_matcher/meta/material_matcher.db')
+```
+```
+c.execute('select count(*) from task_drafts').fetchone()
+```
+（回显条数=将要删除的量，确认合理再继续）
+```
+print(c.execute('delete from task_drafts').rowcount)
+```
+```
+c.commit()
+```
+```
+print('done')
+```
+```
+exit
+```
+页面刷新即净。以后每次大批量编辑方案后可重复 12.3（约 20 秒）。
