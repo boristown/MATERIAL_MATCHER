@@ -911,6 +911,16 @@ function scheduleDraftPersist(): void {
 }
 
 async function saveConfig(): Promise<void> {
+  if (isProfileEditorMode.value) {
+    if (editingProfileId.value) {
+      await api.put(`/profiles/${editingProfileId.value}/draft`, documentBody(true))
+      draftSaveState.value = 'saved'
+    } else {
+      draftSaveState.value = 'idle'
+      ElMessage.info('新建方案请直接「校验并发布」，编辑内容已随输入保留')
+    }
+    return
+  }
   await ensureDraft()
   const versionId = await resolveCatalogVersionForDraft()
   if (!source.value || !versionId || (!isCompositeProfile.value && !target.value)) {
