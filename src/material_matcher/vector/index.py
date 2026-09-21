@@ -200,6 +200,12 @@ class EmbeddedBBQFlatIndex:
             cache_hits += stats.hits
             cache_misses += stats.misses
             vectors = normalize_embeddings(vectors)
+            if len(vectors) >= 8 and float(np.max(np.std(vectors, axis=0))) < 1e-8:
+                raise DomainError(
+                    "EMBEDDING_DEGENERATE",
+                    "向量编码退化（所有文本得到相同向量），索引已拒绝缓存。请确认 Embedding 模型已就绪后重试；本次匹配将按可用通道降级计分。",
+                    status_code=503,
+                )
             np.packbits(vectors >= 0.0, axis=1, bitorder="little").tofile(bits_stream)
             np.clip(np.rint(vectors * 127.0), -127, 127).astype(np.int8).tofile(int8_stream)
             for row in batch:
