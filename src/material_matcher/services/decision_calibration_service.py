@@ -17,6 +17,19 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+def _tie_amb(connection: Any, task_id: str) -> str:
+    """tie_break=top1（默认）时，重判定不启用“同分不同码”并列保护；review 模式保持原保护。"""
+    try:
+        row = connection.execute("SELECT config_snapshot FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        snap = json.loads(str(row[0] or "{}")) if row is not None and row[0] else {}
+        if str((snap.get("decision") or {}).get("tie_break", "top1")) == "top1":
+            return ""
+    except Exception:
+        pass
+    return (
+        "AND NOT EXISTS(\n                                  SELECT 1 FROM match_candidates c2\n                                  WHERE c2.task_id=m.task_id AND c2.source_row_id=m.source_row_id AND c2.rank=2\n                                    AND c2.target_group_code<>m.top1_group_code\n                                    AND ABS(COALESCE(m.second_score,0)-COALESCE(m.top1_score,0)) < 0.000001\n                                )"
+    )
+
 class DecisionCalibrationService:
     """Fast threshold calibration over persisted match decisions.
 
@@ -77,6 +90,7 @@ class DecisionCalibrationService:
         inclusive_success: bool = False,
     ) -> list[Any]:
         success_operator = ">=" if inclusive_success else ">"
+        amb = _tie_amb(connection, task_id)
         return connection.execute(
             f"""
             WITH thresholds(success_threshold,review_threshold) AS (VALUES(?,?)),
@@ -85,12 +99,7 @@ class DecisionCalibrationService:
                      CASE
                        WHEN m.top1_score {success_operator} t.success_threshold
                             AND m.critical_conflict=0
-                            AND NOT EXISTS(
-                              SELECT 1 FROM match_candidates c2
-                              WHERE c2.task_id=m.task_id AND c2.source_row_id=m.source_row_id AND c2.rank=2
-                                AND c2.target_group_code<>m.top1_group_code
-                                AND ABS(COALESCE(m.second_score,0)-COALESCE(m.top1_score,0)) < 0.000001
-                            ) THEN 'MATCHED'
+                            {amb} THEN 'MATCHED'
                        WHEN m.top1_score > t.review_threshold THEN 'REVIEW'
                        ELSE 'UNMATCHED'
                      END AS new_status
@@ -222,6 +231,7 @@ class DecisionCalibrationService:
         with self.meta.connect() as connection:
             self._task(connection, task_id)
             before = self._full_counts(connection, task_id)
+            amb = _tie_amb(connection, task_id)
             rows = connection.execute(
                 f"""
                 WITH scenarios(idx,success_threshold,review_threshold) AS (VALUES {values_sql}),
@@ -229,12 +239,7 @@ class DecisionCalibrationService:
                   SELECT s.idx,m.current_status AS old_status,
                          CASE
                            WHEN m.top1_score>s.success_threshold AND m.critical_conflict=0
-                                AND NOT EXISTS(
-                                  SELECT 1 FROM match_candidates c2
-                                  WHERE c2.task_id=m.task_id AND c2.source_row_id=m.source_row_id AND c2.rank=2
-                                    AND c2.target_group_code<>m.top1_group_code
-                                    AND ABS(COALESCE(m.second_score,0)-COALESCE(m.top1_score,0)) < 0.000001
-                                ) THEN 'MATCHED'
+                                {amb} THEN 'MATCHED'
                            WHEN m.top1_score>s.review_threshold THEN 'REVIEW'
                            ELSE 'UNMATCHED'
                          END AS new_status
@@ -348,28 +353,19 @@ class DecisionCalibrationService:
             previous_revision = self.current_revision_no(task_id, connection)
             self._ensure_result_snapshot(connection, task_id, task, previous_revision)
             revision_no = previous_revision + 1
+            amb_mi = _tie_amb(connection, task_id)
             connection.execute(
                 f"""
                 UPDATE match_items
                 SET current_status = CASE
                       WHEN top1_score{success_operator}? AND critical_conflict=0
-                           AND NOT EXISTS(
-                             SELECT 1 FROM match_candidates c2
-                             WHERE c2.task_id=match_items.task_id AND c2.source_row_id=match_items.source_row_id AND c2.rank=2
-                               AND c2.target_group_code<>match_items.top1_group_code
-                               AND ABS(COALESCE(match_items.second_score,0)-COALESCE(match_items.top1_score,0)) < 0.000001
-                           ) THEN 'MATCHED'
+                           {amb_mi} THEN 'MATCHED'
                       WHEN top1_score>? THEN 'REVIEW'
                       ELSE 'UNMATCHED'
                     END,
                     final_group_code = CASE
                       WHEN top1_score{success_operator}? AND critical_conflict=0
-                           AND NOT EXISTS(
-                             SELECT 1 FROM match_candidates c2
-                             WHERE c2.task_id=match_items.task_id AND c2.source_row_id=match_items.source_row_id AND c2.rank=2
-                               AND c2.target_group_code<>match_items.top1_group_code
-                               AND ABS(COALESCE(match_items.second_score,0)-COALESCE(match_items.top1_score,0)) < 0.000001
-                           ) THEN top1_group_code
+                           {amb_mi} THEN top1_group_code
                       ELSE NULL
                     END,
                     updated_at=?
