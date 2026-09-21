@@ -2,11 +2,14 @@
 
 ## ⚡ 极简版（手敲 ~70 字符，两条命令搞定）
 
-Docker 客户机：
+Docker 客户机（宿主机上直接敲，零转义三行）：
 ```bash
-docker exec material_matcher-app sh -c 'cd /opt/material_matcher/current/app/material_matcher; sed -i s/000001/-1/g\ services/decision_calibration_service.py; sed -i s/score\ ==\ first/score\ >\ first/ matching/engine.py'
+docker exec material_matcher-app sed -i 's/000001/-1/g' /opt/material_matcher/current/app/material_matcher/services/decision_calibration_service.py
+docker exec material_matcher-app sed -i 's/score == first/score > first/' /opt/material_matcher/current/app/material_matcher/matching/engine.py
 docker restart material_matcher-app
 ```
+验证：`docker exec material_matcher-app grep -c "score > first" /opt/material_matcher/current/app/material_matcher/matching/engine.py` 输出 1；decision_calibration 同理 `grep -c "< -1"` 输出 5。
+已打过 v1.3.15 完整实现的机器重复执行无害（模式不命中自动跳过）。
 NATIVE 客户机（无容器）：
 ```bash
 cd /opt/material_matcher/current/app/material_matcher
