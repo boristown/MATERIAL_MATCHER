@@ -104,7 +104,5 @@ def test_seed_presets_domestic_import_mapping_and_composite_a007() -> None:
                 assert child["profile_id"] in ids
                 assert child["profile_id"] != profile["profile_id"]
             continue
-        rule = next((r for r in document["rules"] if r.get("id") == "seed-enum-gnjk"), None)
-        assert rule is not None, f"{prefix} 缺少国产进口预置规则"
-        assert rule["value_mapping"] == {"10": "国产", "11": "进口"}
-        assert rule["matcher"] == "exact" and rule["weight"] == 0 and rule["critical"] is False
+        # 1.3.16 修正：不再预置写死列名的国产进口规则（列名因表而异）
+        assert all(r.get("id") != "seed-enum-gnjk" for r in document["rules"]), f"{prefix} 不应再包含写死预置规则"
