@@ -1,4 +1,24 @@
 # PATCH2 现场修复手册：并列候选自动取第一条（解除同分封锁）
+
+## ⚡ 极简版（手敲 ~70 字符，两条命令搞定）
+
+Docker 客户机：
+```bash
+docker exec material_matcher-app sh -c 'cd /opt/material_matcher/current/app/material_matcher; sed -i s/000001/-1/g\ services/decision_calibration_service.py; sed -i s/score\ ==\ first/score\ >\ first/ matching/engine.py'
+docker restart material_matcher-app
+```
+NATIVE 客户机（无容器）：
+```bash
+cd /opt/material_matcher/current/app/material_matcher
+sed -i s/000001/-1/g services/decision_calibration_service.py
+sed -i s/score\ ==\ first/score\ >\ first/ matching/engine.py
+systemctl restart material_matcher
+```
+原理：前者把 5 处"同分并列"判据改成永假（`< -1`），后者把引擎并列守卫的 `score == first` 改成 `score > first`（降序下恒不成立）。只碰 2 个文件、纯字符级替换、可用 `.bak-mini` 或下方完整手册回滚。
+（若嫌手敲引号转义麻烦：直接跑包内 `bash apply_mini.sh`，30 秒，自动备份+编译校验+失败回滚。）
+
+完整分步流程（备份/编辑/回注/验证/回滚）如下 ↓
+
 适用：客户机以 **Docker 介质安装**（V1.3.14 盘）后的修复；全程 root。
 效果：新任务与阈值重判定中，"Top1/Top2 同分不同码"不再强制转人工，自动取第一条。
 依赖：仅适用于 1.3.14/1.3.15 任一形态（若已打过则自动跳过，见第 6 步说明）。
