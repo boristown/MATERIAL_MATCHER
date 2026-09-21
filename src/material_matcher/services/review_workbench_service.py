@@ -101,6 +101,35 @@ class ReviewWorkbenchService:
             params.append(1 if bool(filters["critical_conflict"]) else 0)
         return " AND ".join(conditions), params
 
+    def _value_mapping(self, task_id: str) -> dict[str, dict[str, str]]:
+        """从任务配置快照提取值映射表：源字段 -> {原始值: 映射后值}。工作台展示出口按此替换，数据库保持原始值。"""
+        mapping: dict[str, dict[str, str]] = {}
+        try:
+            with self.repo.connect() as connection:
+                row = connection.execute("SELECT config_snapshot FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            cfg = json.loads(str(row[0])) if row is not None and row[0] else {}
+            for rule in cfg.get("rules", []) or []:
+                vm = rule.get("value_mapping") or {}
+                if isinstance(vm, dict) and vm:
+                    for field in ((rule.get("source") or {}).get("fields") or []):
+                        fm = mapping.setdefault(str(field), {})
+                        for k, v in vm.items():
+                            fm[str(k).strip()] = str(v)
+        except Exception:
+            return {}
+        return mapping
+
+    @staticmethod
+    def _apply_value_mapping(payload, mapping):
+        if not isinstance(payload, dict) or not mapping:
+            return payload
+        out = dict(payload)
+        for field, m in mapping.items():
+            value = out.get(field)
+            if value is not None and str(value).strip() in m:
+                out[field] = m[str(value).strip()]
+        return out
+
     def list_items(
         self,
         task_id: str,
@@ -151,7 +180,7 @@ class ReviewWorkbenchService:
             items = [dict(row) for row in rows]
             candidates = self._candidates_for(connection, task_id, [str(item["source_row_id"]) for item in items], include_candidates)
         for item in items:
-            item["source_payload"] = self._decode(item.get("source_payload"))
+            item["source_payload"] = self._apply_value_mapping(self._decode(item.get("source_payload")), self._value_mapping(task_id))
             item["critical_conflict"] = bool(item.get("critical_conflict"))
             item["version"] = str(item["updated_at"])
             if include_candidates:
@@ -181,7 +210,7 @@ class ReviewWorkbenchService:
                 raise DomainError("MATCH_ITEM_NOT_FOUND", "匹配记录不存在", status_code=404)
             item = dict(row)
             candidates = self._candidates_for(connection, task_id, [source_row_id], include_candidates)
-        item["source_payload"] = self._decode(item.get("source_payload"))
+        item["source_payload"] = self._apply_value_mapping(self._decode(item.get("source_payload")), self._value_mapping(task_id))
         item["critical_conflict"] = bool(item.get("critical_conflict"))
         item["version"] = str(item["updated_at"])
         if include_candidates:
