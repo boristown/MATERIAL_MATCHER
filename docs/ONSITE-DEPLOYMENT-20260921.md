@@ -22,4 +22,5 @@
 - S3/S4 进行中 2026-09-21：/usr 所在卷 11T 容量充裕；Docker 轨向导执行中，待现场回传结束页信息（局域网地址/密码方式/成功行）。
 
 - 插曲记录：桌面环境 zenity 分支第 3 弹窗 OK 被判取消；绕过方式 `unset DISPLAY && ./run.sh`。已装好进入系统。
-- P1 PATCH2 三行式（并列放行）下发现场执行中；P2 假列名规则界面删除指引已给（seed-enum-gnjk ×5-6 方案）。
+- P1 ✅ 现场持有 patch1-1.3.15.tar.gz（21KB 文件版）→ apply_patch1.sh --docker 安装成功；PATCH2 三行 sed 为其无文件兜底，已免除。验证口径：health 版本 1.3.15。
+- P2 待做：界面逐方案删除 seed-enum-gnjk 假列名规则（A001-A006）；S8 阈值 65~73；S9 首单。
