@@ -237,3 +237,14 @@ python3 -m py_compile services/task_service.py
 ```
 c=sqlite3.connect('/root/db')
 ```
+
+## 15. patch6（v1.3.18）：卡片"10 与 国产 显示不一致"修复 —— 只能文件级，不可手敲
+根因：复核卡片字段对比用了原始值；值映射后的取值（引擎实际打分依据）未参与对比标签。
+现场步骤（宿主机）：
+```
+docker cp /usr/patch6-1.3.18.tar.gz material_matcher-app:/tmp/
+docker exec material_matcher-app sh -c 'cd /tmp && tar -xzf patch6-1.3.18.tar.gz && bash apply_patch6.sh'
+```
+浏览器 Ctrl+F5 即可（无需重启容器）。回滚：容器内 `rm -rf /opt/material_matcher/current/web/dist && mv /opt/material_matcher/current/web/dist.bak-p6 /opt/material_matcher/current/web/dist`。
+验证：任一带值映射的行（如 国产/进口=10 对 清洗后=国产），卡片该字段应显示"一致"。
+在此之前，该问题**仅是标签**：判定、打分、导出结果全部按映射后取值，无实际影响，可向客户说明。
