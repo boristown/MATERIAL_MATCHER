@@ -4248,41 +4248,6 @@
          "separator": " "
         },
         "weight": 4
-       },
-       {
-        "id": "seed-enum-gnjk",
-        "source": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "target": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "matcher": "exact",
-        "weight": 0,
-        "critical": false,
-        "matcher_options": {},
-        "value_mapping": {
-         "10": "国产",
-         "11": "进口"
-        },
-        "value_mapping_source_values": [
-         "10",
-         "11"
-        ],
-        "value_mapping_target_values": [
-         "国产",
-         "进口"
-        ]
        }
       ],
       "scope": {
@@ -6635,41 +6600,6 @@
          "separator": " "
         },
         "weight": 2
-       },
-       {
-        "id": "seed-enum-gnjk",
-        "source": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "target": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "matcher": "exact",
-        "weight": 0,
-        "critical": false,
-        "matcher_options": {},
-        "value_mapping": {
-         "10": "国产",
-         "11": "进口"
-        },
-        "value_mapping_source_values": [
-         "10",
-         "11"
-        ],
-        "value_mapping_target_values": [
-         "国产",
-         "进口"
-        ]
        }
       ],
       "scope": {
@@ -9171,41 +9101,6 @@
          "separator": " "
         },
         "weight": 5
-       },
-       {
-        "id": "seed-enum-gnjk",
-        "source": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "target": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "matcher": "exact",
-        "weight": 0,
-        "critical": false,
-        "matcher_options": {},
-        "value_mapping": {
-         "10": "国产",
-         "11": "进口"
-        },
-        "value_mapping_source_values": [
-         "10",
-         "11"
-        ],
-        "value_mapping_target_values": [
-         "国产",
-         "进口"
-        ]
        }
       ],
       "scope": {
@@ -11455,41 +11350,6 @@
          "separator": " "
         },
         "weight": 5
-       },
-       {
-        "id": "seed-enum-gnjk",
-        "source": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "target": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "matcher": "exact",
-        "weight": 0,
-        "critical": false,
-        "matcher_options": {},
-        "value_mapping": {
-         "10": "国产",
-         "11": "进口"
-        },
-        "value_mapping_source_values": [
-         "10",
-         "11"
-        ],
-        "value_mapping_target_values": [
-         "国产",
-         "进口"
-        ]
        }
       ],
       "scope": {
@@ -13493,41 +13353,6 @@
          "separator": " "
         },
         "weight": 5
-       },
-       {
-        "id": "seed-enum-gnjk",
-        "source": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "target": {
-         "fields": [
-          "国产进口"
-         ],
-         "combine": "concat",
-         "separator": " ",
-         "pipeline": []
-        },
-        "matcher": "exact",
-        "weight": 0,
-        "critical": false,
-        "matcher_options": {},
-        "value_mapping": {
-         "10": "国产",
-         "11": "进口"
-        },
-        "value_mapping_source_values": [
-         "10",
-         "11"
-        ],
-        "value_mapping_target_values": [
-         "国产",
-         "进口"
-        ]
        }
       ],
       "scope": {
