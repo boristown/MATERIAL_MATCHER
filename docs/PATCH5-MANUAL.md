@@ -107,7 +107,11 @@ python3 -c "import sqlite3;c=sqlite3.connect('/var/lib/material_matcher/meta/mat
 > 早前给过的 B 方案 REPL 有一处 API 误用（`meta.connect()` 是上下文管理器，不能直接 .execute），
 > 已于 2026-09-21 在线上/测试床实测后修正如下。**效果=在原方案上发布新版本，不新建方案、不动历史任务。**
 
-容器内 `python3` 后逐行（或整体粘贴，Python 3.11 新 REPL 支持多行块）：
+容器内**必须用应用自带运行时**启动 REPL（系统 `python3` 无 pydantic 会报错）：
+```
+/opt/material_matcher/current/runtime/bin/python3
+```
+随后逐行（或整体粘贴，Python 3.11 新 REPL 支持多行块）：
 ```python
 import sys
 sys.path.insert(0,"/opt/material_matcher/current/app")
