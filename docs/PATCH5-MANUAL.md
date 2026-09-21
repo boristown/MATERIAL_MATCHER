@@ -219,3 +219,21 @@ docker restart material_matcher-app
 
 注意：12.2 的旧 sed 模式串是 `task_drafts ORDER`（无 BY），若该字符串在目标文件出现于别处也可能误替换；
 本节模式 `task_drafts ORDER BY` 更精确，以此为准。改错可用 services/task_service.py.bak2（12.2 有备份习惯）或重敲反向 sed 还原。
+
+## 14. 短路径约定（推荐现场先建一次）
+容器内执行（升级重建容器后需重跑这两行）：
+```
+ln -sf /opt/material_matcher/current/app/material_matcher /root/m
+ln -sf /var/lib/material_matcher/meta/material_matcher.db /root/db
+```
+此后所有命令使用短路径，示例：
+```
+cd /root/m
+grep -c "IS NOT NULL" services/task_service.py
+sed -i 's|task_drafts ORDER BY|task_drafts WHERE source_file_id IS NOT NULL ORDER BY|' services/task_service.py
+python3 -m py_compile services/task_service.py
+```
+清草稿 REPL 内连接串简化为：
+```
+c=sqlite3.connect('/root/db')
+```
