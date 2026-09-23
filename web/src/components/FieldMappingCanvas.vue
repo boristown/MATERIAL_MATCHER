@@ -255,6 +255,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
   justify-content: flex-end;
   gap: 10px;
   margin: 8px 0 10px;
+  padding: 0 6px;
   color: var(--mm-muted);
   font-size: 12px;
 }
