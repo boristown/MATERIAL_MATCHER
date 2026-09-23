@@ -79,6 +79,12 @@ CREATE TABLE IF NOT EXISTS task_compute_lifecycle(
   compute_completed_at TEXT,
   FOREIGN KEY(task_id) REFERENCES tasks(task_id)
 );
+CREATE TABLE IF NOT EXISTS task_performance(
+  task_id TEXT PRIMARY KEY,
+  metrics TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+);
 CREATE TABLE IF NOT EXISTS match_items(
   task_id TEXT NOT NULL, source_row_id TEXT NOT NULL, source_row_number INTEGER,
   source_id TEXT NOT NULL, source_payload TEXT NOT NULL,
