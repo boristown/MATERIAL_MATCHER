@@ -154,7 +154,8 @@ class VectorIndexService:
                 (index_id, catalog_version_id, _canonical(base_metadata), "BUILDING", created_at),
             )
         target_path = Path(str(target_file["stored_path"]))
-        total_estimate = max(1, detect_layout(target_path).row_count_estimate)
+        target_layout = detect_layout(target_path)
+        total_estimate = max(1, target_layout.row_count_estimate)
         cache = EmbeddingCache(self.settings.embedding_cache_dir, provider)
         try:
             def progress(done: int) -> None:
@@ -162,7 +163,11 @@ class VectorIndexService:
                     on_progress(done, total_estimate)
 
             def positioned_target_rows():
-                for original_row_number, row in iter_tabular_rows_with_position(target_path):
+                for original_row_number, row in iter_tabular_rows_with_position(
+                    target_path,
+                    sheet_name=target_layout.sheet_name,
+                    header_row=target_layout.header_row,
+                ):
                     yield {**row, ORIGINAL_ROW_NUMBER_KEY: original_row_number}
 
             index, stats = EmbeddedBBQFlatIndex.build(

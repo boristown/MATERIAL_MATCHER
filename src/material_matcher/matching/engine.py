@@ -155,7 +155,11 @@ def load_target_rows_with_position(
         )
     rows = [
         (position, _to_plain(row))
-        for position, row in iter_tabular_rows_with_position(path)
+        for position, row in iter_tabular_rows_with_position(
+            path,
+            sheet_name=layout.sheet_name,
+            header_row=layout.header_row,
+        )
     ]
     if len(rows) > max_target_rows:
         raise DomainError(
@@ -283,7 +287,12 @@ def match_rows(
     )
     results: list[RowResult] = []
     for row_index, (source_row_number, source_raw) in enumerate(
-        iter_tabular_rows_with_position(source_path, max_rows=max_source_rows),
+        iter_tabular_rows_with_position(
+            source_path,
+            sheet_name=source_layout.sheet_name,
+            header_row=source_layout.header_row,
+            max_rows=max_source_rows,
+        ),
         start=1,
     ):
         source_row = _to_plain(source_raw)
@@ -410,7 +419,12 @@ def match_rows_indexed(
                 on_batch(list(results[-batch_rows:]))
 
     for row_index, (source_row_number, source_raw) in enumerate(
-        iter_tabular_rows_with_position(source_path, max_rows=max_source_rows),
+        iter_tabular_rows_with_position(
+            source_path,
+            sheet_name=source_layout.sheet_name,
+            header_row=source_layout.header_row,
+            max_rows=max_source_rows,
+        ),
         start=1,
     ):
         source_row = _to_plain(source_raw)

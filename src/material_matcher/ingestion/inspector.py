@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import csv
+from itertools import chain, islice
 from pathlib import Path
 import re
 from typing import Sequence
 
 from openpyxl import load_workbook
+from openpyxl.worksheet._reader import WorkSheetParser
 
 ALIASES: dict[str, tuple[str, ...]] = {
     "source_id": ("matnr", "物料", "物料号", "物料编码", "物资编码"),
@@ -18,6 +20,52 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "standard": ("标准", "采用标准", "技术标准", "规范", "标准号", "zcgbz", "zjsbz", "zbzh"),
     "unit": ("计量单位", "单位", "meins"),
 }
+
+
+def is_effective_value(value: object) -> bool:
+    """Return whether a cell contains business data rather than formatting/blank text."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def row_has_effective_data(row: Sequence[object], business_columns: Sequence[int]) -> bool:
+    """A data row is effective when at least one header-backed business column is non-empty."""
+    return any(
+        index < len(row) and is_effective_value(row[index])
+        for index in business_columns
+    )
+
+
+def iter_sparse_worksheet_rows(worksheet):
+    """Yield only row elements that actually exist in XLSX XML.
+
+    ReadOnlyWorksheet.iter_rows() intentionally synthesizes every missing row
+    between row indices. A style-only cell at row 1,000,000 can therefore turn a
+    tiny workbook into a million Python iterations even after dimensions are
+    reset. Openpyxl 3.x's worksheet parser already streams the XML and exposes
+    the real row numbers, so use that parser directly and never expand gaps.
+    """
+    with worksheet._get_source() as source:
+        parser = WorkSheetParser(
+            source,
+            worksheet._shared_strings,
+            data_only=worksheet.parent.data_only,
+            epoch=worksheet.parent.epoch,
+            date_formats=worksheet.parent._date_formats,
+            timedelta_formats=worksheet.parent._timedelta_formats,
+        )
+        for row_number, cells in parser.parse():
+            if not cells:
+                yield row_number, ()
+                continue
+            width = max(int(cell["column"]) for cell in cells)
+            values: list[object] = [None] * width
+            for cell in cells:
+                values[int(cell["column"]) - 1] = cell["value"]
+            yield row_number, tuple(values)
 
 
 def _normalize_header(value: object) -> str:
@@ -44,7 +92,7 @@ def _hint(header: str) -> tuple[str | None, float]:
 
 
 def _header_score(row: Sequence[object]) -> float:
-    values = [value for value in row if value is not None and str(value).strip()]
+    values = [value for value in row if is_effective_value(value)]
     if not values:
         return 0.0
     return (
@@ -53,6 +101,94 @@ def _header_score(row: Sequence[object]) -> float:
         + sum(_hint(str(value))[0] is not None for value in values) * 2.5
         + len({_normalize_header(value) for value in values}) * 0.2
     )
+
+
+def _header_detection(rows: Sequence[Sequence[object]]) -> tuple[int, float, float]:
+    scored = [(index + 1, _header_score(row)) for index, row in enumerate(rows)]
+    header_row, best = max(scored, key=lambda item: item[1], default=(1, 0.0))
+    scores = sorted((score for _, score in scored), reverse=True)
+    second = scores[1] if len(scores) > 1 else 0.0
+    confidence = 0.0 if best <= 0 else min(1.0, 0.55 + max(0.0, best - second) / best)
+    return header_row, best, confidence
+
+
+def _business_columns(headers: Sequence[object]) -> list[int]:
+    return [index for index, header in enumerate(headers) if is_effective_value(header)]
+
+
+def _inspect_xlsx_sheet(
+    worksheet,
+    *,
+    max_scan_rows: int,
+    sample_data_rows: int,
+) -> dict[str, object]:
+    # Never trust worksheet.max_row/dimension here. Iterate only actual row
+    # elements so a remote style-only cell does not expand all missing rows.
+    row_iter = iter_sparse_worksheet_rows(worksheet)
+    prefix: list[tuple[int, Sequence[object]]] = []
+    pending: tuple[int, Sequence[object]] | None = None
+    for positioned in row_iter:
+        if positioned[0] <= max_scan_rows:
+            prefix.append(positioned)
+            continue
+        pending = positioned
+        break
+
+    scored = [(row_number, _header_score(row)) for row_number, row in prefix]
+    header_row, best = max(scored, key=lambda item: item[1], default=(1, 0.0))
+    scores = sorted((score for _, score in scored), reverse=True)
+    second = scores[1] if len(scores) > 1 else 0.0
+    confidence = 0.0 if best <= 0 else min(1.0, 0.55 + max(0.0, best - second) / best)
+    headers: Sequence[object] = next(
+        (row for row_number, row in prefix if row_number == header_row),
+        (),
+    )
+    business_columns = _business_columns(headers)
+
+    samples_by_column: dict[int, list[object]] = {index: [] for index in business_columns}
+    row_count = 0
+    buffered = chain(prefix, (() if pending is None else (pending,)), row_iter)
+    for row_number, row in buffered:
+        if row_number <= header_row:
+            continue
+        if row_has_effective_data(row, business_columns):
+            row_count += 1
+        if row_number <= header_row + sample_data_rows:
+            for index in business_columns:
+                value = row[index] if index < len(row) else None
+                if is_effective_value(value):
+                    samples_by_column[index].append(value)
+
+    columns: list[dict[str, object]] = []
+    warnings: list[str] = []
+    for column_index in business_columns:
+        header = headers[column_index]
+        samples = samples_by_column[column_index]
+        business_hint, hint_confidence = _hint(str(header))
+        leading_zero_risk = business_hint in {"source_id", "group_code", "material_group"} and any(
+            isinstance(value, (int, float)) and not isinstance(value, bool) for value in samples
+        )
+        if leading_zero_risk:
+            warnings.append(f"列“{str(header).strip()}”疑似编码字段且包含数值单元格，前导零可能已丢失，请人工确认。")
+        columns.append({
+            "index": column_index + 1,
+            "header": str(header).strip(),
+            "samples": [str(value) for value in samples[:5]],
+            "inferred_type": "TEXT",
+            "business_hint": business_hint,
+            "hint_confidence": hint_confidence,
+            "leading_zero_risk": leading_zero_risk,
+        })
+
+    return {
+        "sheet_name": worksheet.title,
+        "recommended_header_row": header_row,
+        "header_confidence": round(confidence, 3),
+        "row_count_estimate": row_count,
+        "column_count": len(columns),
+        "columns": columns,
+        "warnings": warnings,
+    }
 
 
 def inspect_tabular_file(
@@ -71,61 +207,13 @@ def inspect_tabular_file(
     sheets: list[dict[str, object]] = []
     try:
         for worksheet in workbook.worksheets:
-            scan_rows = list(
-                worksheet.iter_rows(
-                    min_row=1,
-                    max_row=min(max_scan_rows, worksheet.max_row or 1),
-                    values_only=True,
+            sheets.append(
+                _inspect_xlsx_sheet(
+                    worksheet,
+                    max_scan_rows=max_scan_rows,
+                    sample_data_rows=sample_data_rows,
                 )
             )
-            scored = [(index + 1, _header_score(row)) for index, row in enumerate(scan_rows)]
-            header_row, best = max(scored, key=lambda item: item[1], default=(1, 0.0))
-            scores = sorted((score for _, score in scored), reverse=True)
-            second = scores[1] if len(scores) > 1 else 0.0
-            confidence = 0.0 if best <= 0 else min(1.0, 0.55 + max(0.0, best - second) / best)
-            headers = next(
-                worksheet.iter_rows(min_row=header_row, max_row=header_row, values_only=True),
-                (),
-            )
-            columns: list[dict[str, object]] = []
-            warnings: list[str] = []
-            for column_index, header in enumerate(headers, 1):
-                if header is None or not str(header).strip():
-                    continue
-                samples: list[object] = []
-                for row in worksheet.iter_rows(
-                    min_row=header_row + 1,
-                    max_row=min(worksheet.max_row or header_row, header_row + sample_data_rows),
-                    min_col=column_index,
-                    max_col=column_index,
-                    values_only=True,
-                ):
-                    if row[0] is not None:
-                        samples.append(row[0])
-                business_hint, hint_confidence = _hint(str(header))
-                leading_zero_risk = business_hint in {"source_id", "group_code", "material_group"} and any(
-                    isinstance(value, (int, float)) and not isinstance(value, bool) for value in samples
-                )
-                if leading_zero_risk:
-                    warnings.append(f"列“{str(header).strip()}”疑似编码字段且包含数值单元格，前导零可能已丢失，请人工确认。")
-                columns.append({
-                    "index": column_index,
-                    "header": str(header).strip(),
-                    "samples": [str(value) for value in samples[:5]],
-                    "inferred_type": "TEXT",
-                    "business_hint": business_hint,
-                    "hint_confidence": hint_confidence,
-                    "leading_zero_risk": leading_zero_risk,
-                })
-            sheets.append({
-                "sheet_name": worksheet.title,
-                "recommended_header_row": header_row,
-                "header_confidence": round(confidence, 3),
-                "row_count_estimate": max(0, (worksheet.max_row or 0) - header_row),
-                "column_count": len(columns),
-                "columns": columns,
-                "warnings": warnings,
-            })
     finally:
         workbook.close()
 
@@ -142,57 +230,57 @@ def inspect_tabular_file(
     }
 
 
-def _count_csv_physical_lines(path: Path) -> int:
-    """Count physical lines by scanning newlines so large CSVs are not capped by the sample window."""
-    lines = 0
-    with path.open("rb") as stream:
-        previous = b""
-        while True:
-            chunk = stream.read(1 << 20)
-            if not chunk:
-                break
-            lines += chunk.count(b"\n")
-            previous = chunk
-        if previous and not previous.endswith(b"\n"):
-            lines += 1
-    return lines
-
-
-def _inspect_csv(path: Path, scan_rows: int, sample_rows: int) -> dict[str, object]:
+def _csv_encoding(path: Path) -> str:
     with path.open("rb") as stream:
         raw = stream.read(256 * 1024)
     try:
-        text = raw.decode("utf-8-sig")
-        encoding = "utf-8-sig"
+        raw.decode("utf-8-sig")
+        return "utf-8-sig"
     except UnicodeDecodeError:
-        text = raw.decode("gb18030")
-        encoding = "gb18030"
-    rows = list(csv.reader(text.splitlines()))[: scan_rows + sample_rows]
-    scored = [(index + 1, _header_score(row)) for index, row in enumerate(rows[:scan_rows])]
-    header_row, best = max(scored, key=lambda item: item[1], default=(1, 0.0))
-    headers = rows[header_row - 1] if rows else []
+        raw.decode("gb18030")
+        return "gb18030"
+
+
+def _inspect_csv(path: Path, scan_rows: int, sample_rows: int) -> dict[str, object]:
+    encoding = _csv_encoding(path)
+    with path.open("r", encoding=encoding, newline="") as stream:
+        reader = csv.reader(stream)
+        prefix = list(islice(reader, max(1, scan_rows)))
+        header_row, best, _ = _header_detection(prefix)
+        headers = prefix[header_row - 1] if len(prefix) >= header_row else []
+        business_columns = _business_columns(headers)
+        samples_by_column: dict[int, list[object]] = {index: [] for index in business_columns}
+        row_count = 0
+
+        for data_offset, row in enumerate(chain(prefix[header_row:], reader), start=1):
+            if row_has_effective_data(row, business_columns):
+                row_count += 1
+            if data_offset <= sample_rows:
+                for index in business_columns:
+                    value = row[index] if index < len(row) else None
+                    if is_effective_value(value):
+                        samples_by_column[index].append(value)
+
     columns: list[dict[str, object]] = []
-    for column_index, header in enumerate(headers):
-        business_hint, hint_confidence = _hint(header)
-        values = [
-            row[column_index]
-            for row in rows[header_row : header_row + sample_rows]
-            if len(row) > column_index and row[column_index] != ""
-        ]
+    for column_index in business_columns:
+        header = headers[column_index]
+        business_hint, hint_confidence = _hint(str(header))
+        values = samples_by_column[column_index]
         columns.append({
             "index": column_index + 1,
-            "header": header,
-            "samples": values[:5],
+            "header": str(header).strip(),
+            "samples": [str(value) for value in values[:5]],
             "inferred_type": "TEXT",
             "business_hint": business_hint,
             "hint_confidence": hint_confidence,
             "leading_zero_risk": False,
         })
+
     sheet = {
         "sheet_name": "CSV",
         "recommended_header_row": header_row,
         "header_confidence": 1.0 if best else 0.0,
-        "row_count_estimate": max(0, _count_csv_physical_lines(path) - header_row),
+        "row_count_estimate": row_count,
         "column_count": len(columns),
         "columns": columns,
         "warnings": [],

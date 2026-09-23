@@ -3,10 +3,13 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date, datetime
 import csv
+from itertools import chain
 from pathlib import Path
 import re
 
 from openpyxl import load_workbook
+
+from material_matcher.ingestion.inspector import iter_sparse_worksheet_rows, row_has_effective_data
 
 DEFAULT_COLUMN_PROFILE_SCAN_LIMIT = 5_000
 MAX_COLUMN_PROFILE_SCAN_LIMIT = 50_000
@@ -265,10 +268,11 @@ def profile_tabular_columns(
                 next(reader, None)
             headers = next(reader, []) or []
             accumulators = [_new_accumulator(index + 1, header) for index, header in enumerate(headers)]
+            business_columns = [index for index, header in enumerate(headers) if str(header).strip()]
             for row in reader:
                 if scanned_rows >= scan_limit:
                     break
-                if not any(value != "" for value in row):
+                if not row_has_effective_data(row, business_columns):
                     continue
                 scanned_rows += 1
                 for index, accumulator in enumerate(accumulators):
@@ -280,19 +284,30 @@ def profile_tabular_columns(
             if selected_sheet not in workbook.sheetnames:
                 raise ValueError(f"工作表不存在: {selected_sheet}")
             worksheet = workbook[selected_sheet]
-            headers = next(
-                worksheet.iter_rows(
-                    min_row=selected_header,
-                    max_row=selected_header,
-                    values_only=True,
-                ),
-                (),
-            )
+            row_iter = iter_sparse_worksheet_rows(worksheet)
+            headers: tuple[object, ...] = ()
+            pending: tuple[int, tuple[object, ...]] | None = None
+            for row_number, row in row_iter:
+                if row_number < selected_header:
+                    continue
+                if row_number == selected_header:
+                    headers = row
+                else:
+                    pending = (row_number, row)
+                break
+
             accumulators = [_new_accumulator(index + 1, header) for index, header in enumerate(headers)]
-            for row in worksheet.iter_rows(min_row=selected_header + 1, values_only=True):
+            business_columns = [index for index, header in enumerate(headers) if header is not None and str(header).strip()]
+            positioned_rows = chain(
+                (() if pending is None else (pending,)),
+                row_iter,
+            )
+            for row_number, row in positioned_rows:
+                if row_number <= selected_header:
+                    continue
                 if scanned_rows >= scan_limit:
                     break
-                if not any(value is not None and str(value).strip() != "" for value in row):
+                if not row_has_effective_data(row, business_columns):
                     continue
                 scanned_rows += 1
                 for index, accumulator in enumerate(accumulators):
