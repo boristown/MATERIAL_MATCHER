@@ -352,6 +352,8 @@ def match_rows_indexed(
     Result batches can be persisted immediately with collect_results=False so
     memory stays bounded by query/persist batch size instead of task row count.
     """
+    if not collect_results and on_batch is None:
+        raise ValueError("collect_results=False requires on_batch persistence callback")
     parse_started = time.perf_counter()
     source_layout = detect_layout(source_path)
     total = (
