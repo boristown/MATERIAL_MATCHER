@@ -7,7 +7,10 @@ from typing import Iterator
 
 from openpyxl import load_workbook
 
-from material_matcher.ingestion.inspector import inspect_tabular_file
+from material_matcher.ingestion.inspector import (
+    inspect_tabular_file,
+    row_has_effective_data,
+)
 
 
 @dataclass(frozen=True)
@@ -59,14 +62,17 @@ def iter_tabular_rows_with_position(
     """Stream rows together with the row number visible in the original file.
 
     The returned position is the real worksheet/CSV record row, not the compact
-    ordinal used internally as ``source_row_id``. Blank rows are skipped from the
+    ordinal used internally as source_row_id. Blank rows are skipped from the
     payload stream but still advance the original row number. Therefore a sheet
     whose header is on row 4 yields its first data row as row 5, exactly as users
     see it in Excel.
+
+    Callers that already ran detect_layout should pass sheet_name and header_row
+    so a million-row file is not fully inspected a second time.
     """
-    layout = detect_layout(path)
-    selected_sheet = sheet_name or layout.sheet_name
-    selected_header = header_row or layout.header_row
+    layout = detect_layout(path) if sheet_name is None or header_row is None else None
+    selected_sheet = sheet_name or (layout.sheet_name if layout is not None else "")
+    selected_header = int(header_row if header_row is not None else layout.header_row)
     suffix = path.suffix.lower()
     emitted = 0
     if suffix == ".csv":
@@ -82,16 +88,17 @@ def iter_tabular_rows_with_position(
             for _ in range(selected_header - 1):
                 next(reader, None)
             headers = [str(value).strip() for value in (next(reader, []) or [])]
+            business_columns = [index for index, header in enumerate(headers) if header]
             original_row_number = selected_header
             for row in reader:
                 original_row_number += 1
                 if max_rows is not None and emitted >= max_rows:
                     break
-                if not any(value != "" for value in row):
+                if not row_has_effective_data(row, business_columns):
                     continue
                 emitted += 1
                 yield original_row_number, {
-                    header: (row[index] if index < len(row) and row[index] != "" else None)
+                    header: (row[index] if index < len(row) and str(row[index]).strip() else None)
                     for index, header in enumerate(headers)
                     if header
                 }
@@ -100,18 +107,22 @@ def iter_tabular_rows_with_position(
     workbook = load_workbook(path, read_only=True, data_only=True, keep_links=False)
     try:
         worksheet = workbook[selected_sheet]
+        reset_dimensions = getattr(worksheet, "reset_dimensions", None)
+        if callable(reset_dimensions):
+            reset_dimensions()
         raw_headers = next(
             worksheet.iter_rows(min_row=selected_header, max_row=selected_header, values_only=True),
             (),
         )
         headers = ["" if value is None else str(value).strip() for value in raw_headers]
+        business_columns = [index for index, header in enumerate(headers) if header]
         for original_row_number, values in enumerate(
             worksheet.iter_rows(min_row=selected_header + 1, values_only=True),
             start=selected_header + 1,
         ):
             if max_rows is not None and emitted >= max_rows:
                 break
-            if not any(value is not None for value in values):
+            if not row_has_effective_data(values, business_columns):
                 continue
             emitted += 1
             yield original_row_number, {
