@@ -76,8 +76,15 @@ class VectorIndexService:
             "scope_target_field": config.scope.target_field if config.scope_mode != "GLOBAL" else None,
             # v3 deliberately invalidates old READY indexes because index records
             # now persist the original target spreadsheet row number.
-            "algorithm": "embedded_bbq_flat_v3_rowtrace",
+            "algorithm": "embedded_bbq_lsh_v4_rowtrace",
             "coarse_kernel": EmbeddedBBQFlatIndex.COARSE_KERNEL,
+            "ann": {
+                "min_rows": self.settings.ann_min_rows,
+                "tables": self.settings.ann_lsh_tables,
+                "bits": self.settings.ann_lsh_bits,
+                "probe_radius": self.settings.ann_probe_radius,
+                "candidate_limit": self.settings.ann_candidate_limit,
+            },
         }
         return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
@@ -145,8 +152,15 @@ class VectorIndexService:
             "catalog_version_id": catalog_version_id,
             "target_file_sha256": target_file["sha256"],
             "group_code_column": group_code_column,
-            "algorithm_version": "embedded_bbq_flat_v3_rowtrace",
+            "algorithm_version": "embedded_bbq_lsh_v4_rowtrace",
             "coarse_kernel": EmbeddedBBQFlatIndex.COARSE_KERNEL,
+            "ann": {
+                "min_rows": self.settings.ann_min_rows,
+                "tables": self.settings.ann_lsh_tables,
+                "bits": self.settings.ann_lsh_bits,
+                "probe_radius": self.settings.ann_probe_radius,
+                "candidate_limit": self.settings.ann_candidate_limit,
+            },
         }
         with self.meta.connect() as connection:
             connection.execute(
@@ -180,6 +194,11 @@ class VectorIndexService:
                 metadata=base_metadata,
                 embedding_batch_size=self.settings.embedding_batch_size,
                 scan_block_rows=self.settings.index_scan_block_rows,
+                ann_min_rows=self.settings.ann_min_rows,
+                ann_lsh_tables=self.settings.ann_lsh_tables,
+                ann_lsh_bits=self.settings.ann_lsh_bits,
+                ann_probe_radius=self.settings.ann_probe_radius,
+                ann_candidate_limit=self.settings.ann_candidate_limit,
                 on_progress=progress,
             )
             completed_metadata = {**base_metadata, "stats": asdict(stats), "index_metadata": index.metadata}
