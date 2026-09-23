@@ -29,7 +29,7 @@ def test_login_shows_xiaogang_ai_brand_using_existing_asset() -> None:
 
 
 def test_login_version_comes_from_the_backend() -> None:
-    assert "api.get('/health')" in VIEW
+    assert "fetchAppVersion" in VIEW
     assert not re.search(r"v1\.0[^-9.]", VIEW)
 
 

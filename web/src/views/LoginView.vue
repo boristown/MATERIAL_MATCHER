@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { consumeAuthExpiredNotice, consumeAuthReturnTo } from '../auth'
+import { fetchAppVersion } from '../version'
 
 const username = ref('admin')
 const password = ref('')
@@ -19,7 +20,7 @@ onMounted(async () => {
   if (consumeAuthExpiredNotice()) {
     ElMessage.warning('登录已失效，请重新登录')
   }
-  try { appVersion.value = String((await api.get('/health')).data?.version ?? '') } catch { /* 版本信息仅作展示 */ }
+  appVersion.value = await fetchAppVersion()
 })
 
 async function login(): Promise<void> {

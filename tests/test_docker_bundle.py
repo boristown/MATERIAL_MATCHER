@@ -9,6 +9,10 @@ import sys
 REPO = Path(__file__).resolve().parents[1]
 
 
+def _version() -> str:
+    return (REPO / "src/material_matcher/VERSION").read_text(encoding="utf-8").strip()
+
+
 def _write(path: Path, content: bytes, executable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
@@ -27,6 +31,12 @@ def _release(tmp_path: Path) -> Path:
     release = tmp_path / "release-stage"
     _write(release / "source/pyproject.toml", b"[project]\n")
     _write(release / "source/web/package.json", b"{}\n")
+    (release / "release-manifest.json").write_text(json.dumps({
+        "format_version": 1,
+        "product": "MATERIAL_MATCHER_RELEASE",
+        "release_version": _version(),
+        "target_arch": "x86_64",
+    }), encoding="utf-8")
     return release
 
 
@@ -62,12 +72,11 @@ def test_docker_bundle_build_and_verify(tmp_path: Path) -> None:
             "--release-dir", str(_release(tmp_path)),
             "--seed-dir", str(seed),
             "--image-tar", str(image_tar),
-            "--image-ref", "material-matcher-app:9.9.9-test",
+            "--image-ref", f"material-matcher-app:{_version()}",
             "--image-id", "sha256:" + "d" * 64,
             "--engine-tgz", str(engine),
             "--compose-bin", str(compose),
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
-            "--release-version", "9.9.9-test",
             "--target-arch", "x86_64",
             "--git-commit", "e" * 40,
             "--seed-source-db-sha256", "a" * 64,
@@ -77,6 +86,8 @@ def test_docker_bundle_build_and_verify(tmp_path: Path) -> None:
     manifest = json.loads((output / "docker-manifest.json").read_text(encoding="utf-8"))
     paths = {item["path"] for item in manifest["files"]}
     assert manifest["product"] == "MATERIAL_MATCHER_DOCKER_BUNDLE"
+    assert manifest["release_version"] == _version()
+    assert f"版本: {_version()}" in (output / "BUILD_INFO.txt").read_text(encoding="utf-8")
     for required in (
         "run.sh", "docker_wizard.sh", "install_docker.sh", "menu.sh",
         "docker/engine/docker-27.1.1.tgz", "docker/compose/docker-compose-linux-x86_64",
@@ -89,7 +100,7 @@ def test_docker_bundle_build_and_verify(tmp_path: Path) -> None:
         check=True, text=True, capture_output=True,
     )
     payload = json.loads(verified.stdout)
-    assert payload["ok"] is True and payload["image_ref"] == "material-matcher-app:9.9.9-test"
+    assert payload["ok"] is True and payload["image_ref"] == f"material-matcher-app:{_version()}"
 
 
 def test_docker_bundle_rejects_tampering(tmp_path: Path) -> None:

@@ -7,12 +7,10 @@ import platform
 import shlex
 import subprocess
 import sys
-import tomllib
 
 
 def _project_version(repo_root: Path) -> str:
-    with (repo_root / "pyproject.toml").open("rb") as stream:
-        return str(tomllib.load(stream)["project"]["version"])
+    return (repo_root / "src/material_matcher/VERSION").read_text(encoding="utf-8").strip()
 
 
 def _arch() -> str:
@@ -101,7 +99,6 @@ def test_build_release_creates_self_contained_layout(tmp_path: Path) -> None:
             "--runtime-dir", str(_runtime(tmp_path)),
             "--web-dist-dir", str(_web_dist(tmp_path)),
             "--output-dir", str(output),
-            "--release-version", version,
             "--target-arch", _arch(),
         ],
         check=True,
@@ -117,6 +114,7 @@ def test_build_release_creates_self_contained_layout(tmp_path: Path) -> None:
     assert len(manifest["web_tree_sha256"]) == 64
     assert (output / "runtime/runtime-manifest.json").is_file()
     assert (output / "app/material_matcher/cli.py").is_file()
+    assert (output / "app/material_matcher/VERSION").read_text(encoding="utf-8").strip() == version
     assert (output / "web/dist/index.html").is_file()
     assert (output / "runtime/bin/material-matcher").stat().st_mode & 0o111
 

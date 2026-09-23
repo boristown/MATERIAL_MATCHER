@@ -8,7 +8,7 @@
 
 只有同时满足以下条件，才允许报告“正式上线完成”：
 
-1. 部署的是经过 CI 全绿的 **1.0.0** 精确提交/发布产物；
+1. 部署的是经过 CI 全绿且版本与 `src/material_matcher/VERSION` 一致的精确提交/发布产物；
 2. 离线包三层完整性校验通过；
 3. 目标机明确识别为银河麒麟 Linux V10，CPU 架构与介质一致；
 4. `material-matcher doctor --require-frontend --require-embedding --require-release-manifest` 成功；
@@ -50,7 +50,7 @@
 ### 2.1 代码与版本
 
 - Git 仓库：`boristown/MATERIAL_MATCHER`
-- 正式版本：`1.0.0`
+- 正式版本：以 `src/material_matcher/VERSION` 为唯一人工维护源；升级版本时只修改这一处
 - 精确 Git commit SHA：由最终合并/发布时记录，不能只写 `main`。
 - PR #4 已合并或明确批准用于交付，最终提交 CI backend/frontend 均为绿色。
 
@@ -111,24 +111,28 @@ git status --porcelain
 
 `git status --porcelain` 必须为空。
 
-确认版本：
+确认 canonical 版本。发布人员升级版本时**只修改** `src/material_matcher/VERSION`：
 
 ```bash
-python3 - <<'PY'
-import pathlib, re
-pyproject=pathlib.Path('pyproject.toml').read_text(encoding='utf-8')
-init=pathlib.Path('src/material_matcher/__init__.py').read_text(encoding='utf-8')
-print(re.search(r'version = "([^"]+)"',pyproject).group(1))
-print(re.search(r'__version__ = "([^"]+)"',init).group(1))
-PY
+RELEASE_VERSION="$(cat src/material_matcher/VERSION)"
+printf 'MATERIAL_MATCHER version: %s\n' "$RELEASE_VERSION"
 ```
 
-两处都必须为 `1.0.0`。
+`pyproject.toml` 使用 PEP 621 dynamic version，不再维护第二份产品版本号。
 
 如果发布机允许安装开发依赖，执行：
 
 ```bash
 python3 -m pip install -e '.[dev]'
+python3 - <<'PY'
+from importlib.metadata import version
+import material_matcher
+from pathlib import Path
+canonical = Path('src/material_matcher/VERSION').read_text(encoding='utf-8').strip()
+assert material_matcher.__version__ == canonical
+assert version('material-matcher') == canonical
+print(canonical)
+PY
 pytest -q
 python3 -m compileall -q src
 bash -n installer/install.sh
@@ -189,7 +193,6 @@ python3 scripts/build_release.py \
   --runtime-dir /release-work/runtime \
   --web-dist-dir web/dist \
   --output-dir /release-work/release \
-  --release-version 1.0.0 \
   --target-arch "$TARGET_ARCH"
 ```
 
@@ -210,13 +213,13 @@ Release builder 会拒绝版本不一致、Runtime 摘要错误、架构不一�
 ## 6. 发布机：组装并验证正式离线包
 
 ```bash
-BUNDLE="/release-output/material-matcher-1.0.0-${TARGET_ARCH}"
+RELEASE_VERSION="$(cat src/material_matcher/VERSION)"
+BUNDLE="/release-output/material-matcher-${RELEASE_VERSION}-${TARGET_ARCH}"
 python3 scripts/build_offline_bundle.py \
   --release-dir /release-work/release \
   --model-dir /release-input/models/BAAI/bge-base-zh-v1.5 \
   --wheelhouse-dir /release-input/wheelhouse \
   --output-dir "$BUNDLE" \
-  --release-version 1.0.0 \
   --target-arch "$TARGET_ARCH" \
   --model-id BAAI/bge-base-zh-v1.5
 ```
@@ -278,7 +281,7 @@ sudo readlink -f /var/lib/material_matcher/models/current 2>/dev/null || true
 复制完整 bundle 到目标机后：
 
 ```bash
-cd /path/to/material-matcher-1.0.0-<arch>
+cd /path/to/material-matcher-<version>-<arch>
 python3 verify_offline_bundle.py .
 ```
 
@@ -646,7 +649,7 @@ readlink -f /var/lib/material_matcher/models/previous
 运维 Agent 在报告“上线完成”时必须同时交付以下证据索引（可以是文件路径/工单附件，不要把密码放进去）：
 
 - Git commit SHA；
-- 版本 `1.0.0`；
+- 版本（来自 `src/material_matcher/VERSION`）；
 - CI run URL / backend+frontend success；
 - offline manifest SHA-256；
 - release/runtime manifests；
@@ -672,7 +675,7 @@ readlink -f /var/lib/material_matcher/models/previous
 只有最终门禁退出 0 时使用：
 
 ```text
-MATERIAL_MATCHER 1.0.0 已完成正式上线。
+MATERIAL_MATCHER <version> 已完成正式上线。
 Commit: <sha>
 Host: 银河麒麟 Linux V10 / <arch>
 Service: active

@@ -11,7 +11,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
+
+from versioning import canonical_version, resolve_release_version
 
 RELEASE_MANIFEST = "release-manifest.json"
 RUNTIME_MANIFEST = "runtime-manifest.json"
@@ -98,18 +99,7 @@ def _git_commit(repo_root: Path) -> str:
 
 
 def _project_version(repo_root: Path) -> str:
-    with (repo_root / "pyproject.toml").open("rb") as stream:
-        pyproject = tomllib.load(stream)
-    project_version = str(pyproject["project"]["version"])
-    init_text = (repo_root / "src/material_matcher/__init__.py").read_text(encoding="utf-8")
-    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', init_text, re.MULTILINE)
-    if not match:
-        raise ValueError("无法读取 material_matcher.__version__")
-    runtime_version = match.group(1)
-    if project_version != runtime_version:
-        raise ValueError(f"项目版本不一致：pyproject={project_version}, __version__={runtime_version}")
-    return project_version
-
+    return canonical_version(repo_root)
 
 def _load_runtime_manifest(runtime_dir: Path) -> dict[str, object]:
     path = runtime_dir / RUNTIME_MANIFEST
@@ -152,17 +142,14 @@ def build_release(
     runtime_dir: Path,
     web_dist_dir: Path,
     output_dir: Path,
-    release_version: str,
+    release_version: str | None = None,
     target_arch: str | None = None,
     force: bool = False,
 ) -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    release_version = resolve_release_version(release_version, repo_root=repo_root)
     if not RELEASE_VERSION_RE.fullmatch(release_version):
         raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
-
-    repo_root = Path(__file__).resolve().parents[1]
-    project_version = _project_version(repo_root)
-    if release_version != project_version:
-        raise ValueError(f"release_version={release_version} 与项目版本 {project_version} 不一致")
 
     runtime_dir = runtime_dir.resolve()
     web_dist_dir = web_dist_dir.resolve()
@@ -267,7 +254,7 @@ def main() -> None:
     parser.add_argument("--runtime-dir", type=Path, required=True, help="scripts/prepare_runtime.py 生成的正式 Python runtime")
     parser.add_argument("--web-dist-dir", type=Path, required=True, help="Vue production build 输出目录")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--release-version", default=None, help="兼容参数；缺省自动读取 src/material_matcher/VERSION，显式传入时必须一致")
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), default=None)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
