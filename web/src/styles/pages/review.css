@@ -1,7 +1,7 @@
 /* STEP 3 page-owned styles. Keep selectors scoped under .review-page. */
 .review-page { min-width: 0; }
 .review-page .review-toolbar { align-items: flex-start; gap: 16px; }
-.review-page .review-toolbar-actions { display: flex; align-items: center; gap: 10px; }
+.review-page .review-toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .review-page .review-task-switcher { width: 310px; }
 
 .review-page .review-console,
@@ -32,8 +32,7 @@
 .review-page .review-status-dot { width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #2563eb; box-shadow: 0 0 0 4px rgba(37, 99, 235, .13); }
 .review-page .review-console-meta { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 13px; color: #64748b; font-size: 12px; }
 .review-page .review-console-action { display: flex; flex: 0 0 auto; flex-direction: column; align-items: stretch; min-width: 170px; }
-.review-page .review-empty-actions { flex-direction: row; min-width: auto; }
-.review-page .review-empty-actions .el-button + .el-button { margin-left: 10px; }
+.review-page .review-empty-actions { flex-direction: row; gap: 10px; min-width: auto; }
 .review-page .review-wait-progress { flex: 0 1 300px; min-width: 230px; }
 .review-page .review-wait-percent { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .review-page .review-wait-percent b { color: #334155; font-size: 28px; font-variant-numeric: tabular-nums; }
@@ -137,6 +136,15 @@
 .review-page .review-record-hint { color: #94a3b8; font-size: 10.5px; }
 .review-page .review-record-actions > div:last-child { display: flex; gap: 8px; }
 
+/* Shared action-group contract: flex gap owns spacing; Element Plus sibling margin must not stack on top. */
+.review-page .review-toolbar-actions .el-button,
+.review-page .review-empty-actions .el-button,
+.review-page .review-threshold-actions .el-button,
+.review-page .review-field-actions .el-button,
+.review-page .review-record-actions > div:last-child .el-button {
+  margin-left: 0;
+}
+
 .review-page .review-pagination-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; }
 .review-page .review-pagination-row > span { color: #94a3b8; font-size: 10.5px; }
 .review-page .review-list-panel { margin-top: 16px; }
@@ -184,7 +192,7 @@
   .review-page .review-task-hero-meta { align-items: flex-start; }
   .review-page .review-metric-grid { grid-template-columns: repeat(2, 1fr); }
   .review-page .review-threshold-editor { grid-template-columns: 1fr; }
-  .review-page .review-threshold-actions { justify-content: flex-end; }
+  .review-page .review-threshold-actions { justify-content: flex-start; }
   .review-page .review-impact-grid { grid-template-columns: 1fr; }
   .review-page .review-field-actions { flex-direction: column; }
   .review-page .review-field-select { width: 100%; }

@@ -2,7 +2,7 @@
    Page agents may edit this file without touching global styles.css.
    Keep legacy-browser fallbacks in this file when adding modern CSS. */
 .results-page { min-width: 0; }
-.results-toolbar { align-items: center; margin-bottom: 0; }
+.results-toolbar { align-items: flex-start; margin-bottom: 0; }
 
 .result-workbench {
   position: relative;

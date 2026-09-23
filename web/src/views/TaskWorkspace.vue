@@ -284,6 +284,7 @@ watch(taskId, () => void loadCalibration())
 .calibration-counts { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 12px; padding: 9px 12px; background: #f8fafc; border-radius: 7px; color: #475569; }
 .calibration-counts b { color: #0f172a; }
 .threshold-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 13px; }
+.threshold-row :deep(.el-button), .section-title-row :deep(.el-button) { margin-left: 0; }
 .threshold-row label { color: #334155; font-weight: 600; }
 .invalid { color: #dc2626; font-size: 12px; }
 .preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }

@@ -82,11 +82,12 @@ h2 { font-size: 20px; margin: 2px 0 4px; }
 h3 { font-size: 16.5px; margin: 0 0 16px; display: flex; align-items: center; gap: 8px; }
 h4 { font-size: 13.5px; color: #334155; margin: 20px 0 10px; }
 
-.toolbar { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 6px; }
+.toolbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 6px; }
+.toolbar > :first-child { min-width: 0; }
 .toolbar p { margin: 2px 0 0; color: var(--mm-muted); font-size: 12.5px; }
 
 .panel { background: var(--mm-card); padding: 24px; margin-top: 20px; border-radius: var(--mm-radius); border: 1px solid var(--mm-line); box-shadow: var(--mm-shadow); }
-.section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.section-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px; }
 
 .el-table { --el-table-header-bg-color: #f8fafc; --el-table-border-color: var(--mm-line); font-size: 13px; }
 .el-table th.el-table__cell { color: #475569; font-weight: 600; }
@@ -98,7 +99,9 @@ h4 { font-size: 13.5px; color: #334155; margin: 20px 0 10px; }
 .uploads b { display: block; margin-bottom: 10px; }
 .uploads .el-select { margin-top: 12px; width: 100%; }
 
-.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.actions { display: flex; justify-content: flex-start; gap: 10px; margin-top: 22px; }
+.actions .el-button, .toolbar-actions .el-button, .quick .el-button { margin-left: 0; }
+.actions .el-button + .el-button, .toolbar-actions .el-button + .el-button, .quick .el-button + .el-button { margin-left: 0; }
 .threshold, .scope-config, .stats, .quick { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .scope-config { margin: 14px 0; }
 .scope-config .el-select { width: 260px; }
@@ -209,7 +212,10 @@ code { word-break: break-all; background: #f1f5f9; padding: 1px 6px; border-radi
 
 /* ===== 四步向导 ===== */
 .stage-steps { margin: 18px 0 4px; }
-.toolbar-actions { display: flex; gap: 10px; align-items: center; }
+.toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.workspace-toolbar { justify-content: flex-start; gap: 24px; }
+.workspace-toolbar > :first-child { flex: 1 1 640px; max-width: 900px; }
+.workspace-toolbar > .toolbar-actions { flex: 0 0 auto; }
 .upload-card { display: flex; flex-direction: column; gap: 10px; }
 .upload-card .el-upload { width: 100%; }
 .upload-card .el-upload-dragger { width: 100%; padding: 18px 12px; border-radius: 12px; }
@@ -318,6 +324,7 @@ code { word-break: break-all; background: #f1f5f9; padding: 1px 6px; border-radi
   .content { padding: 14px 14px 36px; }
   .toolbar { flex-wrap: wrap; align-items: flex-start; gap: 8px; }
   .toolbar-actions { justify-content: flex-start; flex-wrap: wrap; width: 100%; }
+  .workspace-toolbar > :first-child { flex-basis: 100%; max-width: none; }
   .panel { padding: 16px 14px; }
   .uploads { grid-template-columns: 1fr; gap: 12px; }
   .scope-config .el-select { width: 100%; }
