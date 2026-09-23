@@ -140,6 +140,9 @@ class EmbeddedBBQFlatIndex:
     RECORDS_FILE = "records.jsonl"
     OFFSETS_FILE = "records.offsets.u64"
     POSTINGS_FILE = "scope.postings.json"
+    LSH_KEYS_FILE = "ann.lsh.keys.u32"
+    LSH_IDS_FILE = "ann.lsh.ids.u32"
+    LSH_SEED = 16220260923
     COARSE_KERNEL = "packed_weighted_byte_lut_q4_v2"
 
     def __init__(self, root: Path) -> None:
@@ -158,8 +161,120 @@ class EmbeddedBBQFlatIndex:
         self._postings: dict[str, list[int]] = json.loads(postings_path.read_text(encoding="utf-8")) if postings_path.exists() else {}
         self.block_rows = int(self.metadata.get("scan_block_rows", 8192))
         self.oversample = int(self.metadata.get("oversample", 4))
+        ann = self.metadata.get("ann", {})
+        ann = ann if isinstance(ann, dict) else {}
+        self.ann_enabled = bool(ann.get("enabled")) and (root / self.LSH_KEYS_FILE).exists() and (root / self.LSH_IDS_FILE).exists()
+        self.ann_tables = int(ann.get("tables", 0) or 0)
+        self.ann_bits = int(ann.get("bits", 0) or 0)
+        self.ann_probe_radius = int(ann.get("probe_radius", 0) or 0)
+        self.ann_candidate_limit = int(ann.get("candidate_limit", 0) or 0)
+        positions = ann.get("positions", [])
+        self._lsh_positions = np.asarray(positions, dtype=np.int32) if positions else np.empty((0, 0), dtype=np.int32)
+        if self.ann_enabled:
+            self._lsh_keys = np.memmap(root / self.LSH_KEYS_FILE, dtype="<u4", mode="r", shape=(self.ann_tables, self.row_count))
+            self._lsh_ids = np.memmap(root / self.LSH_IDS_FILE, dtype="<u4", mode="r", shape=(self.ann_tables, self.row_count))
+        else:
+            self._lsh_keys = None
+            self._lsh_ids = None
         self._scan_pool = None
         self._scan_pool_workers = 0
+
+    @staticmethod
+    def _lsh_positions_for(dimensions: int, tables: int, bits: int) -> np.ndarray:
+        """Deterministic random hyperplane coordinates used by sign-LSH.
+
+        Coordinates are sampled without replacement per table. The index stores
+        only sorted uint32 bucket keys + row ids, so a million-row index remains
+        bounded and mmap-friendly instead of copying target vectors per worker.
+        """
+        active_bits = max(1, min(int(bits), int(dimensions), 24))
+        active_tables = max(1, int(tables))
+        rng = np.random.default_rng(EmbeddedBBQFlatIndex.LSH_SEED + int(dimensions))
+        return np.stack(
+            [rng.choice(dimensions, size=active_bits, replace=False) for _ in range(active_tables)],
+            axis=0,
+        ).astype(np.int32, copy=False)
+
+    @staticmethod
+    def _lsh_codes_from_packed(packed: np.ndarray, positions: np.ndarray) -> np.ndarray:
+        packed = np.asarray(packed, dtype=np.uint8)
+        codes = np.zeros(packed.shape[0], dtype=np.uint32)
+        for output_bit, dimension in enumerate(np.asarray(positions, dtype=np.int32)):
+            dim = int(dimension)
+            byte_index = dim // 8
+            mask = np.uint8(1 << (dim % 8))
+            bit = ((packed[:, byte_index] & mask) != 0).astype(np.uint32)
+            codes |= bit << np.uint32(output_bit)
+        return codes
+
+    def _ann_candidate_ids(
+        self,
+        query_vector: np.ndarray,
+        coarse_keep: int,
+        stats: dict[str, int | bool] | None = None,
+    ) -> np.ndarray | None:
+        """Return a bounded ANN candidate set, or None for exact-scan fallback.
+
+        Pathological low-entropy buckets may contain a large fraction of the
+        index. In that case we intentionally fall back to the existing mmap
+        block scan before materializing the bucket union. This preserves recall
+        and keeps temporary Python/Numpy allocations bounded.
+        """
+        if not self.ann_enabled or self._lsh_keys is None or self._lsh_ids is None:
+            return None
+        hard_limit = max(int(coarse_keep), int(self.ann_candidate_limit))
+        occurrence_limit = max(hard_limit * 8, hard_limit + 1024)
+        query, query_q4 = self._quantized(query_vector)
+        query_sign = np.packbits(query >= 0.0, bitorder="little")
+        gathered: list[np.ndarray] = []
+        raw_occurrences = 0
+        for table_index in range(self.ann_tables):
+            positions = self._lsh_positions[table_index]
+            code = 0
+            for output_bit, dimension in enumerate(positions):
+                dim = int(dimension)
+                if query_sign[dim // 8] & np.uint8(1 << (dim % 8)):
+                    code |= 1 << output_bit
+            probes = [code]
+            if self.ann_probe_radius >= 1:
+                probes.extend(code ^ (1 << bit) for bit in range(self.ann_bits))
+            keys = self._lsh_keys[table_index]
+            ids = self._lsh_ids[table_index]
+            probe_array = np.asarray(probes, dtype=np.uint32)
+            lefts = np.searchsorted(keys, probe_array, side="left")
+            rights = np.searchsorted(keys, probe_array, side="right")
+            raw_occurrences += int(np.sum(rights - lefts, dtype=np.int64))
+            if raw_occurrences > occurrence_limit:
+                if stats is not None:
+                    stats.update({
+                        "ann_fallback": True,
+                        "ann_raw_occurrences": raw_occurrences,
+                        "candidate_pool_count": self.row_count,
+                    })
+                return None
+            table_parts = [ids[left:right] for left, right in zip(lefts.tolist(), rights.tolist()) if right > left]
+            if table_parts:
+                gathered.append(np.concatenate(table_parts))
+        if not gathered:
+            if stats is not None:
+                stats.update({
+                    "ann_fallback": True,
+                    "ann_raw_occurrences": 0,
+                    "candidate_pool_count": self.row_count,
+                })
+            return None
+        candidate_ids = np.unique(np.concatenate(gathered)).astype(np.int64, copy=False)
+        if candidate_ids.size > hard_limit:
+            scores = self._coarse_scores(candidate_ids, query_q4)
+            selection = _stable_top(scores, candidate_ids, hard_limit)
+            candidate_ids = candidate_ids[selection]
+        if stats is not None:
+            stats.update({
+                "ann_fallback": False,
+                "ann_raw_occurrences": raw_occurrences,
+                "candidate_pool_count": int(candidate_ids.size),
+            })
+        return candidate_ids
 
     @classmethod
     def build(
@@ -174,6 +289,11 @@ class EmbeddedBBQFlatIndex:
         metadata: dict[str, object],
         embedding_batch_size: int,
         scan_block_rows: int,
+        ann_min_rows: int = 100_000,
+        ann_lsh_tables: int = 48,
+        ann_lsh_bits: int = 16,
+        ann_probe_radius: int = 1,
+        ann_candidate_limit: int = 12_000,
         on_progress: Callable[[int], None] | None = None,
     ) -> tuple["EmbeddedBBQFlatIndex", BuildStats]:
         parent = final_root.parent
@@ -184,6 +304,8 @@ class EmbeddedBBQFlatIndex:
         int8_path = temporary / cls.INT8_FILE
         records_path = temporary / cls.RECORDS_FILE
         offsets_path = temporary / cls.OFFSETS_FILE
+        lsh_keys_path = temporary / cls.LSH_KEYS_FILE
+        lsh_ids_path = temporary / cls.LSH_IDS_FILE
         target_signature = retrieval_text_signature(config, "target")
         postings: dict[str, list[int]] = {}
         scope_field = config.scope.target_field if config.scope_mode != "GLOBAL" else None
@@ -252,10 +374,38 @@ class EmbeddedBBQFlatIndex:
             if row_count == 0:
                 raise DomainError("INDEX_EMPTY", "集团目录没有可用于向量索引的有效记录", status_code=422)
             (temporary / cls.POSTINGS_FILE).write_text(json.dumps(postings, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+            ann_metadata: dict[str, object] = {"enabled": False}
+            if row_count >= max(1, int(ann_min_rows)):
+                tables = max(1, int(ann_lsh_tables))
+                bits = max(4, min(24, int(ann_lsh_bits), provider.spec.dimensions))
+                positions = cls._lsh_positions_for(provider.spec.dimensions, tables, bits)
+                packed_dimensions = (provider.spec.dimensions + 7) // 8
+                packed = np.memmap(bits_path, dtype=np.uint8, mode="r", shape=(row_count, packed_dimensions))
+                keys_map = np.memmap(lsh_keys_path, dtype="<u4", mode="w+", shape=(tables, row_count))
+                ids_map = np.memmap(lsh_ids_path, dtype="<u4", mode="w+", shape=(tables, row_count))
+                base_ids = np.arange(row_count, dtype=np.uint32)
+                for table_index in range(tables):
+                    codes = cls._lsh_codes_from_packed(packed, positions[table_index])
+                    order = np.argsort(codes, kind="stable")
+                    keys_map[table_index] = codes[order]
+                    ids_map[table_index] = base_ids[order]
+                keys_map.flush()
+                ids_map.flush()
+                del keys_map, ids_map, packed
+                ann_metadata = {
+                    "enabled": True,
+                    "backend": "multi_table_sign_lsh_v1",
+                    "tables": tables,
+                    "bits": bits,
+                    "probe_radius": max(0, min(1, int(ann_probe_radius))),
+                    "candidate_limit": max(128, int(ann_candidate_limit)),
+                    "positions": positions.tolist(),
+                }
             full_metadata = {
                 **metadata,
-                "format_version": 2,
-                "algorithm": "embedded_bbq_flat",
+                "format_version": 3,
+                "algorithm": "embedded_bbq_lsh",
                 "coarse_kernel": cls.COARSE_KERNEL,
                 "row_count": row_count,
                 "dimensions": provider.spec.dimensions,
@@ -266,6 +416,7 @@ class EmbeddedBBQFlatIndex:
                 "oversample": config.retrieval.oversample,
                 "target_text_signature": target_signature,
                 "scope_target_field": scope_field,
+                "ann": ann_metadata,
                 "created_at": datetime.now().astimezone().isoformat(),
                 "cache_hits": cache_hits,
                 "cache_misses": cache_misses,
@@ -324,7 +475,15 @@ class EmbeddedBBQFlatIndex:
     def _quantized(self, query_vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return self.quantize_query(query_vector)
 
-    def search(self, query_vector: np.ndarray, top_k: int, *, candidate_ids: Sequence[int] | None = None, oversample: int | None = None) -> list[VectorHit]:
+    def search(
+        self,
+        query_vector: np.ndarray,
+        top_k: int,
+        *,
+        candidate_ids: Sequence[int] | None = None,
+        oversample: int | None = None,
+        stats: dict[str, int | bool] | None = None,
+    ) -> list[VectorHit]:
         if top_k <= 0 or self.row_count <= 0:
             return []
         query, query_q4 = self._quantized(query_vector)
@@ -335,7 +494,16 @@ class EmbeddedBBQFlatIndex:
         coarse_keep = max(top_k, top_k * active_oversample)
         candidate_chunks: list[np.ndarray] = []
         score_chunks: list[np.ndarray] = []
-        ids_array = np.asarray(candidate_ids, dtype=np.int64) if candidate_ids is not None else None
+        if candidate_ids is not None:
+            ids_array = np.asarray(candidate_ids, dtype=np.int64)
+            if stats is not None:
+                stats.update({"ann_fallback": False, "candidate_pool_count": int(ids_array.size)})
+        elif self.ann_enabled:
+            ids_array = self._ann_candidate_ids(query, coarse_keep, stats=stats)
+        else:
+            ids_array = None
+            if stats is not None:
+                stats.update({"ann_fallback": False, "candidate_pool_count": self.row_count})
         total = len(ids_array) if ids_array is not None else self.row_count
         for start in range(0, total, self.block_rows):
             if ids_array is None:
@@ -363,7 +531,11 @@ class EmbeddedBBQFlatIndex:
         target_vectors = np.asarray(self._int8[coarse_ids], dtype=np.float32) / 127.0
         rerank_scores = target_vectors @ query
         order = np.argsort(rerank_scores)[::-1][: min(top_k, rerank_scores.size)]
-        return [VectorHit(row_id=int(coarse_ids[index]), score=float(rerank_scores[index])) for index in order]
+        result = [VectorHit(row_id=int(coarse_ids[index]), score=float(rerank_scores[index])) for index in order]
+        if stats is not None:
+            stats["rerank_count"] = int(coarse_ids.size)
+            stats["returned_count"] = len(result)
+        return result
 
     def close(self) -> None:
         pool = getattr(self, "_scan_pool", None)
@@ -371,15 +543,48 @@ class EmbeddedBBQFlatIndex:
             self._scan_pool = None
             pool.shutdown(wait=False)
 
-    def search_many(self, queries: np.ndarray, top_k: int, *, oversample: int | None = None, scan_workers: int = 0) -> list[list[VectorHit]]:
+    def search_many(
+        self,
+        queries: np.ndarray,
+        top_k: int,
+        *,
+        oversample: int | None = None,
+        scan_workers: int = 0,
+        stats_out: list[dict[str, int | bool]] | None = None,
+    ) -> list[list[VectorHit]]:
         """Batched global search. Uses a forked process pool over row shards when
         scan_workers > 1; results are equivalent to repeated search() calls."""
         matrix = np.asarray(queries, dtype=np.float32)
         if matrix.ndim != 2 or matrix.shape[1] != self.dimensions:
             raise ValueError("query matrix dimension mismatch")
         workers = max(0, int(scan_workers))
-        if workers <= 1 or self.row_count <= 0 or top_k <= 0 or matrix.shape[0] == 0:
-            return [self.search(matrix[index], top_k, oversample=oversample) for index in range(matrix.shape[0])]
+        if self.row_count <= 0 or top_k <= 0 or matrix.shape[0] == 0:
+            return [[] for _ in range(matrix.shape[0])]
+        if self.ann_enabled:
+            def run_one(index: int) -> tuple[list[VectorHit], dict[str, int | bool]]:
+                local_stats: dict[str, int | bool] = {}
+                hits = self.search(matrix[index], top_k, oversample=oversample, stats=local_stats)
+                return hits, local_stats
+
+            if workers <= 1:
+                pairs = [run_one(index) for index in range(matrix.shape[0])]
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+                active_workers = min(workers, matrix.shape[0])
+                with ThreadPoolExecutor(max_workers=active_workers, thread_name_prefix="matcher-ann") as pool:
+                    futures = [pool.submit(run_one, index) for index in range(matrix.shape[0])]
+                    pairs = [future.result() for future in futures]
+            if stats_out is not None:
+                stats_out.extend(item[1] for item in pairs)
+            return [item[0] for item in pairs]
+        if workers <= 1:
+            results: list[list[VectorHit]] = []
+            for index in range(matrix.shape[0]):
+                local_stats: dict[str, int | bool] = {}
+                results.append(self.search(matrix[index], top_k, oversample=oversample, stats=local_stats))
+                if stats_out is not None:
+                    stats_out.append(local_stats)
+            return results
         active_oversample = max(1, int(oversample or self.oversample))
         coarse_keep = max(top_k, top_k * active_oversample)
         workers = min(workers, max(1, matrix.shape[0]), self.row_count // max(self.block_rows, 1) or 1)
@@ -429,7 +634,15 @@ class EmbeddedBBQFlatIndex:
             target_vectors = np.asarray(self._int8[ids], dtype=np.float32) / 127.0
             rerank_scores = target_vectors @ query
             order = np.argsort(rerank_scores)[::-1][: min(top_k, rerank_scores.size)]
-            results.append([VectorHit(row_id=int(ids[index]), score=float(rerank_scores[index])) for index in order])
+            result = [VectorHit(row_id=int(ids[index]), score=float(rerank_scores[index])) for index in order]
+            results.append(result)
+            if stats_out is not None:
+                stats_out.append({
+                    "ann_fallback": False,
+                    "candidate_pool_count": self.row_count,
+                    "rerank_count": int(ids.size),
+                    "returned_count": len(result),
+                })
         return results
 
     def record(self, row_id: int) -> dict[str, object]:

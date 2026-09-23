@@ -17,6 +17,8 @@ jobs:
       - name: Build wheel from canonical version
         run: python -m pip wheel . --no-deps --no-build-isolation -w /tmp/material-matcher-wheel
       - run: pytest -q
+      - name: Issue 162 bounded matching quick regression
+        run: python scripts/benchmark_issue_162.py --preset quick --warm-runs 0 --work-dir /tmp/issue162-quick --output /tmp/issue162-quick.json
       - name: Real-world matching quality (scan baseline)
         run: python scripts/evaluate_matching_quality.py
       - name: Real-world field score diagnostics

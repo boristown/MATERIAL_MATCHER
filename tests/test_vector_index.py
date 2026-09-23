@@ -73,7 +73,7 @@ def test_bbq_index_reuse_scope_and_indexed_matching(tmp_path: Path) -> None:
     assert first_info["reused"] is False
     assert index.row_count == 3
     assert index.metadata["coarse_kernel"] == EmbeddedBBQFlatIndex.COARSE_KERNEL
-    assert index.metadata["format_version"] == 2
+    assert index.metadata["format_version"] == 3
     assert (index.root / index.BITS_FILE).stat().st_size == 3 * ((32 + 7) // 8)
     assert (index.root / index.INT8_FILE).stat().st_size == 3 * 32
 
