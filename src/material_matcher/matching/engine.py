@@ -415,6 +415,7 @@ def match_rows_indexed(
         add_timing("source preprocessing", time.perf_counter() - started)
 
         hits_list: list[list] | None = None
+        search_stats: list[dict[str, int | bool]] = []
         if config.scope_mode == "GLOBAL":
             started = time.perf_counter()
             hits_list = index.search_many(
@@ -422,6 +423,7 @@ def match_rows_indexed(
                 candidate_top_k,
                 oversample=config.retrieval.oversample,
                 scan_workers=active_workers,
+                stats_out=search_stats,
             )
             add_timing("retrieval", time.perf_counter() - started)
 
@@ -429,21 +431,31 @@ def match_rows_indexed(
             query = np.asarray(vectors[position], dtype=np.float32)
             if hits_list is not None:
                 hits = hits_list[position]
+                local_stats = search_stats[position] if position < len(search_stats) else {}
             else:
                 started = time.perf_counter()
                 candidate_ids = index.candidate_ids_for_scope(source_row, config)
+                local_stats: dict[str, int | bool] = {}
                 hits = index.search(
                     query,
                     candidate_top_k,
                     candidate_ids=candidate_ids,
                     oversample=config.retrieval.oversample,
+                    stats=local_stats,
                 )
                 add_timing("retrieval", time.perf_counter() - started)
 
             if performance_metrics is not None:
-                counts = performance_metrics.setdefault("_candidate_counts", [])
-                if isinstance(counts, list):
-                    counts.append(len(hits))
+                for metric_key, metric_value in (
+                    ("_candidate_counts", int(local_stats.get("returned_count", len(hits)))),
+                    ("_candidate_pool_counts", int(local_stats.get("candidate_pool_count", len(hits)))),
+                    ("_rerank_counts", int(local_stats.get("rerank_count", len(hits)))),
+                ):
+                    counts = performance_metrics.setdefault(metric_key, [])
+                    if isinstance(counts, list):
+                        counts.append(metric_value)
+                if bool(local_stats.get("ann_fallback")):
+                    performance_metrics["ann_fallback_queries"] = int(performance_metrics.get("ann_fallback_queries", 0)) + 1
 
             started = time.perf_counter()
             records = index.records([hit.row_id for hit in hits])
