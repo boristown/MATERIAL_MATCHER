@@ -207,13 +207,27 @@ class EmbeddedBBQFlatIndex:
             codes |= bit << np.uint32(output_bit)
         return codes
 
-    def _ann_candidate_ids(self, query_vector: np.ndarray, coarse_keep: int) -> np.ndarray:
-        """Return a deterministic, bounded candidate set without scanning all rows."""
+    def _ann_candidate_ids(
+        self,
+        query_vector: np.ndarray,
+        coarse_keep: int,
+        stats: dict[str, int | bool] | None = None,
+    ) -> np.ndarray | None:
+        """Return a bounded ANN candidate set, or None for exact-scan fallback.
+
+        Pathological low-entropy buckets may contain a large fraction of the
+        index. In that case we intentionally fall back to the existing mmap
+        block scan before materializing the bucket union. This preserves recall
+        and keeps temporary Python/Numpy allocations bounded.
+        """
         if not self.ann_enabled or self._lsh_keys is None or self._lsh_ids is None:
-            return np.arange(self.row_count, dtype=np.int64)
+            return None
+        hard_limit = max(int(coarse_keep), int(self.ann_candidate_limit))
+        occurrence_limit = max(hard_limit * 8, hard_limit + 1024)
         query, query_q4 = self._quantized(query_vector)
         query_sign = np.packbits(query >= 0.0, bitorder="little")
         gathered: list[np.ndarray] = []
+        raw_occurrences = 0
         for table_index in range(self.ann_tables):
             positions = self._lsh_positions[table_index]
             code = 0
@@ -229,18 +243,38 @@ class EmbeddedBBQFlatIndex:
             probe_array = np.asarray(probes, dtype=np.uint32)
             lefts = np.searchsorted(keys, probe_array, side="left")
             rights = np.searchsorted(keys, probe_array, side="right")
+            raw_occurrences += int(np.sum(rights - lefts, dtype=np.int64))
+            if raw_occurrences > occurrence_limit:
+                if stats is not None:
+                    stats.update({
+                        "ann_fallback": True,
+                        "ann_raw_occurrences": raw_occurrences,
+                        "candidate_pool_count": self.row_count,
+                    })
+                return None
             table_parts = [ids[left:right] for left, right in zip(lefts.tolist(), rights.tolist()) if right > left]
             if table_parts:
                 gathered.append(np.concatenate(table_parts))
         if not gathered:
-            return np.empty(0, dtype=np.int64)
+            if stats is not None:
+                stats.update({
+                    "ann_fallback": True,
+                    "ann_raw_occurrences": 0,
+                    "candidate_pool_count": self.row_count,
+                })
+            return None
         candidate_ids = np.unique(np.concatenate(gathered)).astype(np.int64, copy=False)
-        hard_limit = max(int(coarse_keep), int(self.ann_candidate_limit))
-        if candidate_ids.size <= hard_limit:
-            return candidate_ids
-        scores = self._coarse_scores(candidate_ids, query_q4)
-        selection = _stable_top(scores, candidate_ids, hard_limit)
-        return candidate_ids[selection]
+        if candidate_ids.size > hard_limit:
+            scores = self._coarse_scores(candidate_ids, query_q4)
+            selection = _stable_top(scores, candidate_ids, hard_limit)
+            candidate_ids = candidate_ids[selection]
+        if stats is not None:
+            stats.update({
+                "ann_fallback": False,
+                "ann_raw_occurrences": raw_occurrences,
+                "candidate_pool_count": int(candidate_ids.size),
+            })
+        return candidate_ids
 
     @classmethod
     def build(
@@ -441,7 +475,15 @@ class EmbeddedBBQFlatIndex:
     def _quantized(self, query_vector: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         return self.quantize_query(query_vector)
 
-    def search(self, query_vector: np.ndarray, top_k: int, *, candidate_ids: Sequence[int] | None = None, oversample: int | None = None) -> list[VectorHit]:
+    def search(
+        self,
+        query_vector: np.ndarray,
+        top_k: int,
+        *,
+        candidate_ids: Sequence[int] | None = None,
+        oversample: int | None = None,
+        stats: dict[str, int | bool] | None = None,
+    ) -> list[VectorHit]:
         if top_k <= 0 or self.row_count <= 0:
             return []
         query, query_q4 = self._quantized(query_vector)
@@ -454,10 +496,14 @@ class EmbeddedBBQFlatIndex:
         score_chunks: list[np.ndarray] = []
         if candidate_ids is not None:
             ids_array = np.asarray(candidate_ids, dtype=np.int64)
+            if stats is not None:
+                stats.update({"ann_fallback": False, "candidate_pool_count": int(ids_array.size)})
         elif self.ann_enabled:
-            ids_array = self._ann_candidate_ids(query, coarse_keep)
+            ids_array = self._ann_candidate_ids(query, coarse_keep, stats=stats)
         else:
             ids_array = None
+            if stats is not None:
+                stats.update({"ann_fallback": False, "candidate_pool_count": self.row_count})
         total = len(ids_array) if ids_array is not None else self.row_count
         for start in range(0, total, self.block_rows):
             if ids_array is None:
@@ -485,7 +531,11 @@ class EmbeddedBBQFlatIndex:
         target_vectors = np.asarray(self._int8[coarse_ids], dtype=np.float32) / 127.0
         rerank_scores = target_vectors @ query
         order = np.argsort(rerank_scores)[::-1][: min(top_k, rerank_scores.size)]
-        return [VectorHit(row_id=int(coarse_ids[index]), score=float(rerank_scores[index])) for index in order]
+        result = [VectorHit(row_id=int(coarse_ids[index]), score=float(rerank_scores[index])) for index in order]
+        if stats is not None:
+            stats["rerank_count"] = int(coarse_ids.size)
+            stats["returned_count"] = len(result)
+        return result
 
     def close(self) -> None:
         pool = getattr(self, "_scan_pool", None)
@@ -493,7 +543,15 @@ class EmbeddedBBQFlatIndex:
             self._scan_pool = None
             pool.shutdown(wait=False)
 
-    def search_many(self, queries: np.ndarray, top_k: int, *, oversample: int | None = None, scan_workers: int = 0) -> list[list[VectorHit]]:
+    def search_many(
+        self,
+        queries: np.ndarray,
+        top_k: int,
+        *,
+        oversample: int | None = None,
+        scan_workers: int = 0,
+        stats_out: list[dict[str, int | bool]] | None = None,
+    ) -> list[list[VectorHit]]:
         """Batched global search. Uses a forked process pool over row shards when
         scan_workers > 1; results are equivalent to repeated search() calls."""
         matrix = np.asarray(queries, dtype=np.float32)
@@ -503,15 +561,30 @@ class EmbeddedBBQFlatIndex:
         if self.row_count <= 0 or top_k <= 0 or matrix.shape[0] == 0:
             return [[] for _ in range(matrix.shape[0])]
         if self.ann_enabled:
+            def run_one(index: int) -> tuple[list[VectorHit], dict[str, int | bool]]:
+                local_stats: dict[str, int | bool] = {}
+                hits = self.search(matrix[index], top_k, oversample=oversample, stats=local_stats)
+                return hits, local_stats
+
             if workers <= 1:
-                return [self.search(matrix[index], top_k, oversample=oversample) for index in range(matrix.shape[0])]
-            from concurrent.futures import ThreadPoolExecutor
-            active_workers = min(workers, matrix.shape[0])
-            with ThreadPoolExecutor(max_workers=active_workers, thread_name_prefix="matcher-ann") as pool:
-                futures = [pool.submit(self.search, matrix[index], top_k, oversample=oversample) for index in range(matrix.shape[0])]
-                return [future.result() for future in futures]
+                pairs = [run_one(index) for index in range(matrix.shape[0])]
+            else:
+                from concurrent.futures import ThreadPoolExecutor
+                active_workers = min(workers, matrix.shape[0])
+                with ThreadPoolExecutor(max_workers=active_workers, thread_name_prefix="matcher-ann") as pool:
+                    futures = [pool.submit(run_one, index) for index in range(matrix.shape[0])]
+                    pairs = [future.result() for future in futures]
+            if stats_out is not None:
+                stats_out.extend(item[1] for item in pairs)
+            return [item[0] for item in pairs]
         if workers <= 1:
-            return [self.search(matrix[index], top_k, oversample=oversample) for index in range(matrix.shape[0])]
+            results: list[list[VectorHit]] = []
+            for index in range(matrix.shape[0]):
+                local_stats: dict[str, int | bool] = {}
+                results.append(self.search(matrix[index], top_k, oversample=oversample, stats=local_stats))
+                if stats_out is not None:
+                    stats_out.append(local_stats)
+            return results
         active_oversample = max(1, int(oversample or self.oversample))
         coarse_keep = max(top_k, top_k * active_oversample)
         workers = min(workers, max(1, matrix.shape[0]), self.row_count // max(self.block_rows, 1) or 1)
@@ -561,7 +634,15 @@ class EmbeddedBBQFlatIndex:
             target_vectors = np.asarray(self._int8[ids], dtype=np.float32) / 127.0
             rerank_scores = target_vectors @ query
             order = np.argsort(rerank_scores)[::-1][: min(top_k, rerank_scores.size)]
-            results.append([VectorHit(row_id=int(ids[index]), score=float(rerank_scores[index])) for index in order])
+            result = [VectorHit(row_id=int(ids[index]), score=float(rerank_scores[index])) for index in order]
+            results.append(result)
+            if stats_out is not None:
+                stats_out.append({
+                    "ann_fallback": False,
+                    "candidate_pool_count": self.row_count,
+                    "rerank_count": int(ids.size),
+                    "returned_count": len(result),
+                })
         return results
 
     def record(self, row_id: int) -> dict[str, object]:
