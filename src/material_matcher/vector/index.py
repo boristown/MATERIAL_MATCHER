@@ -226,9 +226,10 @@ class EmbeddedBBQFlatIndex:
                 probes.extend(code ^ (1 << bit) for bit in range(self.ann_bits))
             keys = self._lsh_keys[table_index]
             ids = self._lsh_ids[table_index]
-            for probe in probes:
-                left = int(np.searchsorted(keys, np.uint32(probe), side="left"))
-                right = int(np.searchsorted(keys, np.uint32(probe), side="right"))
+            probe_array = np.asarray(probes, dtype=np.uint32)
+            lefts = np.searchsorted(keys, probe_array, side="left")
+            rights = np.searchsorted(keys, probe_array, side="right")
+            for left, right in zip(lefts.tolist(), rights.tolist()):
                 if right > left:
                     gathered.append(np.asarray(ids[left:right], dtype=np.int64))
         if not gathered:
