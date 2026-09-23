@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.metadata import version as distribution_version
 from pathlib import Path
+import sys
 import tomllib
 
 import material_matcher
@@ -39,7 +40,8 @@ def test_health_returns_canonical_version(client: TestClient) -> None:
 
 
 def test_release_builders_resolve_the_canonical_version() -> None:
-    from scripts.versioning import canonical_version, resolve_release_version
+    sys.path.insert(0, str(REPO / "scripts"))
+    from versioning import canonical_version, resolve_release_version
 
     canonical = _canonical_version()
     assert canonical_version(REPO) == canonical
