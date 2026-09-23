@@ -98,6 +98,7 @@ def test_large_index_ann_candidate_set_is_bounded_and_keeps_exact_top1(tmp_path:
     bounded = index.search(query, 5, oversample=3)
 
     candidates = index._ann_candidate_ids(query, coarse_keep=15)
+    assert candidates is not None
     assert candidates.size <= 512
     assert exact[0].row_id == 1337
     assert bounded[0].row_id == exact[0].row_id
@@ -164,14 +165,56 @@ def test_indexed_matching_streams_bounded_batches_and_candidates(tmp_path: Path)
     assert all(1 <= len(batch) <= 5 for batch in batches)
     assert metrics["worker_count"] == 3
     candidate_counts = metrics["_candidate_counts"]
+    candidate_pool_counts = metrics["_candidate_pool_counts"]
+    rerank_counts = metrics["_rerank_counts"]
     assert isinstance(candidate_counts, list)
-    assert len(candidate_counts) == 20
+    assert isinstance(candidate_pool_counts, list)
+    assert isinstance(rerank_counts, list)
+    assert len(candidate_counts) == len(candidate_pool_counts) == len(rerank_counts) == 20
     assert max(candidate_counts) <= config.retrieval.retrieval_top_k
+    assert all(pool >= returned for pool, returned in zip(candidate_pool_counts, candidate_counts))
+    assert all(rerank >= returned for rerank, returned in zip(rerank_counts, candidate_counts))
     timings = metrics["timings"]
     assert isinstance(timings, dict)
     for phase in ("parsing", "normalization", "source preprocessing", "retrieval", "rerank/scoring", "decision"):
         assert phase in timings
 
+
+
+def test_pathological_ann_bucket_falls_back_to_exact_scan_without_quality_loss(tmp_path: Path) -> None:
+    index, provider, _ = _build_ann_index(tmp_path, rows=1600)
+    query = provider.embed(["工业物料 000777 高可靠元件 型号 M006"])[0]
+
+    index.ann_enabled = False
+    exact = index.search(query, 5, oversample=3)
+    index.ann_enabled = True
+
+    # Force every probed table bucket to contain the whole index. The ANN
+    # implementation must detect this before materializing the union and use
+    # the original mmap exact-scan path instead of dropping candidates.
+    query_norm, _ = index._quantized(query)
+    query_sign = np.packbits(query_norm >= 0.0, bitorder="little")
+    keys = np.empty((index.ann_tables, index.row_count), dtype=np.uint32)
+    ids = np.tile(np.arange(index.row_count, dtype=np.uint32), (index.ann_tables, 1))
+    for table_index, positions in enumerate(index._lsh_positions):
+        code = 0
+        for output_bit, dimension in enumerate(positions):
+            dim = int(dimension)
+            if query_sign[dim // 8] & np.uint8(1 << (dim % 8)):
+                code |= 1 << output_bit
+        keys[table_index].fill(np.uint32(code))
+    index._lsh_keys = keys
+    index._lsh_ids = ids
+    index.ann_candidate_limit = 16
+
+    stats: dict[str, int | bool] = {}
+    fallback = index._ann_candidate_ids(query, coarse_keep=15, stats=stats)
+    bounded = index.search(query, 5, oversample=3, stats=stats)
+
+    assert fallback is None
+    assert stats["ann_fallback"] is True
+    assert stats["candidate_pool_count"] == index.row_count
+    assert [hit.row_id for hit in bounded] == [hit.row_id for hit in exact]
 
 def test_match_service_batch_persistence_keeps_topn_and_traceability(tmp_path: Path) -> None:
     settings = Settings(
