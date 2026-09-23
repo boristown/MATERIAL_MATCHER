@@ -115,6 +115,15 @@ git status --porcelain
 
 ```bash
 RELEASE_VERSION="$(cat src/material_matcher/VERSION)"
+printf 'MATERIAL_MATCHER version: %s\n' "$RELEASE_VERSION"
+```
+
+`pyproject.toml` 使用 PEP 621 dynamic version，不再维护第二份产品版本号。
+
+如果发布机允许安装开发依赖，执行：
+
+```bash
+python3 -m pip install -e '.[dev]'
 python3 - <<'PY'
 from importlib.metadata import version
 import material_matcher
@@ -124,14 +133,6 @@ assert material_matcher.__version__ == canonical
 assert version('material-matcher') == canonical
 print(canonical)
 PY
-```
-
-`pyproject.toml` 使用 PEP 621 dynamic version，不再维护第二份产品版本号。
-
-如果发布机允许安装开发依赖，执行：
-
-```bash
-python3 -m pip install -e '.[dev]'
 pytest -q
 python3 -m compileall -q src
 bash -n installer/install.sh
