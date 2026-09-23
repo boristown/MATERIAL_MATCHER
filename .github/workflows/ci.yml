@@ -13,8 +13,8 @@ jobs:
           python-version: '3.11'
       - run: pip install -e '.[dev]'
       - run: pytest -q
-      - name: Issue 162 quick performance regression (1k x 100k)
-        run: python scripts/benchmark_issue_162.py --preset quick --warm-runs 1 --work-dir /tmp/issue162-ci --output /tmp/issue162-ci-report.json
+      - name: Issue 162 stress validation (10k x 1m, temporary PR run)
+        run: python scripts/benchmark_issue_162.py --preset stress --warm-runs 0 --work-dir /tmp/issue162-stress --output /tmp/issue162-stress-report.json
       - name: Real-world matching quality (scan baseline)
         run: python scripts/evaluate_matching_quality.py
       - name: Real-world field score diagnostics
