@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Callable, Iterable, Mapping
 
 import numpy as np
@@ -339,42 +340,95 @@ def match_rows_indexed(
     max_source_rows: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     scan_workers: int = 0,
+    match_workers: int = 0,
     on_batch: Callable[[list["RowResult"]], None] | None = None,
     batch_rows: int = 256,
+    collect_results: bool = True,
+    performance_metrics: dict[str, object] | None = None,
 ) -> list[RowResult]:
+    """Match source rows through a reusable bounded candidate index.
+
+    Large GLOBAL indexes use the index's ANN path and parallelize source queries.
+    Result batches can be persisted immediately with collect_results=False so
+    memory stays bounded by query/persist batch size instead of task row count.
+    """
+    parse_started = time.perf_counter()
     source_layout = detect_layout(source_path)
     total = (
         min(source_layout.row_count_estimate, max_source_rows)
         if max_source_rows is not None
         else source_layout.row_count_estimate
     )
+    if performance_metrics is not None:
+        timings = performance_metrics.setdefault("timings", {})
+        if isinstance(timings, dict):
+            timings["parsing"] = float(timings.get("parsing", 0.0)) + (time.perf_counter() - parse_started)
+        performance_metrics["worker_count"] = max(1, int(match_workers or scan_workers or 1))
+        performance_metrics["batch_size"] = max(1, int(batch_rows))
+        performance_metrics["query_batch_size"] = max(1, int(query_batch_size))
+        performance_metrics["recall_top_k"] = max(config.retrieval.retrieval_top_k, config.decision.top_n)
+        performance_metrics["persisted_top_n"] = config.decision.top_n
+
+    def add_timing(name: str, elapsed: float) -> None:
+        if performance_metrics is None:
+            return
+        timings = performance_metrics.setdefault("timings", {})
+        if isinstance(timings, dict):
+            timings[name] = float(timings.get(name, 0.0)) + float(elapsed)
+
     source_signature = retrieval_text_signature(config, "source")
     results: list[RowResult] = []
+    persist_pending: list[RowResult] = []
     batch: list[tuple[int, int, dict[str, object]]] = []
+    active_workers = max(0, int(match_workers or scan_workers))
+    candidate_top_k = max(config.retrieval.retrieval_top_k, config.decision.top_n)
+
+    def emit(result: RowResult) -> None:
+        if collect_results:
+            results.append(result)
+        if on_batch:
+            persist_pending.append(result)
+            if len(persist_pending) >= max(1, batch_rows):
+                on_batch(list(persist_pending))
+                persist_pending.clear()
 
     def flush(items: list[tuple[int, int, dict[str, object]]]) -> None:
         if not items:
             return
-        texts = [build_retrieval_text(row, config, "source") for _, _, row in items]
+        active_items: list[tuple[int, int, dict[str, object]]] = []
+        for row_index, source_row_number, source_row in items:
+            if source_filter_allows(source_row, config):
+                active_items.append((row_index, source_row_number, source_row))
+            elif on_progress:
+                on_progress(row_index, max(total, row_index))
+        if not active_items:
+            return
+
+        started = time.perf_counter()
+        texts = [build_retrieval_text(row, config, "source") for _, _, row in active_items]
+        add_timing("normalization", time.perf_counter() - started)
+
+        started = time.perf_counter()
         vectors, _ = cache.get_or_embed(texts, source_signature, max(1, query_batch_size))
-        candidate_top_k = max(config.retrieval.retrieval_top_k, config.decision.top_n)
+        add_timing("source preprocessing", time.perf_counter() - started)
+
         hits_list: list[list] | None = None
         if config.scope_mode == "GLOBAL":
+            started = time.perf_counter()
             hits_list = index.search_many(
                 np.asarray(vectors, dtype=np.float32),
                 candidate_top_k,
                 oversample=config.retrieval.oversample,
-                scan_workers=scan_workers,
+                scan_workers=active_workers,
             )
-        for position, (row_index, source_row_number, source_row) in enumerate(items):
-            if not source_filter_allows(source_row, config):
-                if on_progress:
-                    on_progress(row_index, max(total, row_index))
-                continue
+            add_timing("retrieval", time.perf_counter() - started)
+
+        for position, (row_index, source_row_number, source_row) in enumerate(active_items):
             query = np.asarray(vectors[position], dtype=np.float32)
             if hits_list is not None:
                 hits = hits_list[position]
             else:
+                started = time.perf_counter()
                 candidate_ids = index.candidate_ids_for_scope(source_row, config)
                 hits = index.search(
                     query,
@@ -382,6 +436,14 @@ def match_rows_indexed(
                     candidate_ids=candidate_ids,
                     oversample=config.retrieval.oversample,
                 )
+                add_timing("retrieval", time.perf_counter() - started)
+
+            if performance_metrics is not None:
+                counts = performance_metrics.setdefault("_candidate_counts", [])
+                if isinstance(counts, list):
+                    counts.append(len(hits))
+
+            started = time.perf_counter()
             records = index.records([hit.row_id for hit in hits])
             scored: list[tuple[float, str, dict[str, object], dict[str, object], int | None]] = []
             for hit in hits:
@@ -412,22 +474,34 @@ def match_rows_indexed(
                         target_row_number,
                     )
                 )
-            results.append(_row_result(source_row, row_index, source_row_number, scored, config))
+            add_timing("rerank/scoring", time.perf_counter() - started)
+
+            started = time.perf_counter()
+            result = _row_result(source_row, row_index, source_row_number, scored, config)
+            add_timing("decision", time.perf_counter() - started)
+            emit(result)
             if on_progress:
                 on_progress(row_index, max(total, row_index))
-            if on_batch and len(results) % max(1, batch_rows) == 0:
-                on_batch(list(results[-batch_rows:]))
 
-    for row_index, (source_row_number, source_raw) in enumerate(
-        iter_tabular_rows_with_position(
-            source_path,
-            sheet_name=source_layout.sheet_name,
-            header_row=source_layout.header_row,
-            max_rows=max_source_rows,
-        ),
-        start=1,
-    ):
+    source_iterator = iter(iter_tabular_rows_with_position(
+        source_path,
+        sheet_name=source_layout.sheet_name,
+        header_row=source_layout.header_row,
+        max_rows=max_source_rows,
+    ))
+    row_index = 0
+    while True:
+        started = time.perf_counter()
+        try:
+            source_row_number, source_raw = next(source_iterator)
+        except StopIteration:
+            add_timing("parsing", time.perf_counter() - started)
+            break
+        add_timing("parsing", time.perf_counter() - started)
+        row_index += 1
+        started = time.perf_counter()
         source_row = _to_plain(source_raw)
+        add_timing("normalization", time.perf_counter() - started)
         if row_index == 1:
             _validate_source_columns(source_row, config)
         batch.append((row_index, source_row_number, source_row))
@@ -435,7 +509,11 @@ def match_rows_indexed(
             flush(batch)
             batch = []
     flush(batch)
-    results.sort(key=lambda item: int(item.source_row_id))
+    if on_batch and persist_pending:
+        on_batch(list(persist_pending))
+        persist_pending.clear()
+    if collect_results:
+        results.sort(key=lambda item: int(item.source_row_id))
     return results
 
 
