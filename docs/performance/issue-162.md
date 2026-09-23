@@ -10,7 +10,7 @@ Synthetic benchmarks below validate engineering scale only. They do not replace 
 
 Before this change the target embedding/index cache was reusable, but GLOBAL vector retrieval still scanned all target vector blocks for each source query. Indexed task results were retained in Python, match rows/candidates were issued as individual SQL statements, and task progress wrote SQLite state on every source row.
 
-The optimized GLOBAL path now uses a persisted multi-table sign-LSH recall layer over the existing mmap BBQ/int8 index. Source query batches use a configurable bounded worker pool and share the same mmap index. Recalled candidates remain bounded, then the existing vector rerank, field scoring, decision, Top1/Top5 and persistence logic runs unchanged. Pathological low-entropy buckets fall back to the existing blockwise exact scan before an oversized candidate union is materialized, preserving recall rather than silently dropping candidates.
+The optimized GLOBAL path now uses a persisted multi-table sign-LSH recall layer over the existing mmap BBQ/int8 index. Source query batches use a configurable bounded worker pool and share the same mmap index. Recalled candidates remain bounded, then the existing vector rerank, field scoring, decision, Top1/Top5 and persistence logic runs unchanged. Pathological low-entropy buckets fall back to the existing blockwise exact scan before an oversized candidate union is materialized, preserving the previous exact-search behavior for those fallback queries rather than silently dropping candidates.
 
 Indexed results can stream directly to bounded persistence batches. match_items and match_candidates use executemany. Progress writes are heartbeat-throttled.
 
@@ -61,14 +61,11 @@ The production-model mode requires the offline ONNX/tokenizer bundle already ins
 
 Reference runner: AMD EPYC 7763, 4 logical CPUs available, 15,989.7 MB RAM, no GPU, Linux Azure, Python 3.11.16. Benchmark parameters: 4 workers, query batch 64, persist batch 256, TopK 50, TopN 5, deterministic 32-dimensional synthetic embeddings. These numbers are not production BGE performance.
 
-### 1,000 × 100,000 — CI run #502
+### 1,000 × 100,000 — latest CI run #509
 
-| run | index | wall | rows/s | peak RSS |
-|---|---|---:|---:|---:|
-| cold | build | 52.678 s | 18.983 | 151.066 MB |
-| warm-1 | reused | 44.974 s | 22.235 | 158.129 MB |
+On the current PR head, cold wall time was **21.354 s** at **46.829 rows/s**. Target index build/load was 9.105 s, the ANN recall pool averaged 921.322 rows/query, and synthetic exact-fixture Top1 accuracy was 1.0. The same run completed the full backend suite with **290 passed** and the frontend build successfully.
 
-Cold stages: index 7.445 s, retrieval 40.965 s, rerank/field scoring 4.017 s, DB persistence 0.143 s. Warm index load was 0.0017 s. Synthetic exact-fixture Top1 accuracy was 1.0.
+Earlier CI run #502 also exercised a cold + warm pair (52.678 s cold / 44.974 s warm) before later hot-path refinements; those older numbers are retained in GitHub Actions history rather than treated as the current-head result.
 
 ### 10,000 × 1,000,000 — CI run #506
 
@@ -88,7 +85,9 @@ This is strong evidence that the implementation no longer has the original 40-bi
 
 ## Correctness status
 
-The existing suite passed before the formal-scale run: 289 tests with one unrelated Starlette deprecation warning. Existing real-world scan quality evaluation passed. CI explicitly reports that the production BGE vector path is not formally quality-evaluated because the real model is not loaded. The performance change does not alter thresholds, value_mapping, critical-conflict rules, score formulas, Top1/Top5 semantics, or traceability fields.
+Latest CI #509 passed **290 tests** with one unrelated Starlette deprecation warning. Existing real-world scan quality evaluation and frontend build also passed. The performance change does not alter thresholds, value_mapping, critical-conflict rules, score formulas, Top1/Top5 persistence semantics, or traceability fields.
+
+However, the LSH recall layer is approximate. The exact synthetic fixture proves the intended exact-match path and large-scale execution, but it does **not** prove production semantic Recall@5/Top5 equivalence for BAAI/bge-base-zh-v1.5. CI explicitly reports that the production BGE vector path is not formally quality-evaluated because the real model is not loaded. Therefore production ANN quality remains a blocking acceptance gate: run the production model against the approved business gold set and verify the configured candidate-recall/accuracy thresholds before closing #162.
 
 ## Remaining formal closure gates
 
