@@ -56,8 +56,13 @@ def profile_retrieval_texts(
     nonempty_rows = 0
     empty_rows = 0
     hit_scan_limit = False
+    layout = detect_layout(path)
 
-    for row in iter_tabular_rows(path):
+    for row in iter_tabular_rows(
+        path,
+        sheet_name=layout.sheet_name,
+        header_row=layout.header_row,
+    ):
         if scanned_rows >= scan_cap:
             hit_scan_limit = True
             break
@@ -74,7 +79,6 @@ def profile_retrieval_texts(
         if replacement < sample_limit:
             reservoir[replacement] = text
 
-    layout = detect_layout(path)
     estimated_rows = max(0, int(layout.row_count_estimate))
     scan_complete = not hit_scan_limit
     coverage_ratio: float | None
