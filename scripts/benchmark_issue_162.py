@@ -15,7 +15,8 @@ from typing import Any
 
 from material_matcher.domain.models import MatchingConfig
 from material_matcher.embedding.cache import EmbeddingCache
-from material_matcher.embedding.providers import DeterministicEmbeddingProvider
+from material_matcher.embedding.base import EmbeddingProvider
+from material_matcher.embedding.providers import DeterministicEmbeddingProvider, create_embedding_provider
 from material_matcher.matching.engine import RowResult, match_rows_indexed
 from material_matcher.services.match_service import MatchService
 from material_matcher.settings import Settings
@@ -115,7 +116,15 @@ def generate_dataset(root: Path, source_rows: int, target_rows: int) -> tuple[Pa
     return source, target
 
 
-def _config(dimensions: int, top_k: int, top_n: int) -> MatchingConfig:
+def _config(
+    dimensions: int,
+    top_k: int,
+    top_n: int,
+    *,
+    provider_name: str,
+    model_id: str,
+    precision: str,
+) -> MatchingConfig:
     return MatchingConfig.model_validate({
         "source_id_column": "物料号",
         "scope_mode": "GLOBAL",
@@ -137,11 +146,11 @@ def _config(dimensions: int, top_k: int, top_n: int) -> MatchingConfig:
         ],
         "retrieval": {
             "mode": "vector",
-            "provider": "deterministic_test",
-            "model_id": "deterministic-test-v1",
+            "provider": provider_name,
+            "model_id": model_id,
             "dimensions": dimensions,
             "max_length": 256,
-            "precision": "float32",
+            "precision": precision,
             "source": {"fields": ["文本"]},
             "target": {"fields": ["文本"]},
             "retrieval_top_k": top_k,
@@ -199,7 +208,7 @@ def run_once(
     metadata: MetadataRepository,
     indexes: VectorIndexService,
     matcher: MatchService,
-    provider: DeterministicEmbeddingProvider,
+    provider: EmbeddingProvider,
 ) -> dict[str, object]:
     task_id = f"bench-{name}"
     _insert_task(metadata, task_id)
@@ -300,7 +309,14 @@ def main() -> int:
     parser.add_argument("--preset", choices=sorted(PRESETS), default="quick")
     parser.add_argument("--source-rows", type=int)
     parser.add_argument("--target-rows", type=int)
-    parser.add_argument("--dimensions", type=int, default=32)
+    parser.add_argument("--provider", choices=("deterministic_test", "onnx_local"), default="deterministic_test")
+    parser.add_argument("--model-id", default=None, help="Embedding model id; defaults to deterministic-test-v1 or BAAI/bge-base-zh-v1.5")
+    parser.add_argument("--model-root", type=Path, default=Path("/var/lib/material_matcher/models/current"))
+    parser.add_argument("--precision", default=None, help="Embedding precision; defaults to float32 for deterministic_test and int8 for onnx_local")
+    parser.add_argument("--dimensions", type=int, default=None, help="Embedding dimensions; defaults to 32 for deterministic_test and 768 for onnx_local")
+    parser.add_argument("--embedding-batch-size", type=int, default=128)
+    parser.add_argument("--token-budget", type=int, default=16384)
+    parser.add_argument("--intra-threads", type=int, default=0)
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--top-n", type=int, default=5)
     parser.add_argument("--workers", type=int, default=max(1, min(4, os.cpu_count() or 1)))
@@ -328,15 +344,22 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
         return 0
 
+    dimensions = int(args.dimensions or (32 if args.provider == "deterministic_test" else 768))
+    model_id = str(args.model_id or ("deterministic-test-v1" if args.provider == "deterministic_test" else "BAAI/bge-base-zh-v1.5"))
+    precision = str(args.precision or ("float32" if args.provider == "deterministic_test" else "int8"))
     settings = Settings(
         data_dir=root / "data",
         config_dir=root / "etc",
         log_dir=root / "log",
         admin_password="benchmark",
-        embedding_provider="deterministic_test",
-        embedding_model_id="deterministic-test-v1",
-        embedding_dimensions=args.dimensions,
-        embedding_precision="float32",
+        embedding_provider=args.provider,
+        embedding_model_id=model_id,
+        embedding_dimensions=dimensions,
+        embedding_precision=precision,
+        embedding_model_root=args.model_root,
+        embedding_batch_size=max(1, args.embedding_batch_size),
+        embedding_token_budget=max(1, args.token_budget),
+        embedding_intra_threads=max(0, args.intra_threads),
         match_workers=max(1, args.workers),
         match_batch_rows=max(1, args.persist_batch_size),
         query_batch_size=max(1, args.query_batch_size),
@@ -345,8 +368,19 @@ def main() -> int:
     settings.ensure_dirs()
     metadata = MetadataRepository(settings.metadata_db_path)
     files = FileRepository(settings.data_dir, metadata)
-    provider = DeterministicEmbeddingProvider(args.dimensions)
-    config = _config(args.dimensions, args.top_k, args.top_n)
+    provider: EmbeddingProvider
+    if args.provider == "deterministic_test":
+        provider = DeterministicEmbeddingProvider(dimensions, token_budget=settings.embedding_token_budget)
+    else:
+        provider = create_embedding_provider(settings)
+    config = _config(
+        dimensions,
+        args.top_k,
+        args.top_n,
+        provider_name=args.provider,
+        model_id=model_id,
+        precision=precision,
+    )
     indexes = VectorIndexService(
         metadata,
         files,
@@ -393,7 +427,13 @@ def main() -> int:
         "parameters": {
             "source_rows": source_rows,
             "target_rows": target_rows,
-            "dimensions": args.dimensions,
+            "embedding_provider": args.provider,
+            "model_id": model_id,
+            "precision": precision,
+            "dimensions": dimensions,
+            "embedding_batch_size": settings.embedding_batch_size,
+            "token_budget": settings.embedding_token_budget,
+            "intra_threads": settings.embedding_intra_threads,
             "top_k": args.top_k,
             "top_n": args.top_n,
             "workers": settings.match_workers,
@@ -411,8 +451,9 @@ def main() -> int:
         "runs": runs,
         "formal_acceptance": False,
         "formal_acceptance_reason": (
-            "Deterministic synthetic provider/data validate bounded concurrency and regression only; "
-            "Issue #162 requires the production model, business data/gold set, and customer-class hardware."
+            ("Generated synthetic data validate scale/concurrency only; " if args.provider == "onnx_local"
+             else "Deterministic synthetic provider/data validate bounded concurrency and regression only; ")
+            + "Issue #162 requires business data/gold-set validation and customer-class hardware."
         ),
     }
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
