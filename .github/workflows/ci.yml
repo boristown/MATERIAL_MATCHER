@@ -13,8 +13,10 @@ jobs:
           python-version: '3.11'
       - run: pip install -e '.[dev]'
       - run: pytest -q
-      - name: Issue 162 formal-scale synthetic validation (40k x 1m, temporary PR run)
-        run: python scripts/benchmark_issue_162.py --preset formal --warm-runs 0 --work-dir /tmp/issue162-formal --output /tmp/issue162-formal-report.json
+      - name: Issue 162 before/after retrieval comparison (temporary PR run)
+        run: |
+          python scripts/benchmark_issue_162.py --source-rows 1000 --target-rows 1000000 --disable-ann --warm-runs 0 --work-dir /tmp/issue162-flat --output /tmp/issue162-flat.json
+          python scripts/benchmark_issue_162.py --source-rows 1000 --target-rows 1000000 --warm-runs 0 --work-dir /tmp/issue162-ann --output /tmp/issue162-ann.json
       - name: Real-world matching quality (scan baseline)
         run: python scripts/evaluate_matching_quality.py
       - name: Real-world field score diagnostics
