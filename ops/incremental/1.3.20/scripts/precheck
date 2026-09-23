@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -uo pipefail
+PKG="$(cd "$(dirname "$0")/.." && pwd)"
+MODE="${1:---auto}"; CTR="${2:-material_matcher-app}"
+CUR=$("$PKG/scripts/version-check" $([ "$MODE" = "--docker" ] && echo --docker "$CTR" || ([ "$MODE" = "--native" ] && echo --native)))
+echo "当前版本: $CUR"
+case "$CUR" in
+  1.3.14|1.3.15|1.3.16|1.3.19) echo "PRECHECK-OK (FROM $CUR → 1.3.20)" ;;
+  1.3.20) echo "PRECHECK-SKIP：已是 1.3.20"; exit 3 ;;
+  *) echo "PRECHECK-FAIL：当前版本 $CUR 不在本增量包支持范围(1.3.14/15/16/19)。禁止盲目升级，请用对应完整介质。"; exit 2 ;;
+esac
+[ -f "$PKG/payload/backend/material_matcher/VERSION" ] || { echo "包不完整(payload)"; exit 4; }
+cd "$PKG" && sha256sum -c SHA256SUMS.payload >/dev/null 2>&1 && echo "PAYLOAD-SHA-OK" || { echo "PAYLOAD-SHA-FAIL"; exit 5; }

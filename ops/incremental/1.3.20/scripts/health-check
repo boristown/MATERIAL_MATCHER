@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -uo pipefail
+PORT="${MATERIAL_MATCHER_PORT:-}"
+[ -z "$PORT" ] && PORT=$(sed -n 's/^MATERIAL_MATCHER_PORT=//p' /etc/material_matcher/server.env 2>/dev/null | head -1)
+[ -z "$PORT" ] && PORT=18080
+[ "${1:-}" = "--docker" ] && PORT=$(docker exec "${2:-material_matcher-app}" printenv MATERIAL_MATCHER_PORT 2>/dev/null || echo 18080)
+for i in $(seq 1 40); do
+  H=$(curl -sf --max-time 5 "http://127.0.0.1:$PORT/api/health" || true)
+  R=$(curl -sf --max-time 5 "http://127.0.0.1:$PORT/api/health/ready" || true)
+  echo "$H" | grep -q '"version": *"1.3.20"' && { echo "HEALTH-OK $H"; echo "READY: ${R:-n/a}"; exit 0; }
+  sleep 3
+done
+echo "HEALTH-FAIL（40 次未通过）"; exit 1
