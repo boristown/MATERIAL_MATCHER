@@ -1,0 +1,215 @@
+{
+  "issue": 162,
+  "preset": "quick",
+  "generated_at": "2026-09-24T00:05:06+0800",
+  "hardware": {
+    "cpu_model": "Intel(R) Core(TM) i5-14600KF",
+    "cpu_logical_count": 20,
+    "ram_mb": 64227.4,
+    "platform": "Linux-4.12.14-120-default-x86_64-with-glibc2.31",
+    "python": "3.11.16",
+    "gpu": null
+  },
+  "parameters": {
+    "source_rows": 1000,
+    "target_rows": 100000,
+    "embedding_provider": "deterministic_test",
+    "model_id": "deterministic-test-v1",
+    "precision": "float32",
+    "dimensions": 32,
+    "embedding_batch_size": 128,
+    "token_budget": 16384,
+    "intra_threads": 0,
+    "top_k": 50,
+    "top_n": 5,
+    "workers": 4,
+    "query_batch_size": 64,
+    "persist_batch_size": 256,
+    "retrieval_backend": "bounded_ann",
+    "ann": {
+      "min_rows": 100000,
+      "tables": 48,
+      "bits": 16,
+      "probe_radius": 1,
+      "candidate_limit": 12000
+    }
+  },
+  "runs": [
+    {
+      "name": "cold",
+      "index_reused": false,
+      "ann_enabled": true,
+      "source_rows": 1000,
+      "target_rows": 100000,
+      "wall_time_seconds": 21.494373,
+      "rows_per_second": 46.524,
+      "cpu_time_seconds": 23.109959,
+      "worker_count": 4,
+      "batch_size": 256,
+      "query_batch_size": 64,
+      "recall_top_k": 50,
+      "persisted_top_n": 5,
+      "candidate_count": {
+        "total": 50000,
+        "average": 50.0,
+        "p95": 50,
+        "max": 50
+      },
+      "recall_candidate_pool": {
+        "total": 921322,
+        "average": 921.322,
+        "p95": 972,
+        "max": 1025
+      },
+      "vector_rerank_count": {
+        "total": 200000,
+        "average": 200.0,
+        "p95": 200,
+        "max": 200
+      },
+      "field_scoring_count": {
+        "total": 50000,
+        "average": 50.0,
+        "p95": 50,
+        "max": 50
+      },
+      "ann_fallback_queries": 0,
+      "timings": {
+        "target index build/load": 8.163689,
+        "parsing": 0.008152,
+        "normalization": 0.002596,
+        "source preprocessing": 0.019347,
+        "retrieval": 10.423161,
+        "rerank/scoring": 2.727129,
+        "decision": 0.02372,
+        "DB persistence": 0.108275,
+        "finalize": 0.001785
+      },
+      "peak_memory_mb": 155.234,
+      "quality": {
+        "rows_checked": 1000,
+        "top1_exact_fixture_accuracy": 1.0,
+        "expected": "1.0 for this exact synthetic fixture",
+        "business_accuracy_claim": false
+      }
+    },
+    {
+      "name": "warm-1",
+      "index_reused": true,
+      "ann_enabled": true,
+      "source_rows": 1000,
+      "target_rows": 100000,
+      "wall_time_seconds": 13.895243,
+      "rows_per_second": 71.967,
+      "cpu_time_seconds": 18.313298,
+      "worker_count": 4,
+      "batch_size": 256,
+      "query_batch_size": 64,
+      "recall_top_k": 50,
+      "persisted_top_n": 5,
+      "candidate_count": {
+        "total": 50000,
+        "average": 50.0,
+        "p95": 50,
+        "max": 50
+      },
+      "recall_candidate_pool": {
+        "total": 921322,
+        "average": 921.322,
+        "p95": 972,
+        "max": 1025
+      },
+      "vector_rerank_count": {
+        "total": 200000,
+        "average": 200.0,
+        "p95": 200,
+        "max": 200
+      },
+      "field_scoring_count": {
+        "total": 50000,
+        "average": 50.0,
+        "p95": 50,
+        "max": 50
+      },
+      "ann_fallback_queries": 0,
+      "timings": {
+        "target index build/load": 0.00131,
+        "parsing": 0.007631,
+        "normalization": 0.002285,
+        "source preprocessing": 0.017499,
+        "retrieval": 11.178965,
+        "rerank/scoring": 2.544493,
+        "decision": 0.021855,
+        "DB persistence": 0.107474,
+        "finalize": 0.001786
+      },
+      "peak_memory_mb": 159.176,
+      "quality": {
+        "rows_checked": 1000,
+        "top1_exact_fixture_accuracy": 1.0,
+        "expected": "1.0 for this exact synthetic fixture",
+        "business_accuracy_claim": false
+      }
+    },
+    {
+      "name": "warm-2",
+      "index_reused": true,
+      "ann_enabled": true,
+      "source_rows": 1000,
+      "target_rows": 100000,
+      "wall_time_seconds": 13.568609,
+      "rows_per_second": 73.7,
+      "cpu_time_seconds": 17.888541,
+      "worker_count": 4,
+      "batch_size": 256,
+      "query_batch_size": 64,
+      "recall_top_k": 50,
+      "persisted_top_n": 5,
+      "candidate_count": {
+        "total": 50000,
+        "average": 50.0,
+        "p95": 50,
+        "max": 50
+      },
+      "recall_candidate_pool": {
+        "total": 921322,
+        "average": 921.322,
+        "p95": 972,
+        "max": 1025
+      },
+      "vector_rerank_count": {
+        "total": 200000,
+        "average": 200.0,
+        "p95": 200,
+        "max": 200
+      },
+      "field_scoring_count": {
+        "total": 50000,
+        "average": 50.0,
+        "p95": 50,
+        "max": 50
+      },
+      "ann_fallback_queries": 0,
+      "timings": {
+        "target index build/load": 0.001269,
+        "parsing": 0.007712,
+        "normalization": 0.002382,
+        "source preprocessing": 0.017971,
+        "retrieval": 10.76313,
+        "rerank/scoring": 2.630078,
+        "decision": 0.022468,
+        "DB persistence": 0.108959,
+        "finalize": 0.001817
+      },
+      "peak_memory_mb": 159.184,
+      "quality": {
+        "rows_checked": 1000,
+        "top1_exact_fixture_accuracy": 1.0,
+        "expected": "1.0 for this exact synthetic fixture",
+        "business_accuracy_claim": false
+      }
+    }
+  ],
+  "formal_acceptance": false,
+  "formal_acceptance_reason": "Deterministic synthetic provider/data validate bounded concurrency and regression only; Issue #162 requires business data/gold-set validation and customer-class hardware."
+}
