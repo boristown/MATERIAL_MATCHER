@@ -21,6 +21,8 @@ if [ "$MODE" = docker ]; then
   docker cp payload/backend/material_matcher "$CTR:/tmp/p7_material_matcher"
   docker cp payload/web "$CTR:/tmp/p7_dist"
   docker exec "$CTR" sh -c "rm -rf /tmp/p7_old && mv /opt/material_matcher/current/app/material_matcher /tmp/p7_old && mv /tmp/p7_material_matcher /opt/material_matcher/current/app/material_matcher && mv /opt/material_matcher/current/web/dist /tmp/p7_old_dist && mv /tmp/p7_dist /opt/material_matcher/current/web/dist"
+  docker exec "$CTR" sh -c 'test -f /opt/material_matcher/current/BUILD_INFO.txt && sed -i "s/1\.3\.1[0-9]/1.3.20/g" /opt/material_matcher/current/BUILD_INFO.txt || true'
+  docker exec "$CTR" sh -c 'test -f /opt/material_matcher/current/BUILD_INFO.txt && sed -i "s/1\.3\.1[0-9]/1.3.20/g" /opt/material_matcher/current/BUILD_INFO.txt || true; test -f /opt/material_matcher/current/release-manifest.json && sed -i 's/\"release_version\": *\"1\\.3\\.1[0-9]\"/\"release_version\": \"1.3.20\"/' /opt/material_matcher/current/release-manifest.json || true'
   docker restart "$CTR"
   docker exec "$CTR" /opt/material_matcher/current/runtime/bin/python3 -m py_compile /opt/material_matcher/current/app/material_matcher/__init__.py || { echo "编译失败，自动回滚"; docker exec "$CTR" sh -c "rm -rf /opt/material_matcher/current/app/material_matcher /opt/material_matcher/current/web/dist && mv /tmp/p7_old /opt/material_matcher/current/app/material_matcher && mv /tmp/p7_old_dist /opt/material_matcher/current/web/dist"; docker restart "$CTR"; exit 7; }
 else
@@ -29,6 +31,8 @@ else
   cp -a payload/backend/material_matcher /opt/material_matcher/current/app/material_matcher
   mkdir -p /opt/material_matcher/current/web/dist
   cp -a payload/web/. /opt/material_matcher/current/web/dist/
+  test -f /opt/material_matcher/current/BUILD_INFO.txt && sed -i "s/1\.3\.1[0-9]/1.3.20/g" /opt/material_matcher/current/BUILD_INFO.txt || true
+  test -f /opt/material_matcher/current/release-manifest.json && sed -i 's/"release_version": *"1\\.3\\.1[0-9]"/"release_version": "1.3.20"/' /opt/material_matcher/current/release-manifest.json || true
   /opt/material_matcher/current/runtime/bin/python3 -m py_compile /opt/material_matcher/current/app/material_matcher/__init__.py || { echo "编译失败，自动回滚"; rm -rf /opt/material_matcher/current/app/material_matcher /opt/material_matcher/current/web/dist && mv "$BK/live_app" /opt/material_matcher/current/app/material_matcher && mv "$BK/live_dist" /opt/material_matcher/current/web/dist; systemctl restart material_matcher; exit 7; }
   systemctl restart material_matcher || service material_matcher restart
 fi
