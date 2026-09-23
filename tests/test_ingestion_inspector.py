@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
-from material_matcher.ingestion.inspector import inspect_tabular_file
+from material_matcher.ingestion.inspector import inspect_tabular_file, iter_sparse_worksheet_rows
 from material_matcher.ingestion.reader import detect_layout, iter_tabular_rows
 from material_matcher.matching.engine import load_target_rows_with_position
 from material_matcher.services.match_service import MatchService
@@ -84,6 +84,23 @@ def test_csv_effective_rows_ignore_empty_and_whitespace_only_records(tmp_path: P
     )
     assert inspect_tabular_file(path)["sheets"][0]["row_count_estimate"] == 2
     assert len(list(iter_tabular_rows(path))) == 2
+
+
+def test_sparse_xlsx_iteration_does_not_expand_remote_formatting_gap(tmp_path: Path) -> None:
+    path = tmp_path / "sparse-gap.xlsx"
+    _write_inflated_xlsx(path, rows=100)
+    _assert_inflated_dimension(path)
+
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        positioned = list(iter_sparse_worksheet_rows(workbook.active))
+    finally:
+        workbook.close()
+
+    # header + 100 data rows + the one style-only remote row: the missing
+    # 99,898 physical row numbers are never synthesized by ingestion.
+    assert len(positioned) == 102
+    assert positioned[-1][0] == 100_000
 
 
 def test_xlsx_inflated_dimension_counts_only_effective_business_rows(tmp_path: Path) -> None:
