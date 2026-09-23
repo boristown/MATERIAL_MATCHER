@@ -347,10 +347,21 @@ class MatchService:
                 timings[name] = float(timings.get(name, 0.0)) + float(elapsed)
 
         def finalize_metrics(row_count: int, status: str) -> None:
-            counts = performance.pop("_candidate_counts", [])
-            candidate_counts = [int(value) for value in counts] if isinstance(counts, list) else []
-            ordered = sorted(candidate_counts)
-            p95_index = max(0, math.ceil(len(ordered) * 0.95) - 1) if ordered else 0
+            def summarize_counts(key: str) -> dict[str, int | float]:
+                raw = performance.pop(key, [])
+                values = [int(value) for value in raw] if isinstance(raw, list) else []
+                ordered = sorted(values)
+                p95_index = max(0, math.ceil(len(ordered) * 0.95) - 1) if ordered else 0
+                return {
+                    "total": int(sum(values)),
+                    "average": round(sum(values) / len(values), 3) if values else 0.0,
+                    "p95": ordered[p95_index] if ordered else 0,
+                    "max": max(values) if values else 0,
+                }
+
+            returned_counts = summarize_counts("_candidate_counts")
+            pool_counts = summarize_counts("_candidate_pool_counts")
+            rerank_counts = summarize_counts("_rerank_counts")
             wall_seconds = max(time.perf_counter() - wall_started, 1e-9)
             cpu_seconds = max(time.process_time() - cpu_started, 0.0)
             performance.update({
@@ -361,12 +372,11 @@ class MatchService:
                 "cpu_time_seconds": round(cpu_seconds, 6),
                 "cpu_utilization_percent_estimate": round(cpu_seconds / wall_seconds * 100.0, 2),
                 "peak_memory_mb": self._peak_memory_mb(),
-                "candidate_count": {
-                    "total": int(sum(candidate_counts)),
-                    "average": round(sum(candidate_counts) / len(candidate_counts), 3) if candidate_counts else 0.0,
-                    "p95": ordered[p95_index] if ordered else 0,
-                    "max": max(candidate_counts) if candidate_counts else 0,
-                },
+                "candidate_count": returned_counts,
+                "recall_candidate_pool": pool_counts,
+                "vector_rerank_count": rerank_counts,
+                "field_scoring_count": returned_counts,
+                "ann_fallback_queries": int(performance.get("ann_fallback_queries", 0)),
             })
             self._save_performance(task_id, performance)
 
