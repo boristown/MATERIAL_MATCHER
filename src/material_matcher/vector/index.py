@@ -229,12 +229,12 @@ class EmbeddedBBQFlatIndex:
             probe_array = np.asarray(probes, dtype=np.uint32)
             lefts = np.searchsorted(keys, probe_array, side="left")
             rights = np.searchsorted(keys, probe_array, side="right")
-            for left, right in zip(lefts.tolist(), rights.tolist()):
-                if right > left:
-                    gathered.append(np.asarray(ids[left:right], dtype=np.int64))
+            table_parts = [ids[left:right] for left, right in zip(lefts.tolist(), rights.tolist()) if right > left]
+            if table_parts:
+                gathered.append(np.concatenate(table_parts))
         if not gathered:
             return np.empty(0, dtype=np.int64)
-        candidate_ids = np.unique(np.concatenate(gathered))
+        candidate_ids = np.unique(np.concatenate(gathered)).astype(np.int64, copy=False)
         hard_limit = max(int(coarse_keep), int(self.ann_candidate_limit))
         if candidate_ids.size <= hard_limit:
             return candidate_ids
