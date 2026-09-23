@@ -101,6 +101,7 @@ type WorkbenchItem = {
   source_row_number?: number | null
   source_id: string
   source_payload: Record<string, unknown>
+  source_payload_before_mapping?: Record<string, unknown>
   top1_group_code?: string | null
   top1_score?: number
   second_score?: number
@@ -118,6 +119,17 @@ type FieldDescriptor = {
   sourceFields: string[]
   targetFields: string[]
   ruleId?: string
+  valueMapping?: Record<string, string>
+}
+
+type FieldComparison = {
+  sourceRaw: string
+  sourceComparable: string
+  targetValue: string
+  mappingConfigured: boolean
+  mappingHit: boolean
+  targetHasData: boolean
+  kind: ComparisonKind
 }
 
 type StatusFilter = 'all' | 'auto' | 'review' | 'confirmed' | 'unmatched'
@@ -342,7 +354,8 @@ function historyStatusLabel(row: ReviewHistoryRow): string {
 }
 function rawValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return ''
-  if (typeof value === 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return value.map(rawValue).filter(Boolean).join(' / ')
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).map(rawValue).filter(Boolean).join(' / ')
   return String(value)
 }
 function fieldValue(payload: Record<string, unknown>, fields: string[]): string {
@@ -357,21 +370,42 @@ function scoreAsPercent(score: unknown): number | null {
   if (!Number.isFinite(value)) return null
   return value <= 1 ? value * 100 : value
 }
-function comparisonKind(item: WorkbenchItem, candidate: Candidate, field: FieldDescriptor): ComparisonKind {
-  const source = fieldValue(item.source_payload, field.sourceFields)
-  const target = fieldValue(candidate.target_payload, field.targetFields)
-  if (!source || !target) return 'empty'
+function fieldComparison(item: WorkbenchItem, candidate: Candidate, field: FieldDescriptor): FieldComparison {
   const fieldScore = candidate.field_scores?.find(score => score.rule_id === field.ruleId)
-  // 值映射字段：以映射后的取值对比（10→国产 视为与"国产"一致），原始值仍照常展示
-  const mappedSource = fieldScore && fieldScore.source_value !== undefined && fieldScore.source_value !== null
-    ? String(fieldScore.source_value) : source
-  const mappedTarget = fieldScore && fieldScore.target_value !== undefined && fieldScore.target_value !== null
-    ? String(fieldScore.target_value) : target
-  if (normalizedText(mappedSource) === normalizedText(mappedTarget)) return 'exact'
-  if (normalizedText(source) === normalizedText(target)) return 'exact'
+  const rawPayload = item.source_payload_before_mapping ?? item.source_payload
+  const payloadRawSource = fieldValue(rawPayload, field.sourceFields)
+  const sourceRaw = rawValue(fieldScore?.source_value_before_mapping) || payloadRawSource
+  const sourceComparable = rawValue(fieldScore?.source_value) || fieldValue(item.source_payload, field.sourceFields) || sourceRaw
+  const targetValue = rawValue(fieldScore?.target_value) || fieldValue(candidate.target_payload, field.targetFields)
+  const mapping = field.valueMapping ?? {}
+  const mappingConfigured = Object.keys(mapping).length > 0
+  const rawKey = sourceRaw.trim()
+  const mappingHit = mappingConfigured && Boolean(rawKey) && (
+    fieldScore?.value_mapping_applied === true
+    || Object.prototype.hasOwnProperty.call(mapping, sourceRaw)
+    || Object.prototype.hasOwnProperty.call(mapping, rawKey)
+  )
+  const targetHasData = Boolean(targetValue)
   const fieldPercent = scoreAsPercent(fieldScore?.score)
-  if (fieldPercent !== null && fieldPercent >= 55) return 'partial'
-  return 'different'
+
+  let kind: ComparisonKind = 'different'
+  if (!sourceComparable || !targetHasData) kind = 'empty'
+  else if (mappingConfigured && !mappingHit) kind = 'different'
+  else if (normalizedText(sourceComparable) === normalizedText(targetValue)) kind = 'exact'
+  else if (fieldPercent !== null && fieldPercent >= 55) kind = 'partial'
+
+  return {
+    sourceRaw,
+    sourceComparable,
+    targetValue,
+    mappingConfigured,
+    mappingHit,
+    targetHasData,
+    kind,
+  }
+}
+function comparisonKind(item: WorkbenchItem, candidate: Candidate, field: FieldDescriptor): ComparisonKind {
+  return fieldComparison(item, candidate, field).kind
 }
 function comparisonLabel(kind: ComparisonKind): string {
   return ({ exact: '一致', partial: '部分一致', different: '不一致', empty: '无数据' } as Record<ComparisonKind, string>)[kind]
@@ -431,13 +465,25 @@ function selectedCandidate(item: WorkbenchItem): Candidate | null {
 function candidateHasUnconfiguredValue(candidate: Candidate): boolean {
   return Boolean(candidate.field_scores?.some(field => Array.isArray(field.unconfigured_source_values) && field.unconfigured_source_values.length > 0))
 }
-function selectedComparisonKind(item: WorkbenchItem, field: FieldDescriptor): ComparisonKind {
+function selectedFieldComparison(item: WorkbenchItem, field: FieldDescriptor): FieldComparison | null {
   const candidate = selectedCandidate(item)
-  return candidate ? comparisonKind(item, candidate, field) : 'empty'
+  return candidate ? fieldComparison(item, candidate, field) : null
+}
+function selectedComparisonKind(item: WorkbenchItem, field: FieldDescriptor): ComparisonKind {
+  return selectedFieldComparison(item, field)?.kind ?? 'empty'
 }
 function selectedTargetValue(item: WorkbenchItem, field: FieldDescriptor): string {
-  const candidate = selectedCandidate(item)
-  return candidate ? fieldValue(candidate.target_payload, field.targetFields) : ''
+  return selectedFieldComparison(item, field)?.targetValue ?? ''
+}
+function selectedSourceValue(item: WorkbenchItem, field: FieldDescriptor): string {
+  return selectedFieldComparison(item, field)?.sourceComparable ?? fieldValue(item.source_payload, field.sourceFields)
+}
+function selectedSourceNote(item: WorkbenchItem, field: FieldDescriptor): string {
+  const comparison = selectedFieldComparison(item, field)
+  if (!comparison || !comparison.sourceRaw || !comparison.mappingConfigured) return ''
+  if (!comparison.mappingHit) return '值映射未配置'
+  if (normalizedText(comparison.sourceRaw) !== normalizedText(comparison.sourceComparable)) return `原始值：${comparison.sourceRaw}`
+  return ''
 }
 function filterCount(key: StatusFilter): number {
   if (key === 'all') return totalRecords.value
@@ -459,12 +505,16 @@ function mappingDescriptors(config: any): FieldDescriptor[] {
     const targetFields = Array.isArray(rule?.target?.fields) ? rule.target.fields.map(String) : []
     const sourceLabel = sourceFields.join(' / ') || '源字段'
     const targetLabel = targetFields.join(' / ') || '目标字段'
+    const valueMapping = rule?.value_mapping && typeof rule.value_mapping === 'object' && !Array.isArray(rule.value_mapping)
+      ? Object.fromEntries(Object.entries(rule.value_mapping).map(([key, value]) => [String(key), rawValue(value)]))
+      : {}
     return {
       id: `rule:${String(rule?.id ?? index)}`,
       label: sourceLabel === targetLabel ? sourceLabel : `${sourceLabel} ↔ ${targetLabel}`,
       sourceFields,
       targetFields,
       ruleId: String(rule?.id ?? index),
+      valueMapping,
     }
   })
 }
@@ -569,6 +619,9 @@ function normalizeWorkbenchItem(item: any): WorkbenchItem {
     source_row_number: item?.source_row_number === null || item?.source_row_number === undefined ? null : Number(item.source_row_number),
     source_id: String(item?.source_id ?? ''),
     source_payload: item?.source_payload && typeof item.source_payload === 'object' ? item.source_payload : {},
+    source_payload_before_mapping: item?.source_payload_before_mapping && typeof item.source_payload_before_mapping === 'object'
+      ? item.source_payload_before_mapping
+      : undefined,
     top1_group_code: item?.top1_group_code ? String(item.top1_group_code) : null,
     top1_score: Number(item?.top1_score ?? item?.first_score ?? 0),
     second_score: Number(item?.second_score ?? 0),
@@ -1298,7 +1351,7 @@ onBeforeUnmount(() => {
                           <tbody>
                             <tr v-for="field in visibleFieldDescriptors" :key="field.id">
                               <th>{{ field.label }}</th>
-                              <td>{{ fieldValue(item.source_payload, field.sourceFields) || '—' }}</td>
+                              <td><span>{{ selectedSourceValue(item, field) || '—' }}</span><small v-if="selectedSourceNote(item, field)">{{ selectedSourceNote(item, field) }}</small></td>
                               <td :class="`is-${selectedComparisonKind(item, field)}`"><span>{{ selectedTargetValue(item, field) || '—' }}</span><small>{{ comparisonLabel(selectedComparisonKind(item, field)) }}</small></td>
                               <td :class="`is-${selectedComparisonKind(item, field)}`"><strong>{{ comparisonLabel(selectedComparisonKind(item, field)) }}</strong></td>
                             </tr>
