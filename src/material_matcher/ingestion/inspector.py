@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from itertools import chain
+from itertools import chain, islice
 from pathlib import Path
 import re
 from typing import Sequence
