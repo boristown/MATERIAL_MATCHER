@@ -60,6 +60,18 @@ class ReviewWorkbenchService:
             return {}
         return decoded if isinstance(decoded, dict) else {}
 
+    @staticmethod
+    def _decode_list(value: object) -> list[dict[str, object]]:
+        if not value:
+            return []
+        try:
+            decoded = json.loads(str(value))
+        except (TypeError, json.JSONDecodeError):
+            return []
+        if not isinstance(decoded, list):
+            return []
+        return [item for item in decoded if isinstance(item, dict)]
+
     def _ensure_task(self, connection: sqlite3.Connection, task_id: str) -> None:
         if connection.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone() is None:
             raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
@@ -179,8 +191,11 @@ class ReviewWorkbenchService:
             ).fetchall()
             items = [dict(row) for row in rows]
             candidates = self._candidates_for(connection, task_id, [str(item["source_row_id"]) for item in items], include_candidates)
+        value_mapping = self._value_mapping(task_id)
         for item in items:
-            item["source_payload"] = self._apply_value_mapping(self._decode(item.get("source_payload")), self._value_mapping(task_id))
+            source_payload = self._decode(item.get("source_payload"))
+            item["source_payload_before_mapping"] = source_payload
+            item["source_payload"] = self._apply_value_mapping(source_payload, value_mapping)
             item["critical_conflict"] = bool(item.get("critical_conflict"))
             item["version"] = str(item["updated_at"])
             if include_candidates:
@@ -210,7 +225,9 @@ class ReviewWorkbenchService:
                 raise DomainError("MATCH_ITEM_NOT_FOUND", "匹配记录不存在", status_code=404)
             item = dict(row)
             candidates = self._candidates_for(connection, task_id, [source_row_id], include_candidates)
-        item["source_payload"] = self._apply_value_mapping(self._decode(item.get("source_payload")), self._value_mapping(task_id))
+        source_payload = self._decode(item.get("source_payload"))
+        item["source_payload_before_mapping"] = source_payload
+        item["source_payload"] = self._apply_value_mapping(source_payload, self._value_mapping(task_id))
         item["critical_conflict"] = bool(item.get("critical_conflict"))
         item["version"] = str(item["updated_at"])
         if include_candidates:
@@ -239,7 +256,7 @@ class ReviewWorkbenchService:
             for row in rows:
                 item = dict(row)
                 item["target_payload"] = self._decode(item.get("target_payload"))
-                item["field_scores"] = self._decode(item.get("field_scores"))
+                item["field_scores"] = self._decode_list(item.get("field_scores"))
                 item["critical_conflict"] = bool(item.get("critical_conflict"))
                 result.setdefault(str(item["source_row_id"]), []).append(item)
         return result
