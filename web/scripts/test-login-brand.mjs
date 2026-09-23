@@ -17,8 +17,8 @@ if (!view.includes('使用分配的本地账号登录')) throw new Error('Login 
 if (!view.includes('/favicon.svg')) throw new Error('Login must reuse the existing 小罡 AI brand asset')
 if (!view.includes('小罡 AI')) throw new Error('Login must show the 小罡 AI brand name')
 
-/* version comes from the backend, never hard-coded */
-if (!view.includes("api.get('/health')")) throw new Error('Login footer must read the live version from /api/health')
+/* version comes from the shared backend-version helper, never hard-coded */
+if (!view.includes('fetchAppVersion')) throw new Error('Login footer must read the shared runtime version')
 if (/v1\.0[^-9.]/.test(view)) throw new Error('Login must not hard-code v1.0')
 
 /* mobile-first layout: dvh with vh fallback, scrollable, safe areas, no fixed 420px card */

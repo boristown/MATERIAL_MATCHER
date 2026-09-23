@@ -5,12 +5,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
 
 
 def _project_version(repo_root: Path) -> str:
-    with (repo_root / "pyproject.toml").open("rb") as stream:
-        return str(tomllib.load(stream)["project"]["version"])
+    return (repo_root / "src/material_matcher/VERSION").read_text(encoding="utf-8").strip()
 
 
 def _sha256(path: Path) -> str:
@@ -117,7 +115,6 @@ def _build(repo_root: Path, tmp_path: Path) -> Path:
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--git-commit", "0123456789abcdef0123456789abcdef01234567",
             "--output-dir", str(output),
-            "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
         ],
         check=True,
@@ -132,6 +129,7 @@ def test_offline_bundle_build_and_verify(tmp_path: Path) -> None:
     manifest = json.loads((bundle / "offline-manifest.json").read_text(encoding="utf-8"))
     paths = {item["path"] for item in manifest["files"]}
     assert manifest["release_version"] == version
+    assert f"版本: {version}" in (bundle / "BUILD_INFO.txt").read_text(encoding="utf-8")
     assert len(manifest["release_manifest_sha256"]) == 64
     assert "release/release-manifest.json" in paths
     assert "release/runtime/runtime-manifest.json" in paths
@@ -194,7 +192,6 @@ def test_offline_bundle_rejects_release_version_mismatch(tmp_path: Path) -> None
             "--wheelhouse-dir", str(wheelhouse),
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "bundle"),
-            "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
         ],
         text=True,
@@ -219,7 +216,6 @@ def test_offline_bundle_rejects_runtime_manifest_tampering(tmp_path: Path) -> No
             "--wheelhouse-dir", str(wheelhouse),
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "tampered-runtime"),
-            "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
         ],
         text=True,
@@ -242,7 +238,6 @@ def test_offline_bundle_rejects_release_tree_tampering(tmp_path: Path) -> None:
             "--wheelhouse-dir", str(wheelhouse),
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "tampered-release"),
-            "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
         ],
         text=True,
@@ -264,7 +259,6 @@ def test_offline_bundle_rejects_unsafe_model_id_and_arch_wheel(tmp_path: Path) -
             "--wheelhouse-dir", str(wheelhouse),
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "unsafe"),
-            "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
             "--model-id", "../escape",
         ],
@@ -285,7 +279,6 @@ def test_offline_bundle_rejects_unsafe_model_id_and_arch_wheel(tmp_path: Path) -
             "--wheelhouse-dir", str(wheelhouse),
             "--bootstrap-runtime-dir", str(_bootstrap(tmp_path)),
             "--output-dir", str(tmp_path / "wrong-arch"),
-            "--release-version", _project_version(repo_root),
             "--target-arch", "x86_64",
         ],
         text=True,
