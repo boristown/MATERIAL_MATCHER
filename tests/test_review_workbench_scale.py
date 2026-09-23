@@ -267,3 +267,45 @@ def test_apply_value_mapping_helper():
     assert R._apply_value_mapping({"国产/进口": "10"}, m)["国产/进口"] == "国产"
     assert R._apply_value_mapping({"其他": "x"}, m)["其他"] == "x"
     assert R._apply_value_mapping({"国产/进口": "12"}, m)["国产/进口"] == "12"
+
+
+def test_value_mapping_workbench_contract_preserves_raw_source_and_field_scores(tmp_path, monkeypatch):
+    repo, svc = service(tmp_path, 1, ("REVIEW",), 1)
+    monkeypatch.setattr(
+        svc,
+        "_value_mapping",
+        lambda _task_id: {"origin": {"10": "国产", "11": "进口"}},
+    )
+    field_scores = """[{"rule_id":"origin","score":1.0,"source_value":"国产","target_value":"国产","source_value_before_mapping":"10","value_mapping_applied":true,"unconfigured_source_values":[]}]"""
+    with sqlite3.connect(repo.path) as connection:
+        connection.execute(
+            "UPDATE match_items SET source_payload=? WHERE task_id='t1' AND source_row_id='0'",
+            ('{"origin":"10"}',),
+        )
+        connection.execute(
+            "UPDATE match_candidates SET target_payload=?,field_scores=? WHERE task_id='t1' AND source_row_id='0' AND rank=1",
+            ('{"origin":"国产"}', field_scores),
+        )
+
+    first = svc.list_items("t1", status="REVIEW", include_candidates=1)["items"][0]
+    assert first["source_payload_before_mapping"] == {"origin": "10"}
+    assert first["source_payload"] == {"origin": "国产"}
+    assert isinstance(first["candidates"][0]["field_scores"], list)
+    assert first["candidates"][0]["field_scores"][0]["source_value_before_mapping"] == "10"
+    assert first["candidates"][0]["field_scores"][0]["value_mapping_applied"] is True
+
+    refreshed = svc.get_item("t1", "0", include_candidates=1)
+    assert refreshed["source_payload_before_mapping"] == first["source_payload_before_mapping"]
+    assert refreshed["source_payload"] == first["source_payload"]
+    assert refreshed["candidates"][0]["field_scores"] == first["candidates"][0]["field_scores"]
+
+
+def test_field_scores_contract_rejects_non_array_legacy_payload(tmp_path):
+    repo, svc = service(tmp_path, 1, ("UNMATCHED",), 1)
+    with sqlite3.connect(repo.path) as connection:
+        connection.execute(
+            "UPDATE match_candidates SET field_scores='{}' WHERE task_id='t1' AND source_row_id='0' AND rank=1"
+        )
+
+    item = svc.list_items("t1", status="UNMATCHED", include_candidates=1)["items"][0]
+    assert item["candidates"][0]["field_scores"] == []
