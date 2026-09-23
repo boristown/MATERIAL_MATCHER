@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timedelta
 import json
+import math
 from pathlib import Path
+import sys
 import time
 from typing import Any
 import uuid
@@ -94,7 +96,35 @@ class MatchService:
     def runtime_status(self, task_id: str) -> dict[str, object]:
         with self.meta.connect() as connection:
             row = connection.execute("SELECT * FROM task_runtime WHERE task_id=?", (task_id,)).fetchone()
-        return dict(row) if row is not None else {"task_id": task_id, "execution_mode": "unknown", "current_phase": "WAITING", "index_id": None}
+            perf = connection.execute("SELECT metrics FROM task_performance WHERE task_id=?", (task_id,)).fetchone()
+        result = dict(row) if row is not None else {"task_id": task_id, "execution_mode": "unknown", "current_phase": "WAITING", "index_id": None}
+        if perf is not None:
+            try:
+                result["performance"] = json.loads(str(perf["metrics"]))
+            except json.JSONDecodeError:
+                result["performance"] = {}
+        return result
+
+    def _save_performance(self, task_id: str, metrics: dict[str, object]) -> None:
+        with self.meta.connect() as connection:
+            connection.execute(
+                """INSERT INTO task_performance(task_id,metrics,updated_at) VALUES(?,?,?)
+                   ON CONFLICT(task_id) DO UPDATE SET metrics=excluded.metrics,updated_at=excluded.updated_at""",
+                (task_id, _json(metrics), _now()),
+            )
+
+    @staticmethod
+    def _peak_memory_mb() -> float | None:
+        try:
+            import resource
+            peak = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+            if sys.platform == "darwin":
+                peak /= 1024.0 * 1024.0
+            else:
+                peak /= 1024.0
+            return round(peak, 3)
+        except (ImportError, OSError, ValueError):
+            return None
 
     def _catalog(self, version_id: str) -> dict[str, object]:
         with self.meta.connect() as connection:
@@ -130,16 +160,75 @@ class MatchService:
             return True
         return detect_layout(target_path).row_count_estimate > self.settings.baseline_max_target_rows
 
-    def _run_rows(self, *, source: dict[str, object], target: dict[str, object], catalog: dict[str, object], config: MatchingConfig, max_source_rows: int | None = None, on_progress=None, on_index_progress=None, on_index_ready=None, on_batch=None) -> list[RowResult]:
+    def _run_rows(
+        self,
+        *,
+        source: dict[str, object],
+        target: dict[str, object],
+        catalog: dict[str, object],
+        config: MatchingConfig,
+        max_source_rows: int | None = None,
+        on_progress=None,
+        on_index_progress=None,
+        on_index_ready=None,
+        on_batch=None,
+        collect_results: bool = True,
+        performance_metrics: dict[str, object] | None = None,
+    ) -> list[RowResult]:
         source_path = Path(str(source["stored_path"]))
         target_path = Path(str(target["stored_path"]))
         if not self._use_vector(config, target_path):
-            return match_rows(source_path, target_path, config=config, group_code_column=str(catalog["group_code_column"]), max_target_rows=self.settings.baseline_max_target_rows, max_source_rows=max_source_rows, on_progress=on_progress, on_batch=on_batch)
-        index, provider, index_info = self.indexes.ensure_index(catalog_version_id=str(catalog["version_id"]), target_file=target, group_code_column=str(catalog["group_code_column"]), config=config, on_progress=on_index_progress)
+            return match_rows(
+                source_path,
+                target_path,
+                config=config,
+                group_code_column=str(catalog["group_code_column"]),
+                max_target_rows=self.settings.baseline_max_target_rows,
+                max_source_rows=max_source_rows,
+                on_progress=on_progress,
+                on_batch=on_batch,
+                batch_rows=self.settings.match_batch_rows,
+            )
+        index_started = time.perf_counter()
+        index, provider, index_info = self.indexes.ensure_index(
+            catalog_version_id=str(catalog["version_id"]),
+            target_file=target,
+            group_code_column=str(catalog["group_code_column"]),
+            config=config,
+            on_progress=on_index_progress,
+        )
+        if performance_metrics is not None:
+            timings = performance_metrics.setdefault("timings", {})
+            if isinstance(timings, dict):
+                timings["target index build/load"] = float(timings.get("target index build/load", 0.0)) + (time.perf_counter() - index_started)
+            performance_metrics["index_reused"] = bool(index_info.get("reused"))
+            performance_metrics["target_rows"] = index.row_count
+            performance_metrics["ann_enabled"] = bool(index.ann_enabled)
+            performance_metrics["ann_backend"] = (
+                str((index.metadata.get("ann") or {}).get("backend"))
+                if isinstance(index.metadata.get("ann"), dict) and index.ann_enabled
+                else None
+            )
         if on_index_ready:
             on_index_ready(str(index_info.get("index_id") or index.metadata.get("fingerprint") or ""))
         cache = EmbeddingCache(self.settings.embedding_cache_dir, provider)
-        return match_rows_indexed(source_path, index=index, provider=provider, cache=cache, config=config, group_code_column=str(catalog["group_code_column"]), query_batch_size=self.settings.query_batch_size, max_source_rows=max_source_rows, on_progress=on_progress, scan_workers=self.settings.index_scan_workers, on_batch=on_batch)
+        return match_rows_indexed(
+            source_path,
+            index=index,
+            provider=provider,
+            cache=cache,
+            config=config,
+            group_code_column=str(catalog["group_code_column"]),
+            query_batch_size=self.settings.query_batch_size,
+            max_source_rows=max_source_rows,
+            on_progress=on_progress,
+            scan_workers=self.settings.index_scan_workers,
+            match_workers=self.settings.match_workers,
+            on_batch=on_batch,
+            batch_rows=self.settings.match_batch_rows,
+            collect_results=collect_results,
+            performance_metrics=performance_metrics,
+        )
 
     def dry_run(self, draft_id: str, sample_rows: int = 100) -> dict[str, object]:
         _, config, source, catalog = self._draft_context(draft_id)
@@ -173,34 +262,66 @@ class MatchService:
         return task_id if updated else None
 
     def _persist_rows(self, task_id: str, batch: list[RowResult]) -> None:
+        if not batch:
+            return
         now = _now()
+        item_rows: list[tuple[object, ...]] = []
+        candidate_rows: list[tuple[object, ...]] = []
+        for item in batch:
+            item_rows.append((
+                task_id,
+                item.source_row_id,
+                item.source_row_number,
+                item.source_id,
+                _json(item.source_payload),
+                item.status,
+                item.status,
+                item.candidates[0].group_code if item.candidates else None,
+                item.first_score,
+                item.second_score,
+                item.score_gap,
+                1 if item.critical_conflict else 0,
+                item.final_group_code,
+                now,
+                now,
+            ))
+            candidate_rows.extend(
+                (
+                    task_id,
+                    item.source_row_id,
+                    candidate.rank,
+                    candidate.target_row_number,
+                    candidate.group_code,
+                    _json(candidate.target_payload),
+                    candidate.score,
+                    _json(candidate.field_scores),
+                    1 if candidate.critical_conflict else 0,
+                    candidate.child_profile_id,
+                    candidate.child_profile_version,
+                    candidate.child_profile_name,
+                    candidate.target_file_id,
+                    candidate.target_file_name,
+                )
+                for candidate in item.candidates
+            )
         with self.meta.connect() as connection:
-            for item in batch:
-                connection.execute("""INSERT OR REPLACE INTO match_items(task_id,source_row_id,source_row_number,source_id,source_payload,original_status,current_status,top1_group_code,top1_score,second_score,score_gap,critical_conflict,final_group_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (task_id, item.source_row_id, item.source_row_number, item.source_id, _json(item.source_payload), item.status, item.status, item.candidates[0].group_code if item.candidates else None, item.first_score, item.second_score, item.score_gap, 1 if item.critical_conflict else 0, item.final_group_code, now, now))
-                for candidate in item.candidates:
-                    connection.execute(
-                        """INSERT OR REPLACE INTO match_candidates(
-                               task_id,source_row_id,rank,target_row_number,target_group_code,target_payload,
-                               score,field_scores,critical_conflict,child_profile_id,child_profile_version,
-                               child_profile_name,target_file_id,target_file_name
-                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            task_id,
-                            item.source_row_id,
-                            candidate.rank,
-                            candidate.target_row_number,
-                            candidate.group_code,
-                            _json(candidate.target_payload),
-                            candidate.score,
-                            _json(candidate.field_scores),
-                            1 if candidate.critical_conflict else 0,
-                            candidate.child_profile_id,
-                            candidate.child_profile_version,
-                            candidate.child_profile_name,
-                            candidate.target_file_id,
-                            candidate.target_file_name,
-                        ),
-                    )
+            connection.executemany(
+                """INSERT OR REPLACE INTO match_items(
+                       task_id,source_row_id,source_row_number,source_id,source_payload,
+                       original_status,current_status,top1_group_code,top1_score,second_score,
+                       score_gap,critical_conflict,final_group_code,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                item_rows,
+            )
+            if candidate_rows:
+                connection.executemany(
+                    """INSERT OR REPLACE INTO match_candidates(
+                           task_id,source_row_id,rank,target_row_number,target_group_code,target_payload,
+                           score,field_scores,critical_conflict,child_profile_id,child_profile_version,
+                           child_profile_name,target_file_id,target_file_name
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    candidate_rows,
+                )
 
     def live_counts(self, task_id: str) -> dict[str, int]:
         with self.meta.connect() as connection:
@@ -209,6 +330,57 @@ class MatchService:
         return {"matched": counts.get("MATCHED", 0), "review": counts.get("REVIEW", 0), "confirmed": counts.get("CONFIRMED", 0), "unmatched": counts.get("UNMATCHED", 0), "matched_group_codes": counts.get("MATCHED", 0) + counts.get("CONFIRMED", 0)}
 
     def execute_task(self, task_id: str) -> None:
+        wall_started = time.perf_counter()
+        cpu_started = time.process_time()
+        performance: dict[str, object] = {
+            "timings": {},
+            "worker_count": self.settings.match_workers,
+            "batch_size": self.settings.match_batch_rows,
+            "query_batch_size": self.settings.query_batch_size,
+            "gpu": None,
+            "status": "RUNNING",
+        }
+
+        def add_timing(name: str, elapsed: float) -> None:
+            timings = performance.setdefault("timings", {})
+            if isinstance(timings, dict):
+                timings[name] = float(timings.get(name, 0.0)) + float(elapsed)
+
+        def finalize_metrics(row_count: int, status: str) -> None:
+            def summarize_counts(key: str) -> dict[str, int | float]:
+                raw = performance.pop(key, [])
+                values = [int(value) for value in raw] if isinstance(raw, list) else []
+                ordered = sorted(values)
+                p95_index = max(0, math.ceil(len(ordered) * 0.95) - 1) if ordered else 0
+                return {
+                    "total": int(sum(values)),
+                    "average": round(sum(values) / len(values), 3) if values else 0.0,
+                    "p95": ordered[p95_index] if ordered else 0,
+                    "max": max(values) if values else 0,
+                }
+
+            returned_counts = summarize_counts("_candidate_counts")
+            pool_counts = summarize_counts("_candidate_pool_counts")
+            rerank_counts = summarize_counts("_rerank_counts")
+            wall_seconds = max(time.perf_counter() - wall_started, 1e-9)
+            cpu_seconds = max(time.process_time() - cpu_started, 0.0)
+            performance.update({
+                "status": status,
+                "wall_time_seconds": round(wall_seconds, 6),
+                "rows": int(row_count),
+                "rows_per_second": round(row_count / wall_seconds, 3),
+                "cpu_time_seconds": round(cpu_seconds, 6),
+                "cpu_utilization_percent_estimate": round(cpu_seconds / wall_seconds * 100.0, 2),
+                "peak_memory_mb": self._peak_memory_mb(),
+                "candidate_count": returned_counts,
+                "recall_candidate_pool": pool_counts,
+                "vector_rerank_count": rerank_counts,
+                "field_scoring_count": returned_counts,
+                "ann_fallback_queries": int(performance.get("ann_fallback_queries", 0)),
+            })
+            self._save_performance(task_id, performance)
+
+        processed_for_failure = 0
         try:
             with self.meta.connect() as connection:
                 row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
@@ -236,22 +408,29 @@ class MatchService:
                 )
 
             persisted = [0]
+            last_progress_write = [0.0]
             if CompositeMatchService.is_composite(config):
                 execution_mode = "composite"
                 self._set_runtime(task_id, execution_mode, "RETRIEVE")
 
                 def composite_progress(child_index: int, child_count: int, done: int, total: int) -> None:
+                    nonlocal processed_for_failure
                     child_fraction = done / max(total, 1)
                     fraction = (child_index + child_fraction) / max(child_count, 1)
                     virtual_done = min(total, max(0, int(round(total * fraction))))
+                    processed_for_failure = max(processed_for_failure, virtual_done)
                     self.observe_progress(task_id, "query", virtual_done, max(total, 1))
+                    now_mono = time.monotonic()
                     if done == 1:
                         self._set_runtime(task_id, execution_mode, "RERANK")
-                    with self.meta.connect() as connection:
-                        connection.execute(
-                            "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
-                            (virtual_done, total, min(95.0, 5.0 + 90.0 * fraction), task_id),
-                        )
+                    if virtual_done >= total or now_mono - last_progress_write[0] >= self.settings.progress_update_seconds:
+                        with self.meta.connect() as connection:
+                            connection.execute(
+                                "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
+                                (virtual_done, total, min(95.0, 5.0 + 90.0 * fraction), task_id),
+                            )
+                            connection.execute("UPDATE task_runtime SET updated_at=? WHERE task_id=?", (_now(), task_id))
+                        last_progress_write[0] = now_mono
 
                 rows = self.composite_matcher.execute(
                     source=source,
@@ -268,30 +447,39 @@ class MatchService:
                 def index_progress(done: int, total: int) -> None:
                     pct = 3.0 + 27.0 * (done / max(total, 1))
                     self.observe_progress(task_id, "index", done, total)
-                    with self.meta.connect() as connection:
-                        connection.execute(
-                            "UPDATE tasks SET progress=? WHERE task_id=?",
-                            (min(30.0, pct), task_id),
-                        )
+                    now_mono = time.monotonic()
+                    if done >= total or now_mono - last_progress_write[0] >= self.settings.progress_update_seconds:
+                        with self.meta.connect() as connection:
+                            connection.execute("UPDATE tasks SET progress=? WHERE task_id=?", (min(30.0, pct), task_id))
+                            connection.execute("UPDATE task_runtime SET updated_at=? WHERE task_id=?", (_now(), task_id))
+                        last_progress_write[0] = now_mono
 
                 def progress(done: int, total: int) -> None:
+                    nonlocal processed_for_failure
+                    processed_for_failure = max(processed_for_failure, done)
                     self.observe_progress(task_id, "query", done, total)
                     if done == 1:
                         self._set_runtime(task_id, execution_mode, "RERANK")
                     base = 32.0 if vector_mode else 5.0
                     span = 63.0 if vector_mode else 90.0
                     pct = base + span * (done / max(total, 1))
-                    with self.meta.connect() as connection:
-                        connection.execute(
-                            "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
-                            (done, total, min(95.0, pct), task_id),
-                        )
+                    now_mono = time.monotonic()
+                    if done >= total or now_mono - last_progress_write[0] >= self.settings.progress_update_seconds:
+                        with self.meta.connect() as connection:
+                            connection.execute(
+                                "UPDATE tasks SET processed_rows=?, total_rows=?, progress=? WHERE task_id=?",
+                                (done, total, min(95.0, pct), task_id),
+                            )
+                            connection.execute("UPDATE task_runtime SET updated_at=? WHERE task_id=?", (_now(), task_id))
+                        last_progress_write[0] = now_mono
 
                 def index_ready(index_id: str) -> None:
                     self._set_runtime(task_id, execution_mode, "RETRIEVE", index_id or None)
 
                 def persist_batch(batch: list[RowResult]) -> None:
+                    started = time.perf_counter()
                     self._persist_rows(task_id, batch)
+                    add_timing("DB persistence", time.perf_counter() - started)
                     persisted[0] += len(batch)
 
                 rows = self._run_rows(
@@ -303,11 +491,19 @@ class MatchService:
                     on_index_progress=index_progress,
                     on_index_ready=index_ready if vector_mode else None,
                     on_batch=persist_batch,
+                    collect_results=not vector_mode,
+                    performance_metrics=performance if vector_mode else None,
                 )
 
             self._set_runtime(task_id, execution_mode, "PERSIST")
             if persisted[0] < len(rows):
+                started = time.perf_counter()
                 self._persist_rows(task_id, rows[persisted[0]:])
+                add_timing("DB persistence", time.perf_counter() - started)
+                persisted[0] = len(rows)
+            result_count = persisted[0] if persisted[0] else len(rows)
+
+            finalize_started = time.perf_counter()
             with self.meta.connect() as connection:
                 review_count = connection.execute(
                     "SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",
@@ -317,13 +513,15 @@ class MatchService:
                 now = _now()
                 connection.execute(
                     "UPDATE tasks SET status='COMPLETED', stage=?, progress=100, processed_rows=?, total_rows=?, finished_at=? WHERE task_id=?",
-                    (stage, len(rows), len(rows), now, task_id),
+                    (stage, result_count, result_count, now, task_id),
                 )
                 connection.execute(
                     "UPDATE task_compute_lifecycle SET compute_completed_at=? WHERE task_id=?",
                     (now, task_id),
                 )
+            add_timing("finalize", time.perf_counter() - finalize_started)
             self._set_runtime(task_id, execution_mode, "DONE")
+            finalize_metrics(result_count, "COMPLETED")
             self._progress_window.pop(task_id, None)
         except Exception as exc:
             code = exc.code if isinstance(exc, DomainError) else "INTERNAL_ERROR"
@@ -335,6 +533,10 @@ class MatchService:
                 )
             current_mode = self.runtime_status(task_id).get("execution_mode", "unknown")
             self._set_runtime(task_id, str(current_mode), "FAILED")
+            try:
+                finalize_metrics(processed_for_failure, "FAILED")
+            except Exception:
+                pass
             if isinstance(exc, DomainError):
                 return
             raise
