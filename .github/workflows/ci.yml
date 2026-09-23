@@ -12,11 +12,13 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -e '.[dev]'
+      - name: Verify canonical package version
+        run: python -c "from importlib.metadata import version; import material_matcher; assert material_matcher.__version__ == version('material-matcher') == open('src/material_matcher/VERSION', encoding='utf-8').read().strip()"
+      - name: Build wheel from canonical version
+        run: python -m pip wheel . --no-deps --no-build-isolation -w /tmp/material-matcher-wheel
       - run: pytest -q
-      - name: Issue 162 before/after retrieval comparison (temporary PR run)
-        run: |
-          python scripts/benchmark_issue_162.py --source-rows 1000 --target-rows 1000000 --disable-ann --warm-runs 0 --work-dir /tmp/issue162-flat --output /tmp/issue162-flat.json
-          python scripts/benchmark_issue_162.py --source-rows 1000 --target-rows 1000000 --warm-runs 0 --work-dir /tmp/issue162-ann --output /tmp/issue162-ann.json
+      - name: Issue 162 bounded matching quick regression
+        run: python scripts/benchmark_issue_162.py --preset quick --warm-runs 0 --work-dir /tmp/issue162-quick --output /tmp/issue162-quick.json
       - name: Real-world matching quality (scan baseline)
         run: python scripts/evaluate_matching_quality.py
       - name: Real-world field score diagnostics
