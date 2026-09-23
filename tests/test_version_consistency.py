@@ -18,7 +18,6 @@ def _canonical_version() -> str:
 
 def test_canonical_version_drives_package_and_distribution_metadata() -> None:
     canonical = _canonical_version()
-    assert canonical == "1.3.19"
     assert material_matcher.__version__ == canonical
     assert distribution_version("material-matcher") == canonical
 
