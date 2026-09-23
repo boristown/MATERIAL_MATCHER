@@ -23,5 +23,5 @@ else
   systemctl restart material_matcher
 fi
 sleep 12
-if [ "$MODE" = docker ]; then V=$(docker exec "$CTR" cat /opt/material_matcher/current/app/material_matcher/VERSION 2>/dev/null); else V=$(cat /opt/material_matcher/current/app/material_matcher/VERSION 2>/dev/null); fi
+V=$("$PKG_DIR/scripts/version-check" $([ "$MODE" = docker ] && echo --docker "$CTR" || echo --native) 2>/dev/null || true); [ -z "$V" ] && V=UNKNOWN
 echo "已回滚到版本: ${V:-UNKNOWN}"
