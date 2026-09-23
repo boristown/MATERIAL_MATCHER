@@ -307,6 +307,7 @@ def main() -> int:
     parser.add_argument("--query-batch-size", type=int, default=64)
     parser.add_argument("--persist-batch-size", type=int, default=256)
     parser.add_argument("--warm-runs", type=int, default=1)
+    parser.add_argument("--disable-ann", action="store_true", help="Force the legacy full-scan retrieval path for before/after comparison")
     parser.add_argument("--work-dir", type=Path, default=Path(".benchmark/issue-162"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--generate-only", action="store_true")
@@ -339,6 +340,7 @@ def main() -> int:
         match_workers=max(1, args.workers),
         match_batch_rows=max(1, args.persist_batch_size),
         query_batch_size=max(1, args.query_batch_size),
+        ann_min_rows=(target_rows + 1 if args.disable_ann else 100_000),
     )
     settings.ensure_dirs()
     metadata = MetadataRepository(settings.metadata_db_path)
@@ -397,6 +399,7 @@ def main() -> int:
             "workers": settings.match_workers,
             "query_batch_size": settings.query_batch_size,
             "persist_batch_size": settings.match_batch_rows,
+            "retrieval_backend": "legacy_flat_scan" if args.disable_ann else "bounded_ann",
             "ann": {
                 "min_rows": settings.ann_min_rows,
                 "tables": settings.ann_lsh_tables,
