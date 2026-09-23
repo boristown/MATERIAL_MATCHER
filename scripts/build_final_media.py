@@ -8,7 +8,7 @@
     --node-offline-dir <node-offline> --docker-image-tar <tar> --docker-image-ref <ref> \
     --docker-image-id <id> --engine-tgz <docker tgz> --compose-bin <compose> \
     --browser-dir <含 Firefox 等的本地目录> --seed-dir seed/business \
-    --release-version 1.2.0 --git-commit <sha>
+    --git-commit <sha>
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from versioning import resolve_release_version
 
 REPO = Path(__file__).resolve().parents[1]
 ROOT_README = """物料集团码智能匹配平台 · 最终离线交付介质
@@ -99,6 +101,7 @@ def _sha256(path: Path) -> str:
 
 
 def build(args: argparse.Namespace) -> Path:
+    release_version = resolve_release_version(getattr(args, "release_version", None), repo_root=REPO)
     out = args.output_dir
     if out.exists() and any(out.iterdir()) and not args.force:
         raise RuntimeError(f"输出目录非空：{out}")
@@ -113,7 +116,7 @@ def build(args: argparse.Namespace) -> Path:
     build_offline_bundle.build_bundle(
         release_dir=args.release_dir, model_dir=args.model_dir, wheelhouse_dir=args.wheelhouse_dir,
         bootstrap_runtime_dir=args.bootstrap_runtime_dir, output_dir=native_dir,
-        release_version=args.release_version, target_arch=args.target_arch, model_id=args.model_id,
+        release_version=release_version, target_arch=args.target_arch, model_id=args.model_id,
         node_offline_dir=args.node_offline_dir, git_commit=args.git_commit, force=True,
     )
 
@@ -124,7 +127,7 @@ def build(args: argparse.Namespace) -> Path:
         output_dir=docker_dir, release_dir=args.release_dir, seed_dir=args.seed_dir,
         image_tar=args.docker_image_tar, image_ref=args.docker_image_ref, image_id=args.docker_image_id,
         engine_tgz=args.engine_tgz, compose_bin=args.compose_bin,
-        bootstrap_runtime_dir=args.bootstrap_runtime_dir, release_version=args.release_version,
+        bootstrap_runtime_dir=args.bootstrap_runtime_dir, release_version=release_version,
         target_arch=args.target_arch, git_commit=args.git_commit, seed_source_db_sha256=seed_db_sha,
         docker_engine_version="27.1.1", docker_compose_version="v2.29.7",
         force=True,
@@ -162,7 +165,7 @@ def build(args: argparse.Namespace) -> Path:
     manifest = {
         "product": "MM-DELIVERY",
         "format_version": 1,
-        "release_version": args.release_version,
+        "release_version": release_version,
         "git_commit": args.git_commit,
         "target_arch": args.target_arch,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -191,7 +194,7 @@ def main() -> int:
     parser.add_argument("--compose-bin", type=Path, required=True)
     parser.add_argument("--browser-dir", type=Path, required=True)
     parser.add_argument("--seed-dir", type=Path, default=REPO / "seed/business")
-    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--release-version", default=None, help="兼容参数；缺省自动读取 src/material_matcher/VERSION，显式传入时必须一致")
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), default="x86_64")
     parser.add_argument("--git-commit", required=True)
     parser.add_argument("--firefox-fetched", default="2026-09-18（构建机自 archive.mozilla.org 官方发布目录下载并校验）")

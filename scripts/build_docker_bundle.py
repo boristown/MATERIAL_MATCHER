@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from versioning import resolve_release_version
+
 REPO = Path(__file__).resolve().parents[1]
 DOCKER_COPY_PLAN = (
     ("run.sh", "installer/docker/launch_docker_install.sh", True),
@@ -72,8 +74,22 @@ def _iter_symlinks(root: Path):
 
 def build(*, output_dir: Path, release_dir: Path, seed_dir: Path, image_tar: Path, image_ref: str,
           image_id: str, engine_tgz: Path, compose_bin: Path, bootstrap_runtime_dir: Path,
-          release_version: str, target_arch: str, git_commit: str, seed_source_db_sha256: str,
+          release_version: str | None = None, target_arch: str, git_commit: str, seed_source_db_sha256: str,
           docker_engine_version: str, docker_compose_version: str, force: bool = False) -> Path:
+    release_version = resolve_release_version(release_version, repo_root=REPO)
+    release_dir = release_dir.resolve()
+    release_manifest_path = release_dir / "release-manifest.json"
+    if not release_manifest_path.is_file():
+        raise RuntimeError("Docker 介质缺少 release-manifest.json，请先使用 build_release.py 构建 release")
+    release_manifest = json.loads(release_manifest_path.read_text(encoding="utf-8"))
+    if str(release_manifest.get("release_version") or "") != release_version:
+        raise RuntimeError(
+            f"release 版本 {release_manifest.get('release_version')} 与 Docker 介质版本 {release_version} 不一致"
+        )
+    if str(release_manifest.get("target_arch") or "") != target_arch:
+        raise RuntimeError(
+            f"release 架构 {release_manifest.get('target_arch')} 与 Docker 介质目标架构 {target_arch} 不一致"
+        )
     output_dir = output_dir.resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
         if not force:
@@ -178,7 +194,7 @@ def main() -> int:
     parser.add_argument("--engine-tgz", type=Path, required=True)
     parser.add_argument("--compose-bin", type=Path, required=True)
     parser.add_argument("--bootstrap-runtime-dir", type=Path, required=True)
-    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--release-version", default=None, help="兼容参数；缺省自动读取 src/material_matcher/VERSION，显式传入时必须一致")
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), required=True)
     parser.add_argument("--git-commit", required=True)
     parser.add_argument("--seed-source-db-sha256", required=True)

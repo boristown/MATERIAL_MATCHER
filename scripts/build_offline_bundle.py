@@ -13,6 +13,8 @@ import stat
 import subprocess
 import sys
 
+from versioning import resolve_release_version
+
 MANIFEST_NAME = "offline-manifest.json"
 RELEASE_MANIFEST_NAME = "release-manifest.json"
 PRODUCT = "MATERIAL_MATCHER"
@@ -171,13 +173,15 @@ def build_bundle(
     wheelhouse_dir: Path,
     bootstrap_runtime_dir: Path,
     output_dir: Path,
-    release_version: str,
+    release_version: str | None = None,
     target_arch: str,
     model_id: str,
     node_offline_dir: Path | None = None,
     git_commit: str = "",
     force: bool = False,
 ) -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    release_version = resolve_release_version(release_version, repo_root=repo_root)
     if not RELEASE_VERSION_RE.fullmatch(release_version):
         raise ValueError("release_version 只能包含安全的字母、数字、点、下划线、加号和连字符")
     if target_arch not in SUPPORTED_ARCHES:
@@ -188,8 +192,6 @@ def build_bundle(
     model_dir = model_dir.resolve()
     wheelhouse_dir = wheelhouse_dir.resolve()
     output_dir = output_dir.resolve()
-    repo_root = Path(__file__).resolve().parents[1]
-
     release_manifest = _load_release_manifest(release_dir)
     if str(release_manifest.get("release_version") or "") != release_version:
         raise ValueError(
@@ -288,7 +290,7 @@ def main() -> None:
                         help="可选：离线前端重建资源（node 运行时 + node_modules 归档）")
     parser.add_argument("--git-commit", default="", help="冻结 commit；缺省读取 release manifest")
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--release-version", required=True)
+    parser.add_argument("--release-version", default=None, help="兼容参数；缺省自动读取 src/material_matcher/VERSION，显式传入时必须一致")
     parser.add_argument("--target-arch", choices=("x86_64", "aarch64"), required=True)
     parser.add_argument("--model-id", default="BAAI/bge-base-zh-v1.5")
     parser.add_argument("--force", action="store_true")
