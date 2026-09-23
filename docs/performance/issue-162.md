@@ -42,7 +42,20 @@ scripts/benchmark_issue_162.py supports:
 | stress | 10,000 | 1,000,000 |
 | formal | 40,000 | 1,000,000 |
 
-It generates deterministic CSV fixtures, supports cold/warm runs, and has --disable-ann to force the legacy flat retrieval path for same-build before/after comparison.
+It generates deterministic CSV fixtures, supports cold/warm runs, and has --disable-ann to force the legacy flat retrieval path for same-build before/after comparison. The same tool can also exercise the installed production ONNX provider on the generated scale fixture:
+
+```bash
+python scripts/benchmark_issue_162.py \
+  --preset formal \
+  --provider onnx_local \
+  --model-id BAAI/bge-base-zh-v1.5 \
+  --dimensions 768 \
+  --precision int8 \
+  --warm-runs 2 \
+  --output issue-162-formal-production-model.json
+```
+
+The production-model mode requires the offline ONNX/tokenizer bundle already installed under MATERIAL_MATCHER's model root. Generated data validates scale and throughput only; business accuracy must still be checked with the existing gold-set evaluation flow.
 
 ## Measured GitHub Actions results
 
@@ -61,9 +74,17 @@ Cold stages: index 7.445 s, retrieval 40.965 s, rerank/field scoring 4.017 s, DB
 
 Cold wall time was 293.785 s at 34.039 rows/s with peak RSS 590.652 MB. Stages: index 105.710 s, retrieval 145.496 s, rerank/field scoring 40.130 s, DB persistence 1.427 s. Synthetic exact-fixture Top1 accuracy was 1.0.
 
-### 40,000 × 1,000,000
+### 40,000 × 1,000,000 — CI run #507
 
-The formal-scale synthetic engineering run is tracked separately and will be filled with measured data. Even a successful synthetic run is not the Issue #162 formal acceptance result.
+GitHub Actions completed the full synthetic engineering-scale run successfully on the same 4-vCPU / ~16-GB runner:
+
+| run | index | wall | rows/s | peak RSS |
+|---|---|---:|---:|---:|
+| cold | build | **861.788 s (14.36 min)** | **46.415** | **599.246 MB** |
+
+Cold stages: target index build/load 112.534 s, source preprocessing 1.406 s, retrieval 578.284 s, rerank/field scoring 160.367 s, DB persistence 6.188 s, finalize 0.105 s. The ANN recall pool averaged 9,193.499 rows/query (P95 9,353; max 9,595) instead of scanning 1,000,000 rows/query. Vector rerank stayed at exactly 200 candidates/query, returned TopK stayed at 50, no ANN fallback occurred, and all 40,000 rows were persisted. Synthetic exact-fixture Top1 accuracy was 1.0.
+
+This is strong evidence that the implementation no longer has the original 40-billion-pair scaling shape and that the engineering path has substantial headroom against the 60-minute target on this runner. It is still **not** the Issue #162 formal production acceptance result because the run used deterministic 32-dimensional test embeddings rather than the production BAAI/bge-base-zh-v1.5 ONNX model and customer gold data.
 
 ## Correctness status
 
