@@ -3,7 +3,7 @@
 }
 
 .system-toolbar {
-  align-items: center;
+  align-items: flex-start;
   gap: 20px;
   min-height: 52px;
 }
