@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from itertools import chain
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -9,6 +10,7 @@ from openpyxl import load_workbook
 
 from material_matcher.ingestion.inspector import (
     inspect_tabular_file,
+    iter_sparse_worksheet_rows,
     row_has_effective_data,
 )
 
@@ -107,19 +109,27 @@ def iter_tabular_rows_with_position(
     workbook = load_workbook(path, read_only=True, data_only=True, keep_links=False)
     try:
         worksheet = workbook[selected_sheet]
-        reset_dimensions = getattr(worksheet, "reset_dimensions", None)
-        if callable(reset_dimensions):
-            reset_dimensions()
-        raw_headers = next(
-            worksheet.iter_rows(min_row=selected_header, max_row=selected_header, values_only=True),
-            (),
-        )
+        row_iter = iter_sparse_worksheet_rows(worksheet)
+        raw_headers: tuple[object, ...] = ()
+        pending: tuple[int, tuple[object, ...]] | None = None
+        for original_row_number, values in row_iter:
+            if original_row_number < selected_header:
+                continue
+            if original_row_number == selected_header:
+                raw_headers = values
+            else:
+                pending = (original_row_number, values)
+            break
+
         headers = ["" if value is None else str(value).strip() for value in raw_headers]
         business_columns = [index for index, header in enumerate(headers) if header]
-        for original_row_number, values in enumerate(
-            worksheet.iter_rows(min_row=selected_header + 1, values_only=True),
-            start=selected_header + 1,
-        ):
+        positioned_rows = chain(
+            (() if pending is None else (pending,)),
+            row_iter,
+        )
+        for original_row_number, values in positioned_rows:
+            if original_row_number <= selected_header:
+                continue
             if max_rows is not None and emitted >= max_rows:
                 break
             if not row_has_effective_data(values, business_columns):
