@@ -255,10 +255,21 @@ def run_once(
 
     wall_seconds = max(time.perf_counter() - wall_started, 1e-9)
     cpu_seconds = max(time.process_time() - cpu_started, 0.0)
-    candidate_counts = metrics.pop("_candidate_counts", [])
-    candidate_counts = [int(value) for value in candidate_counts] if isinstance(candidate_counts, list) else []
-    ordered = sorted(candidate_counts)
-    p95 = ordered[max(0, int((len(ordered) * 0.95 + 0.999999)) - 1)] if ordered else 0
+    def summarize_counts(key: str) -> dict[str, int | float]:
+        raw = metrics.pop(key, [])
+        values = [int(value) for value in raw] if isinstance(raw, list) else []
+        ordered = sorted(values)
+        p95 = ordered[max(0, int((len(ordered) * 0.95 + 0.999999)) - 1)] if ordered else 0
+        return {
+            "total": sum(values),
+            "average": round(sum(values) / max(1, len(values)), 3),
+            "p95": p95,
+            "max": max(values) if values else 0,
+        }
+
+    returned_counts = summarize_counts("_candidate_counts")
+    pool_counts = summarize_counts("_candidate_pool_counts")
+    rerank_counts = summarize_counts("_rerank_counts")
     return {
         "name": name,
         "index_reused": bool(index_info.get("reused")),
@@ -273,12 +284,11 @@ def run_once(
         "query_batch_size": settings.query_batch_size,
         "recall_top_k": config.retrieval.retrieval_top_k,
         "persisted_top_n": config.decision.top_n,
-        "candidate_count": {
-            "total": sum(candidate_counts),
-            "average": round(sum(candidate_counts) / max(1, len(candidate_counts)), 3),
-            "p95": p95,
-            "max": max(candidate_counts) if candidate_counts else 0,
-        },
+        "candidate_count": returned_counts,
+        "recall_candidate_pool": pool_counts,
+        "vector_rerank_count": rerank_counts,
+        "field_scoring_count": returned_counts,
+        "ann_fallback_queries": int(metrics.get("ann_fallback_queries", 0)),
         "timings": {key: round(float(value), 6) for key, value in timings.items()},
         "peak_memory_mb": MatchService._peak_memory_mb(),
         "quality": quality,
