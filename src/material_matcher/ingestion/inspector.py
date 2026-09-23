@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import csv
-from itertools import chain, islice
+from itertools import chain
 from pathlib import Path
 import re
 from typing import Sequence
 
 from openpyxl import load_workbook
+from openpyxl.worksheet._reader import WorkSheetParser
 
 ALIASES: dict[str, tuple[str, ...]] = {
     "source_id": ("matnr", "物料", "物料号", "物料编码", "物资编码"),
@@ -36,6 +37,35 @@ def row_has_effective_data(row: Sequence[object], business_columns: Sequence[int
         index < len(row) and is_effective_value(row[index])
         for index in business_columns
     )
+
+
+def iter_sparse_worksheet_rows(worksheet):
+    """Yield only row elements that actually exist in XLSX XML.
+
+    ReadOnlyWorksheet.iter_rows() intentionally synthesizes every missing row
+    between row indices. A style-only cell at row 1,000,000 can therefore turn a
+    tiny workbook into a million Python iterations even after dimensions are
+    reset. Openpyxl 3.x's worksheet parser already streams the XML and exposes
+    the real row numbers, so use that parser directly and never expand gaps.
+    """
+    with worksheet._get_source() as source:
+        parser = WorkSheetParser(
+            source,
+            worksheet._shared_strings,
+            data_only=worksheet.parent.data_only,
+            epoch=worksheet.parent.epoch,
+            date_formats=worksheet.parent._date_formats,
+            timedelta_formats=worksheet.parent._timedelta_formats,
+        )
+        for row_number, cells in parser.parse():
+            if not cells:
+                yield row_number, ()
+                continue
+            width = max(int(cell["column"]) for cell in cells)
+            values: list[object] = [None] * width
+            for cell in cells:
+                values[int(cell["column"]) - 1] = cell["value"]
+            yield row_number, tuple(values)
 
 
 def _normalize_header(value: object) -> str:
@@ -92,25 +122,38 @@ def _inspect_xlsx_sheet(
     max_scan_rows: int,
     sample_data_rows: int,
 ) -> dict[str, object]:
-    # XLSX dimension/max_row is metadata and can remain inflated after edits or
-    # formatting. In read-only mode reset_dimensions() makes iteration follow
-    # actual worksheet XML instead of trusting that stale boundary.
-    reset_dimensions = getattr(worksheet, "reset_dimensions", None)
-    if callable(reset_dimensions):
-        reset_dimensions()
+    # Never trust worksheet.max_row/dimension here. Iterate only actual row
+    # elements so a remote style-only cell does not expand all missing rows.
+    row_iter = iter_sparse_worksheet_rows(worksheet)
+    prefix: list[tuple[int, Sequence[object]]] = []
+    pending: tuple[int, Sequence[object]] | None = None
+    for positioned in row_iter:
+        if positioned[0] <= max_scan_rows:
+            prefix.append(positioned)
+            continue
+        pending = positioned
+        break
 
-    row_iter = worksheet.iter_rows(values_only=True)
-    prefix = list(islice(row_iter, max(1, max_scan_rows)))
-    header_row, _, confidence = _header_detection(prefix)
-    headers: Sequence[object] = prefix[header_row - 1] if len(prefix) >= header_row else ()
+    scored = [(row_number, _header_score(row)) for row_number, row in prefix]
+    header_row, best = max(scored, key=lambda item: item[1], default=(1, 0.0))
+    scores = sorted((score for _, score in scored), reverse=True)
+    second = scores[1] if len(scores) > 1 else 0.0
+    confidence = 0.0 if best <= 0 else min(1.0, 0.55 + max(0.0, best - second) / best)
+    headers: Sequence[object] = next(
+        (row for row_number, row in prefix if row_number == header_row),
+        (),
+    )
     business_columns = _business_columns(headers)
 
     samples_by_column: dict[int, list[object]] = {index: [] for index in business_columns}
     row_count = 0
-    for data_offset, row in enumerate(chain(prefix[header_row:], row_iter), start=1):
+    buffered = chain(prefix, (() if pending is None else (pending,)), row_iter)
+    for row_number, row in buffered:
+        if row_number <= header_row:
+            continue
         if row_has_effective_data(row, business_columns):
             row_count += 1
-        if data_offset <= sample_data_rows:
+        if row_number <= header_row + sample_data_rows:
             for index in business_columns:
                 value = row[index] if index < len(row) else None
                 if is_effective_value(value):
