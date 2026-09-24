@@ -344,11 +344,15 @@ async function forceGenerate(): Promise<void> {
   if (!pendingTask.value) return
   forceBusy.value = true
   try {
-    await api.post(`/tasks/${pendingTask.value.id}/finalize`, { allow_unresolved_review: true })
-    ElMessage.success('最终结果已生成：未处理行集团码留空并列入未匹配清单，可稍后继续处理并重新生成')
+    const started = await api.post(`/tasks/${pendingTask.value.id}/finalize`, { allow_unresolved_review: true })
+    if (started.data?.status === 'EXPORTING') {
+      ElMessage.info('正式结果正在后台生成，数据量大时约需数分钟，完成后此处自动可下载')
+    } else {
+      ElMessage.success('最终结果已生成：未处理行集团码留空并列入未匹配清单，可稍后继续处理并重新生成')
+    }
     await load()
   } catch (error) {
-    ElMessage.error((error as Error).message)
+    if (!(error as { canceled?: boolean }).canceled) ElMessage.error((error as Error).message)
   } finally {
     forceBusy.value = false
   }
@@ -442,7 +446,7 @@ async function download(task: TaskRow): Promise<void> {
     }
     window.location.href = String(exportInfo.download_url)
   } catch (error) {
-    ElMessage.error((error as Error).message)
+    if (!(error as { canceled?: boolean }).canceled) ElMessage.error((error as Error).message)
   } finally {
     downloadingTaskId.value = ''
   }
