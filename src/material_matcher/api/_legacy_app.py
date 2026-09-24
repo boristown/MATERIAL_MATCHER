@@ -711,7 +711,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/tasks/{task_id}/result")
     def result_file(task_id:str):
         task=tasks.get_task(task_id); file_id=task.get("result_file_id")
-        if not file_id: raise DomainError("TASK_STATE_CONFLICT","任务尚未生成最终结果",status_code=409)
+        if not file_id: file_id=matches.finalize(task_id,allow_unresolved_review=True).get("result_file_id")
         record=files.get(str(file_id)); return FileResponse(Path(str(record["stored_path"])),filename=str(record["original_name"]),media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     @app.post("/api/tasks/{task_id}/evaluations")
     def create_evaluation(task_id: str, payload: BusinessEvaluationRequest) -> dict[str, object]: return evaluations.evaluate(task_id, truth_file_id=payload.truth_file_id, key_column=payload.key_column, expected_group_code_column=payload.expected_group_code_column, key_mode=payload.key_mode)
