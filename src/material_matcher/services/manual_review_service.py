@@ -399,6 +399,24 @@ class ManualReviewService:
                 keys.update(str(key) for key in payload if not str(key).startswith("__"))
         return sorted(keys)
 
+    @staticmethod
+    def _ordered_business_keys(
+        rows: list[dict[str, object]],
+        payload_key: str,
+        document: dict[str, object],
+        side: str,
+    ) -> list[str]:
+        keys = ManualReviewService._business_keys(rows, payload_key)
+        weights: dict[str, float] = {}
+        for rule in document.get("rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            rank = float(rule.get("weight") or 0) + (1_000_000 if rule.get("critical") else 0)
+            for field in ((rule.get(side) or {}).get("fields") if isinstance(rule.get(side), dict) else []) or []:
+                name = str(field)
+                weights[name] = max(weights.get(name, -1.0), rank)
+        return sorted(keys, key=lambda key: (-weights.get(key, -1.0), keys.index(key)))
+
     def export_workbook(self, task_id: str) -> BytesIO:
         task = self._task(task_id)
         with self.repo.connect() as connection:
@@ -423,8 +441,12 @@ class ManualReviewService:
             candidates_by_source.setdefault(str(candidate["source_row_id"]), []).append(candidate)
             all_candidates.append(candidate)
 
-        source_keys = self._business_keys(items, "source_payload")
-        target_keys = self._business_keys(all_candidates, "target_payload")
+        try:
+            document = json.loads(str(task.get("config_snapshot") or "{}"))
+        except Exception:  # noqa: BLE001
+            document = {}
+        source_keys = self._ordered_business_keys(items, "source_payload", document, "source")
+        target_keys = self._ordered_business_keys(all_candidates, "target_payload", document, "target")
         headers = ["源表原始行号"] + [f"源.{key}" for key in source_keys]
         for rank in range(1, 6):
             headers.extend([f"候选{rank}.目标表原始行号", f"候选{rank}.集团码", f"候选{rank}.相似度"])
