@@ -1101,6 +1101,7 @@ async function reDecide(): Promise<void> {
 }
 
 /* ---------- 输出结果 ---------- */
+const finalizing = ref(false)
 const finalTotal = computed(() => Number(reviewSummary.value.pending_review ?? 0) + Number(reviewSummary.value.confirmed ?? 0) + Number(reviewSummary.value.unmatched ?? 0) + Number(reviewSummary.value.automatic_matched ?? 0))
 async function finalize(): Promise<boolean> {
   await loadReviewSummary()
@@ -1108,17 +1109,41 @@ async function finalize(): Promise<boolean> {
   if (Number(reviewSummary.value.pending_review ?? 0) > 0) {
     try { await ElMessageBox.confirm(`仍有 ${reviewSummary.value.pending_review} 条待确认。继续生成后这些行集团码为空。`, '生成最终结果', { confirmButtonText: '继续生成', cancelButtonText: '返回处理', type: 'warning' }); allow = true } catch { return false }
   }
+  finalizing.value = true
   try {
-    await api.post(`/tasks/${task.value.task_id}/finalize`, { allow_unresolved_review: allow })
+    const started = await api.post(`/tasks/${task.value.task_id}/finalize`, { allow_unresolved_review: allow })
+    if (started.data?.status === 'EXPORTING') {
+      ElMessage.info('正式结果正在后台生成，数据量大时约需数分钟；可离开本页，生成完成后在第四步直接下载。')
+      const settled = await waitExportSettled()
+      finalizing.value = false
+      if (!settled) return false
+      task.value = (await api.get(`/tasks/${task.value.task_id}`)).data
+      finalized.value = true
+      await loadReviewSummary()
+      ElMessage.success('最终结果已生成(含匹配摘要与样式)')
+      return true
+    }
     task.value = (await api.get(`/tasks/${task.value.task_id}`)).data
     finalized.value = true
+    finalizing.value = false
     await loadReviewSummary()
     ElMessage.success('最终结果已生成(含匹配摘要与样式)')
     return true
   } catch (error) {
+    finalizing.value = false
     ElMessage.error((error as Error).message)
     return false
   }
+}
+async function waitExportSettled(): Promise<boolean> {
+  for (let ticks = 0; ticks < 900; ticks += 1) {
+    await new Promise(resolve => window.setTimeout(resolve, 2000))
+    const fresh = (await api.get(`/tasks/${task.value.task_id}`)).data
+    if (fresh.export_error) { ElMessage.error(`正式结果生成失败：${fresh.export_error}，可点击重试`); return false }
+    if (!fresh.exporting && fresh.result_file_id) { task.value = fresh; return true }
+  }
+  ElMessage.warning('后台仍在生成正式结果，稍后可在第四步下载')
+  return false
 }
 async function finalizeAndOpenResults(): Promise<void> {
   if (await finalize()) stage.value = 3
@@ -1696,7 +1721,7 @@ onBeforeUnmount(() => {
           <el-button link type="danger" size="small" @click="rejectItem(scope.row)">未匹配</el-button>
         </template></el-table-column>
       </el-table>
-      <div class="actions"><el-button @click="stage=1">← 查看进度</el-button><el-button type="primary" @click="finalizeAndOpenResults">下一步:输出结果 →</el-button></div>
+      <div class="actions"><el-button @click="stage=1">← 查看进度</el-button><el-button type="primary" :loading="finalizing" @click="finalizeAndOpenResults">{{ finalizing ? '正式结果生成中…' : '下一步:输出结果 →' }}</el-button></div>
     </div>
 
     <!-- 第四步:输出结果 -->
