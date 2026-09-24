@@ -83,8 +83,9 @@ def test_draft_and_start_no_longer_take_a_business_name(authed: TestClient) -> N
 def test_internal_name_smoke_never_leaks_to_business_surfaces(authed: TestClient, tmp_path: Path) -> None:
     task_id = _start_minimal_task(authed, SOURCE, "leak")
     assert _wait(authed, task_id)["status"] == "COMPLETED"
-    finalized = authed.post(f"/api/tasks/{task_id}/finalize", json={"allow_unresolved_review": True})
-    assert finalized.status_code == 200, finalized.text
+    from conftest import finalize_wait
+    finalized = finalize_wait(authed, task_id)
+    assert finalized["result_file_id"]
     task = authed.get(f"/api/tasks/{task_id}").json()
     files = authed.get("/api/files").json()
     result_record = next(item for item in files if item["file_id"] == task["result_file_id"])
@@ -150,8 +151,8 @@ def test_history_displays_frozen_scheme_even_after_internal_name_rewrite(authed:
     after_rename = next(item for item in authed.get("/api/tasks").json() if item["task_id"] == task_id)
     assert after_rename["scheme_name"] == "电子元器件集团码匹配方案"
 
-    finalized = authed.post(f"/api/tasks/{task_id}/finalize", json={"allow_unresolved_review": True})
-    assert finalized.status_code == 200
+    from conftest import finalize_wait
+    finalize_wait(authed, task_id)
     workbook = load_workbook(io.BytesIO(authed.get(f"/api/tasks/{task_id}/result").content))
     assert workbook["匹配摘要"].cell(3, 1).value == "方案名称"
     assert workbook["匹配摘要"].cell(3, 2).value == "电子元器件集团码匹配方案"

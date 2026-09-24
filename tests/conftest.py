@@ -23,3 +23,22 @@ def authed(client: TestClient)->TestClient:
         changed=client.post('/api/auth/change-password',json={'current_password':BOOTSTRAP_ADMIN_PASSWORD,'new_password':TEST_ADMIN_PASSWORD}); assert changed.status_code==200
         response=client.post('/api/auth/login',json={'username':'admin','password':TEST_ADMIN_PASSWORD}); assert response.status_code==200
     return client
+
+
+def finalize_wait(client, task_id, allow=True, timeout=25.0):
+    """POST /finalize and settle: pass through the cached/ready body, or wait out a background export."""
+    import time
+    response = client.post(f"/api/tasks/{task_id}/finalize", json={"allow_unresolved_review": allow})
+    assert response.status_code in (200, 202), response.text
+    body = response.json()
+    if body.get("status") != "EXPORTING":
+        return body
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        task = client.get(f"/api/tasks/{task_id}").json()
+        if task.get("export_error"):
+            raise AssertionError(f"export failed: {task['export_error']}")
+        if not task.get("exporting") and task.get("result_file_id"):
+            return {"task_id": task_id, "result_file_id": task["result_file_id"], "reused": False, "unresolved_review": 0}
+        time.sleep(0.05)
+    raise AssertionError("export never settled")

@@ -8,6 +8,19 @@ from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
 
 
+_EXPORTING: "set[str]" = set()
+_EXPORT_ERRORS: "dict[str, str]" = {}
+
+
+def export_state(task_id: str) -> "tuple[bool, str | None]":
+    return (task_id in _EXPORTING, _EXPORT_ERRORS.get(task_id))
+
+
+def mark_export_finished(task_id: str) -> None:
+    _EXPORTING.discard(task_id)
+    _EXPORT_ERRORS.pop(task_id, None)
+
+
 class VersionedResultService:
     """Generate immutable formal result revisions for a completed task."""
 
@@ -39,7 +52,25 @@ class VersionedResultService:
         return row is not None
 
     def finalize(self, task_id: str, *, allow_unresolved_review: bool = False) -> dict[str, object]:
+        ready = self.finalize_ready(task_id, allow_unresolved_review=allow_unresolved_review)
+        if ready is not None:
+            return ready
+        if task_id in _EXPORTING:
+            return {"task_id": task_id, "status": "EXPORTING"}
+        _EXPORTING.add(task_id)
+        _EXPORT_ERRORS.pop(task_id, None)
+        try:
+            return self._export_and_record(task_id)
+        except Exception as exc:  # noqa: BLE001 - surfaced via export_state
+            _EXPORT_ERRORS[task_id] = str(getattr(exc, "message", None) or exc)[:500]
+            raise
+        finally:
+            _EXPORTING.discard(task_id)
+
+    def finalize_ready(self, task_id: str, *, allow_unresolved_review: bool = False) -> "dict[str, object] | None":
+        """Validation + cached-revision fast path. None means a real export is required."""
         with self.meta.connect() as connection:
+
             task_row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
             if task_row is None:
                 raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
@@ -69,6 +100,18 @@ class VersionedResultService:
                 "reused": True,
             }
 
+        return None
+
+    def _export_and_record(self, task_id: str) -> dict[str, object]:
+        with self.meta.connect() as connection:
+            task_row = connection.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if task_row is None:
+                raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
+            task = dict(task_row)
+            unresolved = int(connection.execute(
+                "SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status='REVIEW'",
+                (task_id,),
+            ).fetchone()[0])
         file_record = self.exporter.export_task(task_id, task, unresolved_review=unresolved)
         revision = self.calibration.record_result_revision(task_id, str(file_record["file_id"]))
         with self.meta.connect() as connection:

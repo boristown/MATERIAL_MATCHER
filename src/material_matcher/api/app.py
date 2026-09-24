@@ -296,6 +296,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _drop_route(app, "/api/task-drafts/{draft_id}/start", "POST")
     _drop_route(app, "/api/tasks/{task_id}/re-decide", "POST")
     _drop_route(app, "/api/tasks/{task_id}/finalize", "POST")
+    _drop_route(app, "/api/tasks/{task_id}/result", "GET")
+    _drop_route(app, "/api/tasks/{task_id}", "GET")
     _drop_route(app, "/api/tasks/{task_id}/evaluations", "POST")
     _drop_route(app, "/api/tasks/{task_id}/workbench/items", "GET")
     _drop_route(app, "/api/tasks/{task_id}/workbench/batch-confirm-top1", "POST")
@@ -332,6 +334,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         app.state.input_freezer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="input-freeze")
         app.state.tasks.abandon_freezes()
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+
+    app.state.result_exporter = _TPE(max_workers=1, thread_name_prefix="result-export")
 
     @app.post("/api/task-drafts/{draft_id}/start", status_code=202)
     def start_task_with_frozen_inputs(draft_id: str, request: Request) -> dict[str, object]:
@@ -346,6 +351,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.input_freezer.submit(_run_input_freeze, str(task["task_id"]), draft_id)
         return app.state.tasks.get_task(str(task["task_id"]))
+
+    @app.get("/api/tasks/{task_id}")
+    def task_detail(task_id: str) -> dict[str, object]:
+        from material_matcher.services.versioned_result_service import export_state
+
+        task = dict(app.state.tasks.get_task(task_id))
+        exporting, error = export_state(task_id)
+        task["exporting"] = exporting
+        if error:
+            task["export_error"] = error
+        return task
 
     @app.get("/api/tasks/{task_id}/input-assets")
     def task_input_asset_summary(task_id: str) -> dict[str, object]:
@@ -582,9 +598,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             filename=file.filename or "",
         )
 
-    @app.post("/api/tasks/{task_id}/finalize")
+    @app.post("/api/tasks/{task_id}/finalize", status_code=202)
     def finalize(task_id: str, payload: FinalizeRequest) -> dict[str, object]:
-        return versioned_results.finalize(task_id, allow_unresolved_review=payload.allow_unresolved_review)
+        from material_matcher.services.versioned_result_service import _EXPORTING
+
+        ready = versioned_results.finalize_ready(task_id, allow_unresolved_review=payload.allow_unresolved_review)
+        if ready is not None:
+            return ready
+        if task_id in _EXPORTING:
+            return {"task_id": task_id, "status": "EXPORTING"}
+        app.state.result_exporter.submit(_run_result_export, task_id)
+        return {"task_id": task_id, "status": "EXPORTING"}
+
+    def _run_result_export(task_id: str) -> None:
+        try:
+            versioned_results.finalize(task_id, allow_unresolved_review=True)
+        except Exception:  # noqa: BLE001 - recorded by the service registry
+            pass
+
+    @app.get("/api/tasks/{task_id}/result")
+    def result_file_export_aware(task_id: str) -> FileResponse:
+        from material_matcher.services.versioned_result_service import export_state
+
+        task = app.state.tasks.get_task(task_id)
+        file_id = task.get("result_file_id")
+        if not file_id:
+            exporting, _error = export_state(task_id)
+            if exporting:
+                raise DomainError("RESULT_EXPORT_IN_PROGRESS", "正式结果正在后台生成，请稍候片刻再下载", status_code=409)
+            file_id = versioned_results.finalize(task_id, allow_unresolved_review=True).get("result_file_id")
+        record = files.get(str(file_id))
+        return FileResponse(
+            Path(str(record["stored_path"])),
+            filename=str(record["original_name"]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     @app.get("/api/tasks/{task_id}/result-revisions")
     def result_revisions(task_id: str) -> list[dict[str, object]]:
