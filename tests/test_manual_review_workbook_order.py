@@ -4,7 +4,7 @@ from material_matcher.services.manual_review_service import ManualReviewService
 
 
 def _rows(*keys: str) -> list[dict[str, object]]:
-    return [{"source_payload": {key: f"v-{index}-{key}" for key in keys}}]
+    return [{"source_payload": {key: key for key in keys}}]
 
 
 def test_business_key_order_follows_rule_weight_descending():
