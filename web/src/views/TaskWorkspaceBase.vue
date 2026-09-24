@@ -1008,7 +1008,7 @@ async function pollProgress(): Promise<void> {
     task.value = (await api.get(`/tasks/${task.value.task_id}`)).data
     if (task.value.status === 'FAILED') { stopPolling(); ElMessage.error(task.value.error_message || '比对计算失败') }
     else if (task.value.status === 'COMPLETED') { stopPolling(); await enterStage2Or3() }
-  } catch (error) { stopPolling(); ElMessage.error((error as Error).message) }
+  } catch (error) { stopPolling(); if (!(error as { canceled?: boolean }).canceled) ElMessage.error((error as Error).message) }
 }
 async function openReviewForTask(): Promise<void> {
   const taskId = String(task.value?.task_id ?? '')
@@ -1131,7 +1131,7 @@ async function finalize(): Promise<boolean> {
     return true
   } catch (error) {
     finalizing.value = false
-    ElMessage.error((error as Error).message)
+    if (!(error as { canceled?: boolean }).canceled) ElMessage.error((error as Error).message)
     return false
   }
 }

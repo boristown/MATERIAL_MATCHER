@@ -15,12 +15,16 @@ api.interceptors.response.use(
     if (status === 401 && code === 'AUTH_REQUIRED') {
       handleAuthRequired()
     }
-    const normalized = new Error(error.response?.data?.error?.message ?? '请求失败') as Error & {
+    const canceled = (axios.isCancel && axios.isCancel(error))
+      || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError' || error?.name === 'AbortError'
+    const normalized = new Error(error.response?.data?.error?.message ?? (canceled ? '请求已中断' : '请求失败')) as Error & {
       status?: number
       code?: string
+      canceled?: boolean
     }
     normalized.status = status
     normalized.code = code
+    normalized.canceled = canceled
     return Promise.reject(normalized)
   },
 )
