@@ -19,6 +19,7 @@ REQUIRED_IMPORTS = (
     "uvicorn",
     "pydantic",
     "openpyxl",
+    "xlsxwriter",
     "multipart",
     "numpy",
     "onnxruntime",
