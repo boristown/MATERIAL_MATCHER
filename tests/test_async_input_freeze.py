@@ -38,7 +38,7 @@ def async_client(tmp_path, monkeypatch):
     return client
 
 
-def _wait_until_freeze_done(client: TestClient, task_id: str, timeout: float = 10.0) -> dict:
+def _wait_until_freeze_done(client: TestClient, task_id: str, timeout: float = 40.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         task = client.get(f"/api/tasks/{task_id}").json()

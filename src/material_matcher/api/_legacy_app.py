@@ -344,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = users.set_password(username, payload.password, must_change_password=payload.must_change_password); sessions.revoke_user(username); return result
 
     @app.post("/api/files/upload")
-    async def upload_file(role: str = Form(...), file: UploadFile = File(...)) -> dict[str, object]:
+    def upload_file(role: str = Form(...), file: UploadFile = File(...)) -> dict[str, object]:
         if role not in _ALLOWED_ROLES: raise DomainError("INVALID_FILE_ROLE", "文件用途不正确", status_code=422)
         suffix = Path(file.filename or "").suffix.lower()
         if suffix == ".xls": raise DomainError("UNSUPPORTED_FILE", "暂不支持 .xls，请先转换为 .xlsx", status_code=400)
