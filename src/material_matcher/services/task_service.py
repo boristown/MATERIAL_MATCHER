@@ -464,7 +464,7 @@ class TaskService:
 
     def list_drafts(self) -> list[dict[str, object]]:
         with self.repo.connect() as connection:
-            rows = connection.execute("SELECT * FROM task_drafts WHERE current_step<90 AND (source_file_id IS NOT NULL OR catalog_version_id IS NOT NULL) ORDER BY updated_at DESC").fetchall()
+            rows = connection.execute("SELECT * FROM task_drafts WHERE (source_file_id IS NOT NULL OR catalog_version_id IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.source_file_id=task_drafts.source_file_id AND t.created_at>=task_drafts.created_at) ORDER BY updated_at DESC").fetchall()
         result: list[dict[str, object]] = []
         for row in rows:
             item = self.repo.decode(row, ("config_document",)) or {}
@@ -796,8 +796,6 @@ class TaskService:
                     created_at,
                 ),
             )
-        with self.repo.connect() as consumed:
-            consumed.execute("UPDATE task_drafts SET current_step=99 WHERE draft_id=?", (draft_id,))
         return self.get_task(task_id)
 
     @staticmethod

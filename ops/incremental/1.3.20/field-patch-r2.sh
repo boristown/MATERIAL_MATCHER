@@ -1,38 +1,31 @@
 #!/usr/bin/env bash
-# r2：启动成功的草稿不再出现在第二步（点"继续/草稿"落到上传页的问题）
-# 用法：bash field-patch-r2.sh [容器名=material_matcher-app] ；NATIVE 用：bash field-patch-r2.sh native
+# r2（最终版·无缩进手敲友好）：启动过的草稿不再出现在第二步，编辑中的草稿不受影响
+# 手敲 4 步见 README；本脚本为等价自动版。用法：bash field-patch-r2.sh [容器名]；native 传 native
 set -euo pipefail
 CTR="${1:-material_matcher-app}"
 F=/opt/material_matcher/current/app/material_matcher/services/task_service.py
-PATCHER='
-import sys, pathlib
-f = pathlib.Path(sys.argv[1]); s = f.read_text(encoding="utf-8")
-a = "        return self.get_task(task_id)"
-mark = "        with self.repo.connect() as consumed:\n            consumed.execute(\"UPDATE task_drafts SET current_step=99 WHERE draft_id=?\", (draft_id,))\n"
-if mark in s: print("A-ALREADY")
+O='WHERE source_file_id IS NOT NULL OR catalog_version_id IS NOT NULL ORDER'
+N='WHERE (source_file_id IS NOT NULL OR catalog_version_id IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM tasks t WHERE t.source_file_id=task_drafts.source_file_id AND t.created_at>=task_drafts.created_at) ORDER'
+RUN() { if [ "${1:-}" = "host" ]; then python3 - "$F" "$O" "$N" <<'PY'
+import sys, shutil
+p, o, n = sys.argv[1:4]
+s = open(p).read()
+if "NOT EXISTS" in s: print("ALREADY")
 else:
-    assert s.count(a) == 1, "锚点异常"
-    s = s.replace(a, mark + a, 1); print("A-OK")
-import re
-old = re.compile(r"SELECT \* FROM task_drafts WHERE (source_file_id IS NOT NULL(?: OR catalog_version_id IS NOT NULL)?) ORDER BY updated_at DESC")
-if "current_step<90" in s: print("B-ALREADY")
-else:
-    assert old.search(s), "SQL 锚点未找到"
-    s = old.sub(r"SELECT * FROM task_drafts WHERE current_step<90 AND (\1) ORDER BY updated_at DESC", s, count=1)
-    print("B-OK")
-f.write_text(s, encoding="utf-8")
-'
-if [ "$CTR" = "native" ]; then
-  cp -n "$F" "$F.bak-r2"
-  /opt/material_matcher/current/runtime/bin/python3 -c "$PATCHER" "$F" || { cp "$F.bak-r2" "$F"; exit 1; }
-  /opt/material_matcher/current/runtime/bin/python3 -m py_compile "$F" || { cp "$F.bak-r2" "$F"; exit 1; }
-  systemctl restart material_matcher; PORT=$(sed -n 's/^MATERIAL_MATCHER_PORT=//p' /etc/material_matcher/server.env | head -1); PORT=${PORT:-18080}
+    assert s.count(o) == 1
+    shutil.copy(p, p + ".bak-r2"); open(p, "w").write(s.replace(o, n, 1)); print("R2-OK")
+PY
 else
-  docker exec "$CTR" cp "$F" "$F.bak-r2" 2>/dev/null || true
-  docker exec -i "$CTR" /opt/material_matcher/current/runtime/bin/python3 -c "$PATCHER" "$F" < /dev/null || { docker exec "$CTR" cp "$F.bak-r2" "$F"; exit 1; }
-  docker exec "$CTR" /opt/material_matcher/current/runtime/bin/python3 -m py_compile "$F" || { docker exec "$CTR" cp "$F.bak-r2" "$F"; exit 1; }
-  docker restart "$CTR"; PORT=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CTR" | sed -n 's/^MATERIAL_MATCHER_PORT=//p' | head -1); PORT=${PORT:-18080}
-fi
-sleep 12
-curl -s --max-time 20 "http://127.0.0.1:${PORT}/api/health" && echo && echo "R2-DONE（已启动过的草稿不再出现在第二步；历史遗留草稿行不受影响仍可继续）"
-echo "回滚：docker exec $CTR cp $F.bak-r2 $F && docker restart $CTR（native 同理）"
+    docker exec "$CTR" /opt/material_matcher/current/runtime/bin/python3 - "$F" "$O" "$N" <<'PY'
+import sys, shutil
+p, o, n = sys.argv[1:4]
+s = open(p).read()
+if "NOT EXISTS" in s: print("ALREADY")
+else:
+    assert s.count(o) == 1
+    shutil.copy(p, p + ".bak-r2"); open(p, "w").write(s.replace(o, n, 1)); print("R2-OK")
+PY
+fi; }
+if [ "$CTR" = "native" ]; then RUN host; systemctl restart material_matcher; else docker cp "$0" "$CTR:/tmp/r2.sh" 2>/dev/null || true; RUN docker; docker restart "$CTR"; fi
+sleep 12; PORT=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CTR" 2>/dev/null | sed -n 's/^MATERIAL_MATCHER_PORT=//p' | head -1); PORT=${PORT:-18080}
+curl -s --max-time 20 "http://127.0.0.1:${PORT}/api/health" && echo && echo "R2-DONE"
