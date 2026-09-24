@@ -175,11 +175,30 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
         assert "配置SHA256" not in summary_values
 
         result = exported["最终匹配结果"]
+        def col_of(title: str, section: str) -> int:
+            bounds = None
+            for merged in result.merged_cells.ranges:
+                if merged.min_row == 1 and str(sheet_cell(result, 1, merged.min_col)) == section:
+                    bounds = (merged.min_col, merged.max_col)
+            if bounds is None:
+                for column in range(1, result.max_column + 1):
+                    if str(sheet_cell(result, 1, column)) == section:
+                        bounds = (column, column)
+                        break
+            assert bounds is not None, section
+            for column in range(bounds[0], bounds[1] + 1):
+                if str(sheet_cell(result, 2, column)) == title:
+                    return column
+            raise AssertionError((title, section))
+
+        def sheet_cell(sheet, row, col):
+            return sheet.cell(row, col).value
+
         assert result.cell(3, 1).value == 5
-        assert result.cell(3, 2).value == "S-1"
-        assert result.cell(3, 5).value == "待处理"
-        assert float(result.cell(3, 7).value) == candidate_score.display_score
-        assert result.cell(3, 11).value is None
+        assert result.cell(3, col_of("物料号", "源数据区")).value == "S-1"
+        assert result.cell(3, col_of("匹配状态", "匹配结果区")).value == "待处理"
+        assert float(result.cell(3, col_of("相似度", "匹配结果区")).value) == candidate_score.display_score
+        assert result.cell(3, col_of("候选·名称", "映射依据（按权重成对）")).value in {None, ""}
 
         topn = exported["Top5候选"]
         assert topn.cell(3, 1).value == 5
