@@ -8,7 +8,7 @@ type Row = { id: string; schemeName: string; runNumber: number | null; startedAt
 const router = useRouter()
 const rows = ref<Row[]>([])
 const stageLabels: Record<string, string> = { CALCULATE: '比对计算', REVIEW: '人工处理', RESULT: '生成结果' }
-const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING']
+const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING', 'FREEZING']
 
 /* ---- 顶部运行态大屏 ---- */
 const running = ref<Row | null>(null)
@@ -39,7 +39,7 @@ function statusTagType(status: string): 'success' | 'danger' | 'warning' | 'prim
   return 'warning'
 }
 function statusLabel(status: string): string {
-  return ({ RUNNING: '运行中', PREPARING: '准备中', RECOVERING: '恢复中', PENDING: '排队中', COMPLETED: '已完成', FAILED: '失败' } as Record<string, string>)[status] ?? status
+  return ({ RUNNING: '运行中', PREPARING: '准备中', RECOVERING: '恢复中', PENDING: '排队中', FREEZING: '冻结输入中', COMPLETED: '已完成', FAILED: '失败' } as Record<string, string>)[status] ?? status
 }
 
 async function refreshLive(): Promise<void> {

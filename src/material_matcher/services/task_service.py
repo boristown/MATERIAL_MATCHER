@@ -474,6 +474,134 @@ class TaskService:
             result.append(item)
         return result
 
+    @staticmethod
+    def _asset_projection(input_assets: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
+        return {
+            role: {
+                key: asset.get(key)
+                for key in (
+                    "file_id",
+                    "original_name",
+                    "uploaded_at",
+                    "catalog_version_id",
+                    "profile_id",
+                    "profile_version",
+                )
+                if asset.get(key) is not None
+            }
+            for role, asset in input_assets.items()
+            if role in {"source", "target"} or role.startswith("target.")
+        }
+
+    def _insert_asset_rows(self, connection, task_id: str, input_assets: dict[str, dict[str, object]], frozen_at: str) -> None:
+        for role, asset in input_assets.items():
+            if role not in {"source", "target"} and not role.startswith("target."):
+                continue
+            if not asset:
+                continue
+            connection.execute(
+                """INSERT INTO task_input_assets(
+                       task_id,asset_role,file_id,original_name,uploaded_at,frozen_at,
+                       catalog_version_id,profile_id,profile_version
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    task_id,
+                    role,
+                    str(asset["file_id"]),
+                    str(asset.get("original_name") or ""),
+                    str(asset.get("uploaded_at") or "") or None,
+                    frozen_at,
+                    str(asset.get("catalog_version_id") or "") or None,
+                    str(asset.get("profile_id") or "") or None,
+                    int(asset["profile_version"]) if asset.get("profile_version") is not None else None,
+                ),
+            )
+
+    def attach_frozen_inputs(
+        self,
+        task_id: str,
+        draft_id: str,
+        input_assets: dict[str, dict[str, object]],
+    ) -> dict[str, object]:
+        now = _now()
+        with self.repo.connect() as connection:
+            row = connection.execute(
+                "SELECT status,config_snapshot FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                raise DomainError("TASK_NOT_FOUND", "任务不存在", status_code=404)
+            if str(row["status"]) != "FREEZING":
+                return dict(self.get_task(task_id))
+            snapshot = json.loads(str(row["config_snapshot"]))
+            advanced = dict(snapshot.get("advanced") or {})
+            if str(advanced.get("freeze_draft_id") or "") != str(draft_id):
+                raise DomainError("TASK_FREEZE_STALE", "冻结结果与任务不匹配", status_code=409)
+            advanced.pop("freeze_draft_id", None)
+            advanced["input_assets"] = self._asset_projection(input_assets)
+            snapshot["advanced"] = advanced
+            encoded = _canonical(snapshot)
+            digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            updated = connection.execute(
+                "UPDATE tasks SET config_snapshot=?,config_sha256=?,status='PENDING',error_code=NULL,error_message=NULL"
+                " WHERE task_id=? AND status='FREEZING'",
+                (encoded, digest, task_id),
+            ).rowcount
+            if not updated:
+                return dict(self.get_task(task_id))
+            self._insert_asset_rows(connection, task_id, input_assets, now)
+            connection.execute(
+                "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
+                (uuid.uuid4().hex, "task", task_id, "INPUT_FREEZE_COMPLETED",
+                 _canonical({"config_sha256": digest, "draft_id": draft_id, "input_asset_count": len(input_assets or {})}), now),
+            )
+        return self.get_task(task_id)
+
+    def fail_freeze(self, task_id: str, message: str) -> None:
+        now = _now()
+        with self.repo.connect() as connection:
+            updated = connection.execute(
+                "UPDATE tasks SET status='FAILED',error_code='INPUT_FREEZE_FAILED',error_message=?,finished_at=?"
+                " WHERE task_id=? AND status='FREEZING'",
+                (str(message)[:500], now, task_id),
+            ).rowcount
+            if updated:
+                connection.execute(
+                    "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, "task", task_id, "INPUT_FREEZE_FAILED",
+                     _canonical({"message": str(message)[:500]}), now),
+                )
+
+    def pending_freezes(self) -> list[dict[str, object]]:
+        with self.repo.connect() as connection:
+            rows = connection.execute(
+                "SELECT task_id,config_snapshot FROM tasks WHERE status='FREEZING' ORDER BY created_at"
+            ).fetchall()
+        result: list[dict[str, object]] = []
+        for row in rows:
+            try:
+                snapshot = json.loads(str(row["config_snapshot"]))
+                draft_id = str((snapshot.get("advanced") or {}).get("freeze_draft_id") or "")
+            except Exception:
+                draft_id = ""
+            result.append({"task_id": str(row["task_id"]), "draft_id": draft_id})
+        return result
+
+    def abandon_freezes(self, reason: str = "服务重启导致输入冻结中断，请重新点击开始匹配") -> int:
+        now = _now()
+        with self.repo.connect() as connection:
+            rows = connection.execute("SELECT task_id FROM tasks WHERE status='FREEZING'").fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE tasks SET status='FAILED',error_code='INPUT_FREEZE_INTERRUPTED',error_message=?,finished_at=?"
+                    " WHERE task_id=?",
+                    (reason, now, str(row["task_id"])),
+                )
+                connection.execute(
+                    "INSERT INTO audit_events VALUES(?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, "task", str(row["task_id"]), "INPUT_FREEZE_INTERRUPTED", _canonical({"reason": reason}), now),
+                )
+            return len(rows)
+
     def get_draft(self, draft_id: str) -> dict[str, object]:
         with self.repo.connect() as connection:
             row = connection.execute("SELECT * FROM task_drafts WHERE draft_id=?", (draft_id,)).fetchone()
@@ -654,6 +782,7 @@ class TaskService:
         actor: str = "system",
         *,
         input_assets: dict[str, dict[str, object]] | None = None,
+        initial_status: str = "PENDING",
     ) -> dict[str, object]:
         draft = self.get_draft(draft_id)
         if not draft.get("source_file_id"):
@@ -699,6 +828,10 @@ class TaskService:
                 for item in bindings
             ]
         snapshot["advanced"] = advanced
+        if initial_status == "FREEZING":
+            advanced = dict(snapshot.get("advanced") or {})
+            advanced["freeze_draft_id"] = draft_id
+            snapshot["advanced"] = advanced
         scheme_name = self._freeze_scheme_name(snapshot, draft)
         if input_assets:
             advanced = dict(snapshot.get("advanced") or {})
@@ -738,7 +871,7 @@ class TaskService:
                     encoded,
                     digest,
                     "CALCULATE",
-                    "PENDING",
+                    initial_status,
                     0.0,
                     0,
                     0,

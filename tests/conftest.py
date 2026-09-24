@@ -3,6 +3,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from material_matcher.api.app import create_app
+import os
+
+os.environ.setdefault("MATERIAL_MATCHER_SYNC_FREEZE", "1")  # legacy tests expect synchronous freeze inside POST /start
 from material_matcher.settings import Settings
 
 BOOTSTRAP_ADMIN_PASSWORD = 'Ab3dEf7Gh9'

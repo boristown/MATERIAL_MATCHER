@@ -98,7 +98,7 @@ const downloadingExportKey = ref('')
 const downloadingInputRole = ref('')
 
 const stageLabels: Record<string, string> = { CALCULATE: '比对计算', REVIEW: '人工处理', RESULT: '生成结果' }
-const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING']
+const RUNNING_STATUSES = ['RUNNING', 'PREPARING', 'RECOVERING', 'PENDING', 'FREEZING']
 
 function resultCompletedAt(task: TaskRow): string {
   const file = task.result_file_id ? resultFiles.value[task.result_file_id] : undefined
@@ -165,7 +165,7 @@ function statusTagType(status: string): 'success' | 'danger' | 'warning' | 'prim
 }
 
 function statusLabel(status: string): string {
-  return ({ RUNNING: '运行中', PREPARING: '准备中', RECOVERING: '恢复中', PENDING: '排队中', COMPLETED: '已完成', FAILED: '失败' } as Record<string, string>)[status] ?? status
+  return ({ RUNNING: '运行中', PREPARING: '准备中', RECOVERING: '恢复中', PENDING: '排队中', FREEZING: '冻结输入中', COMPLETED: '已完成', FAILED: '失败' } as Record<string, string>)[status] ?? status
 }
 
 function resultStatusLabel(row: PreviewRow): string {

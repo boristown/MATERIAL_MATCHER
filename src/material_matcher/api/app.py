@@ -304,19 +304,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     for action_path in ("confirm", "match", "reject", "mark-unmatched", "rematch", "cancel", "cancel-match", "cancel-unmatched"):
         _drop_route(app, f"/api/tasks/{{task_id}}/items/{{source_row_id}}/{action_path}", "POST")
 
+    def _run_input_freeze(task_id: str, draft_id: str) -> None:
+        # Heavy work (full-file verification + hashing) happens off the request
+        # path so the UI can show a queued task immediately (issue #186).
+        try:
+            frozen = task_input_assets.freeze_draft(draft_id)
+        except Exception as exc:  # noqa: BLE001 - surfaced via task status
+            app.state.tasks.fail_freeze(task_id, getattr(exc, "message", None) or str(exc))
+            return
+        try:
+            app.state.tasks.attach_frozen_inputs(task_id, draft_id, frozen)
+        except Exception as exc:  # noqa: BLE001
+            app.state.tasks.fail_freeze(task_id, getattr(exc, "message", None) or str(exc))
+            return
+        app.state.worker.notify()
+
+    import os as _os
+
+    if _os.environ.get("MATERIAL_MATCHER_SYNC_FREEZE") == "1":
+        class _InlineFreezer:
+            def submit(self, fn, *args, **kwargs):  # noqa: ANN001
+                return fn(*args, **kwargs)
+
+        app.state.input_freezer = _InlineFreezer()
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        app.state.input_freezer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="input-freeze")
+        app.state.tasks.abandon_freezes()
+
     @app.post("/api/task-drafts/{draft_id}/start", status_code=202)
     def start_task_with_frozen_inputs(draft_id: str, request: Request) -> dict[str, object]:
-        # Formal tasks may only exist after both exact uploaded inputs have been
-        # verified and frozen. This prevents creating a task that cannot later be
-        # reconstructed because its source/target bytes were already unavailable.
-        frozen = task_input_assets.freeze_draft(draft_id)
+        # The task row is created as FREEZING right away; the worker only claims
+        # PENDING rows, so it is safely invisible to scheduling until frozen.
+        # A single-worker executor serialises freezes (SQLite write lock).
+        task_input_assets.validate_for_freeze(draft_id)
         task = app.state.tasks.start(
             draft_id,
             actor=str(request.state.username),
-            input_assets=frozen,
+            initial_status="FREEZING",
         )
-        app.state.worker.notify()
-        return task
+        app.state.input_freezer.submit(_run_input_freeze, str(task["task_id"]), draft_id)
+        return app.state.tasks.get_task(str(task["task_id"]))
 
     @app.get("/api/tasks/{task_id}/input-assets")
     def task_input_asset_summary(task_id: str) -> dict[str, object]:
