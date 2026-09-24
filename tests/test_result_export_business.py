@@ -139,6 +139,10 @@ def _section_range(sheet, title: str) -> tuple[int, int]:
     raise AssertionError(f"section {title!r} not found")
 
 
+def _fill_rgb(cell) -> str:
+    return str(cell.fill.fgColor.rgb or "")[-6:].upper()
+
+
 def _header_col(sheet, title: str, section: str) -> int:
     start, end = _section_range(sheet, section)
     for column in range(start, end + 1):
@@ -193,21 +197,23 @@ def test_final_excel_is_business_complete_colored_and_auditable(tmp_path: Path) 
         assert result.auto_filter.ref.startswith("A2:")
         assert int(result.auto_filter.ref.split(":")[1][1:]) >= result.max_row
 
+        PAIR = "映射依据（按权重成对）"
         source_code_col = _header_col(result, "物料号", "源数据区")
-        source_name_col = _header_col(result, "名称", "源数据区")
-        source_model_col = _header_col(result, "型号", "源数据区")
-        source_category_col = _header_col(result, "类别", "源数据区")
-        source_note_col = _header_col(result, "备注", "源数据区")
+        source_name_col = _header_col(result, "源·名称", PAIR)
+        source_model_col = _header_col(result, "源·型号", PAIR)
+        source_category_col = _header_col(result, "源·类别", PAIR)
+        source_note_col = _header_col(result, "备注", "源数据区")  # 未映射参考列
         status_col = _header_col(result, "匹配状态", "匹配结果区")
         code_col = _header_col(result, "最终集团码", "匹配结果区")
         method_col = _header_col(result, "匹配方式", "匹配结果区")
         operator_col = _header_col(result, "操作账号", "匹配结果区")
-        target_row_col = _header_col(result, "目标表原始行号", "目标数据区")
-        target_code_col = _header_col(result, "集团码", "目标数据区")
-        target_name_col = _header_col(result, "名称", "目标数据区")
-        target_model_col = _header_col(result, "型号", "目标数据区")
-        target_category_col = _header_col(result, "类别", "目标数据区")
-        target_note_col = _header_col(result, "备注", "目标数据区")
+        target_row_col = _header_col(result, "目标表原始行号", "匹配结果区")
+        target_code_col = _header_col(result, "集团码", "完整候选数据")
+        target_name_col = _header_col(result, "候选·名称", PAIR)
+        target_model_col = _header_col(result, "候选·型号", PAIR)
+        target_category_col = _header_col(result, "候选·类别", PAIR)
+        target_note_col = _header_col(result, "备注", "完整候选数据")
+        assert source_name_col < target_name_col  # 成对相邻
 
         assert result.cell(3, 1).value == 8
         assert result.cell(3, source_code_col).value == "000121"
@@ -220,14 +226,14 @@ def test_final_excel_is_business_complete_colored_and_auditable(tmp_path: Path) 
         assert result.cell(3, status_col).value == "自动匹配"
         assert result.cell(3, method_col).value == "自动匹配"
 
-        assert result.cell(3, source_name_col).fill.fgColor.rgb == EXACT
-        assert result.cell(3, target_name_col).fill.fgColor.rgb == EXACT
-        assert result.cell(3, source_model_col).fill.fgColor.rgb == PARTIAL
-        assert result.cell(3, target_model_col).fill.fgColor.rgb == PARTIAL
-        assert result.cell(3, source_category_col).fill.fgColor.rgb == DIFFERENT
-        assert result.cell(3, target_category_col).fill.fgColor.rgb == DIFFERENT
-        assert result.cell(3, source_note_col).fill.fgColor.rgb == MISSING
-        assert result.cell(3, target_note_col).fill.fgColor.rgb == MISSING
+        assert _fill_rgb(result.cell(3, source_name_col)) == EXACT[-6:]
+        assert _fill_rgb(result.cell(3, target_name_col)) == EXACT[-6:]
+        assert _fill_rgb(result.cell(3, source_model_col)) == PARTIAL[-6:]
+        assert _fill_rgb(result.cell(3, target_model_col)) == PARTIAL[-6:]
+        assert _fill_rgb(result.cell(3, source_category_col)) == DIFFERENT[-6:]
+        assert _fill_rgb(result.cell(3, target_category_col)) == DIFFERENT[-6:]
+        assert _fill_rgb(result.cell(3, source_note_col)) in ("", "000000")  # 完整数据专区不置灰不涂色
+        assert _fill_rgb(result.cell(3, target_note_col)) in ("", "000000")
 
         assert result.cell(4, status_col).value == "人工匹配"
         assert result.cell(4, method_col).value == "人工匹配"
