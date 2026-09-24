@@ -158,6 +158,39 @@ class TaskInputAssetService:
             children.append({"profile_id": child_id, "version_no": child_version})
         return children
 
+    def validate_for_freeze(self, draft_id: str) -> None:
+        """Cheap, synchronous pre-flight for /start: existence + role only.
+
+        Keeps the historical HTTP contract (404/422 raised from the request)
+        while the heavy full-file hashing runs in the background freeze.
+        """
+        with self.meta.connect() as connection:
+            draft = connection.execute(
+                "SELECT source_file_id FROM task_drafts WHERE draft_id=?", (draft_id,)
+            ).fetchone()
+            if draft is None:
+                raise DomainError("TASK_DRAFT_NOT_FOUND", "任务草稿不存在", status_code=404)
+            if not draft["source_file_id"]:
+                raise DomainError("TASK_DRAFT_INCOMPLETE", "请先选择待匹配源数据", status_code=422)
+            target_rows = connection.execute(
+                "SELECT catalog_version_id FROM task_draft_targets WHERE draft_id=?", (draft_id,)
+            ).fetchall()
+            records: list[tuple[str, str]] = [(str(draft["source_file_id"]), "source")]
+            for row in target_rows:
+                if not row["catalog_version_id"]:
+                    continue
+                catalog = connection.execute(
+                    "SELECT source_file_id,status FROM catalog_versions WHERE version_id=?",
+                    (str(row["catalog_version_id"]),),
+                ).fetchone()
+                if catalog is None:
+                    raise DomainError("CATALOG_VERSION_NOT_FOUND", "组合任务引用的集团码目录版本不存在", status_code=422)
+                if str(catalog["status"] or "") != "READY":
+                    raise DomainError("CATALOG_NOT_READY", "组合任务引用的集团码目录版本不可用于正式计算", status_code=409)
+                records.append((str(catalog["source_file_id"]), "target"))
+        for file_id, role in records:
+            self._validated_record(file_id, role)
+
     def freeze_draft(self, draft_id: str) -> dict[str, dict[str, object]]:
         with self.meta.connect() as connection:
             draft = connection.execute(

@@ -984,7 +984,7 @@ function fmtClock(iso: string | null | undefined): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '—' : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
-const statusLabel = computed(() => ({ PENDING: '排队中', PREPARING: '准备中', RECOVERING: '重启恢复中', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败' }[String(task.value?.status ?? '')] ?? String(task.value?.status ?? '')))
+const statusLabel = computed(() => ({ FREEZING: '冻结输入中', PENDING: '排队中', PREPARING: '准备中', RECOVERING: '重启恢复中', RUNNING: '运行中', COMPLETED: '已完成', FAILED: '失败' }[String(task.value?.status ?? '')] ?? String(task.value?.status ?? '')))
 const phaseLabel = computed(() => ({ INDEX: '正在准备标准数据（首次处理可能稍慢，后续可直接复用）', RETRIEVE: '候选召回', RERANK: '实时逐条匹配与精细评分', PERSIST: '结果持久化', DONE: '已完成', WAITING: '等待调度', FAILED: '失败', RECOVERING: '恢复中' }[String(progress.value?.current_phase ?? '')] ?? '准备中'))
 const isInterim = computed(() => Boolean(progress.value?.interim))
 const liveProgressPercent = computed(() => Math.round(Number(progress.value?.progress ?? task.value?.progress ?? 0)))
@@ -1164,7 +1164,7 @@ async function restoreDraft(id: string): Promise<void> {
   draftTemplateProfileId.value = String(draft.template_profile_id ?? '')
   const configDocument = draft.config_document ?? {}
   loadDocument(configDocument)
-  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument, draft.composite_targets)
+  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument, draft.composite_targets).catch(() => undefined)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (draft.source_file_id) await loadFileColumns(String(draft.source_file_id), 'source')
   if (!isCompositeProfile.value && draft.catalog_version_id) {
@@ -1192,9 +1192,10 @@ async function restoreDraft(id: string): Promise<void> {
 }
 async function restoreTask(taskId: string): Promise<void> {
   task.value = (await api.get(`/tasks/${taskId}`)).data
+  stage.value = 1
   const configDocument = task.value.config_snapshot ?? {}
   loadDocument(configDocument)
-  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument)
+  if (isCompositeProfile.value) await restoreCompositeTargets(configDocument).catch(() => undefined)
   const workspaceTarget = workspaceTargetFromDocument(configDocument)
   if (task.value.source_file_id) await loadFileColumns(String(task.value.source_file_id), 'source').catch(() => undefined)
   if (!isCompositeProfile.value && task.value.catalog_version_id) {
