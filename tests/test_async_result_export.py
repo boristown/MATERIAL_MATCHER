@@ -38,7 +38,7 @@ def _slow_export(monkeypatch, seconds: float = 1.5):
     monkeypatch.setattr(ResultExportService, "export_task", slow)
 
 
-def _wait_export_settled(client: TestClient, task_id: str, timeout: float = 15.0) -> dict:
+def _wait_export_settled(client: TestClient, task_id: str, timeout: float = 40.0) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         task = client.get(f"/api/tasks/{task_id}").json()

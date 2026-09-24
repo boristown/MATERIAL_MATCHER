@@ -148,17 +148,34 @@ def _inspect_xlsx_sheet(
     samples_by_column: dict[int, list[object]] = {index: [] for index in business_columns}
     row_count = 0
     buffered = chain(prefix, (() if pending is None else (pending,)), row_iter)
+    dimension_rows = 0
+    try:
+        dimension_rows = int(worksheet.max_row or 0)
+    except Exception:  # noqa: BLE001
+        dimension_rows = 0
+    consumed = 0
+    last_seen_row = header_row
+    estimate_capped = False
     for row_number, row in buffered:
         if row_number <= header_row:
             continue
         if row_has_effective_data(row, business_columns):
             row_count += 1
+        consumed += 1
+        last_seen_row = row_number
         if row_number <= header_row + sample_data_rows:
             for index in business_columns:
                 value = row[index] if index < len(row) else None
                 if is_effective_value(value):
                     samples_by_column[index].append(value)
-
+        if consumed >= LARGE_SHEET_ESTIMATE_ROWS and dimension_rows > row_number:
+            estimate_capped = True
+            break
+    row_count_estimated = False
+    if estimate_capped and consumed > 0 and dimension_rows > last_seen_row:
+        ratio = row_count / consumed
+        row_count += int(round(ratio * (dimension_rows - last_seen_row)))
+        row_count_estimated = True
     columns: list[dict[str, object]] = []
     warnings: list[str] = []
     for column_index in business_columns:
@@ -185,13 +202,50 @@ def _inspect_xlsx_sheet(
         "recommended_header_row": header_row,
         "header_confidence": round(confidence, 3),
         "row_count_estimate": row_count,
+        "row_count_estimated": row_count_estimated,
         "column_count": len(columns),
         "columns": columns,
         "warnings": warnings,
     }
 
 
+LARGE_SHEET_ESTIMATE_ROWS = 20_000
+
+from collections import OrderedDict as _OrderedDict
+
+_INSPECTION_CACHE: "_OrderedDict[tuple, dict]" = _OrderedDict()
+_INSPECTION_CACHE_MAX = 32
+
+
 def inspect_tabular_file(
+    path: Path,
+    *,
+    max_scan_rows: int = 30,
+    sample_data_rows: int = 20,
+) -> dict[str, object]:
+    """Cached entry point: uploads, catalog validation and the UI badge all ask
+    the same question about the same stored bytes - scan the workbook once."""
+    try:
+        stat = path.stat()
+        key: tuple = (str(path), stat.st_mtime_ns, stat.st_size, int(max_scan_rows), int(sample_data_rows))
+    except OSError:
+        key = ()
+    if key:
+        cached = _INSPECTION_CACHE.get(key)
+        if cached is not None:
+            _INSPECTION_CACHE.move_to_end(key)
+            from copy import deepcopy as _deepcopy
+            return _deepcopy(cached)
+    result = _inspect_tabular_file_uncached(path, max_scan_rows=max_scan_rows, sample_data_rows=sample_data_rows)
+    if key:
+        _INSPECTION_CACHE[key] = result
+        while len(_INSPECTION_CACHE) > _INSPECTION_CACHE_MAX:
+            _INSPECTION_CACHE.popitem(last=False)
+    from copy import deepcopy as _deepcopy
+    return _deepcopy(result)
+
+
+def _inspect_tabular_file_uncached(
     path: Path,
     *,
     max_scan_rows: int = 30,

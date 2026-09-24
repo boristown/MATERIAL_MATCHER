@@ -219,3 +219,20 @@ def test_xlsx_multi_sheet_recommendation_uses_effective_row_counts(tmp_path: Pat
     counts = {sheet["sheet_name"]: sheet["row_count_estimate"] for sheet in inspected["sheets"]}
     assert counts == {"Empty": 0, "Data": 2}
     assert inspected["recommended_sheet"] == "Data"
+
+
+def test_large_sheet_estimation_flags_and_tracks_magnitude(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    path = tmp_path / "large.xlsx"
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("Data")
+    sheet.append(["集团码", "物料名称"])
+    for index in range(25_000):
+        sheet.append([f"G{index:06d}", f"物料{index}"])
+    workbook.save(path)
+
+    inspection = inspect_tabular_file(path)
+    recommended = next(sheet for sheet in inspection["sheets"] if sheet["sheet_name"] == "Data")
+    assert abs(int(recommended["row_count_estimate"]) - 25_000) <= 3_750  # within 15%, estimated or exact
+    assert recommended["columns"][1]["samples"]
