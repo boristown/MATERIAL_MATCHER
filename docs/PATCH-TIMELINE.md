@@ -42,3 +42,4 @@
 - #189（PR 198）：结果 Excel 成对版式 + xlsxwriter constant_memory（4 万行×20 万候选 36s，新依赖 xlsxwriter 3.2.9 已入离线 wheelhouse）
 - 基线 tag：v1.3.20-f2（离场现场态）→ v1.3.21（本批）
 - 教训补记：pyproject 字符串级编辑产生双逗号（测试环境依赖已装不可见）→ 今后依赖改动必须跑 tomllib 解析验证（已并入本条流程）。
+- 发布：tag v1.3.21；增量 SHA 973acc157f4eb1d9…；release 页面含增量 asset；线上+测试床 SMOKE 21/21 双通过。
