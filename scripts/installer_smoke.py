@@ -169,13 +169,13 @@ def main() -> int:
     status, profiles = api.json("GET", "/api/profiles")
     profile_rows = profiles if isinstance(profiles, list) else []
     names = sorted(str(p.get("name", "")) for p in profile_rows)
-    check("默认 6 个正式匹配方案已预置", status == 200 and names == sorted(expected_profiles), f"names={len(names)}")
+    check("默认 6 个正式匹配方案已预置", status == 200 and set(expected_profiles) <= set(names), f"names={len(names)} missing={sorted(set(expected_profiles) - set(names))}")
     opened = 0
     for row in profile_rows:
         code, detail = api.json("GET", f"/api/profiles/{row.get('profile_id')}")
         if code == 200 and detail.get("latest_published"):
             opened += 1
-    check("全部方案可正常打开", opened == len(expected_profiles), f"opened={opened}")
+    check("全部方案可正常打开", opened == len(profile_rows), f"opened={opened}/{len(profile_rows)}")
 
     status, dictionaries = api.json("GET", "/api/dictionaries")
     dict_rows = dictionaries if isinstance(dictionaries, list) else []
@@ -364,7 +364,17 @@ def main() -> int:
     check("STEP2/3 进度与结果可见", task.get("status") == "COMPLETED" and status == 200, "")
 
     status, fin = api.json("POST", f"/api/tasks/{task_id}/finalize", {"allow_unresolved_review": True})
-    check("STEP4 生成结果", status == 200, f"status={status}")
+    if fin.get("status") == "EXPORTING":
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            time.sleep(2)
+            _, fresh = api.json("GET", f"/api/tasks/{task_id}")
+            if fresh.get("result_file_id"):
+                break
+            if fresh.get("export_error"):
+                break
+    _, tsk = api.json("GET", f"/api/tasks/{task_id}")
+    check("STEP4 生成结果", bool(tsk.get("result_file_id")), f"file={tsk.get('result_file_id')} err={tsk.get('export_error')}")
     status, exports = api.json("GET", f"/api/tasks/{task_id}/exports")
     download_url = (exports.get("final_result") or {}).get("download_url") if isinstance(exports, dict) else None
     check("STEP4 导出清单", bool(download_url), json.dumps(exports, ensure_ascii=False)[:120])

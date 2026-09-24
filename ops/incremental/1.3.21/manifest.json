@@ -1,0 +1,402 @@
+{
+ "product": "MATERIAL_MATCHER",
+ "type": "incremental-upgrade",
+ "from_versions": [
+  "1.3.14",
+  "1.3.15",
+  "1.3.16",
+  "1.3.19"
+ ],
+ "from_verified": [
+  "1.3.16"
+ ],
+ "to_version": "1.3.20",
+ "git_commit": "41db9f8b9d95d53bd1b2f373093e0ac4622aad97",
+ "issues": [
+  162,
+  163,
+  164,
+  166,
+  167
+ ],
+ "build_time": "2026-09-23T23:39:42+00:00",
+ "db_migration": "startup forward-migration (no manual step; destructive ops prohibited)",
+ "files": [
+  {
+   "path": "README-升级说明.md",
+   "sha256": "f9361309c4b2a6599cc2457e5ccc1a654edd016867d85217f6f2048ab928b37f",
+   "size": 2266
+  },
+  {
+   "path": "SHA256SUMS.payload",
+   "sha256": "a2a5d80c079130b188f6d5c276f85bf0f1035aac323a19bc2d76df86f20aa993",
+   "size": 7774
+  },
+  {
+   "path": "docs/验收清单.md",
+   "sha256": "ed16235581043e7f298bd1cb6c8eb999d888f4831ccd3f627d709ae80a53eee5",
+   "size": 1331
+  },
+  {
+   "path": "payload/backend/material_matcher/VERSION",
+   "sha256": "99c4d5f287a0f525423a0cd77399bffe48008b32f76186c07cc1c92d3a1c52af",
+   "size": 7
+  },
+  {
+   "path": "payload/backend/material_matcher/__init__.py",
+   "sha256": "a9cbd878177326d9d30542e59aa6521dbf8a6927c04525d5732e3bbfbc8c9a46",
+   "size": 113
+  },
+  {
+   "path": "payload/backend/material_matcher/api/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/api/_legacy_app.py",
+   "sha256": "35d9aed04a20cb71e44355789b1d8f24f8b4d9455136dcb6f5dcca521c5d4570",
+   "size": 46773
+  },
+  {
+   "path": "payload/backend/material_matcher/api/app.py",
+   "sha256": "e208ea53358ac274bc047f6f4c3f275979185e520abcbf3030da85441bfc0f09",
+   "size": 27699
+  },
+  {
+   "path": "payload/backend/material_matcher/api/frontend.py",
+   "sha256": "6b6ef765385a6c1433bc8dc5ed930aa2b64386efbfd065b5bb68d812774bfa72",
+   "size": 1427
+  },
+  {
+   "path": "payload/backend/material_matcher/cli.py",
+   "sha256": "dc1a96e0b28e8fb9980d8eb67ca4c28a42581bbe56375577135223cc69b16d53",
+   "size": 5442
+  },
+  {
+   "path": "payload/backend/material_matcher/domain/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/domain/errors.py",
+   "sha256": "785b48fd9378b290bc9a3b31903b0023dfff8145395518ee91380dcb9ae933ea",
+   "size": 414
+  },
+  {
+   "path": "payload/backend/material_matcher/domain/models.py",
+   "sha256": "0a237c681027001fd4c1af090de6f012597fca1f12c0ee9122b1ef33c5def349",
+   "size": 5545
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/__init__.py",
+   "sha256": "102f37888258579e4a4dc253b92be9d0637fce69dfec73939292851efe1ea011",
+   "size": 127
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/base.py",
+   "sha256": "06ed8e6cd3efa7987f8f68fd83a8a03117e3cbe81201deda2062e11ce12f964a",
+   "size": 1205
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/batching.py",
+   "sha256": "1824de7dc3d49f77e6e49d1202f3a431ba9ae6c2844f87265dc9b06fa57b403a",
+   "size": 3012
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/cache.py",
+   "sha256": "8224dcd3820103f55180f8fe5187a8102fc7031dd1b06afa7142166cc351a1b6",
+   "size": 6365
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/profiling.py",
+   "sha256": "bbccbfec44a2310706df167d8ad298dfe2075f2997f1b571c4df93d17b946db1",
+   "size": 4933
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/providers.py",
+   "sha256": "0b8a71d876252ffbb956140450bbe26d91dcbb55736b0fec9bda1735242bd0bb",
+   "size": 9830
+  },
+  {
+   "path": "payload/backend/material_matcher/embedding/text.py",
+   "sha256": "38a872fb5c582c26dd628da25bb0adc2c35bc49082a1f22aa57fa7d846c55444",
+   "size": 2504
+  },
+  {
+   "path": "payload/backend/material_matcher/ingestion/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/ingestion/column_profile.py",
+   "sha256": "1fe5d9b435d45661b18e5c94d044d3045da6d6adc904671ca0c013cf6ffbf824",
+   "size": 13354
+  },
+  {
+   "path": "payload/backend/material_matcher/ingestion/inspector.py",
+   "sha256": "f263ad5696760f2ed3e5c090f7e57b0147d75eef7b7d4066e49a8ea361cdbd67",
+   "size": 11255
+  },
+  {
+   "path": "payload/backend/material_matcher/ingestion/reader.py",
+   "sha256": "a6eb6ff2b231a8034846e45e2570156f360eb90939993ee17691578d76132247",
+   "size": 6132
+  },
+  {
+   "path": "payload/backend/material_matcher/matching/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/matching/engine.py",
+   "sha256": "c7b84891a40def3c4909bf83c0a7736c46963b2f7e49a7f6482f77e99f22bdbc",
+   "size": 21073
+  },
+  {
+   "path": "payload/backend/material_matcher/matching/scorer.py",
+   "sha256": "2c604c51400e59aefb4024e2e4d07323c76edc0353655077ce5a7abe662dbafe",
+   "size": 13146
+  },
+  {
+   "path": "payload/backend/material_matcher/normalize/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/normalize/pipeline.py",
+   "sha256": "703fc02f757ee458518443e8c9b3f727b1e843b3a2cf03e1e6dcdc0e22344910",
+   "size": 14374
+  },
+  {
+   "path": "payload/backend/material_matcher/security/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/security/session.py",
+   "sha256": "0149cd72bbb50aaa2b7ee8f648d241cbe16a7555dc47b880efca9eedbcad0e5e",
+   "size": 2939
+  },
+  {
+   "path": "payload/backend/material_matcher/security/users.py",
+   "sha256": "5a199ef9f4b4d00d3e46fd2d09e003df84805d0ed5a04f803360bc8c5496d693",
+   "size": 7088
+  },
+  {
+   "path": "payload/backend/material_matcher/services/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/services/acceptance_service.py",
+   "sha256": "87c007d94a5077821f344d61c0a4683e6a1f77117bf5d1baf064a3dbe72c8940",
+   "size": 18368
+  },
+  {
+   "path": "payload/backend/material_matcher/services/benchmark_service.py",
+   "sha256": "ce5bfdc2e46b462b94acdec8f7b84d99a73e45c800bf902b1fb339063fd95731",
+   "size": 11772
+  },
+  {
+   "path": "payload/backend/material_matcher/services/business_evaluation_service.py",
+   "sha256": "a5a99580d0de1031256577b895468bed812f92e50e11b274f9c58cec049892cc",
+   "size": 19334
+  },
+  {
+   "path": "payload/backend/material_matcher/services/business_seed.py",
+   "sha256": "2d10e981b902aa010434c83286a8975eab7c9a6f02113ad7f2bc3f87aca71bae",
+   "size": 6042
+  },
+  {
+   "path": "payload/backend/material_matcher/services/catalog_service.py",
+   "sha256": "afd005e9cd3eaa6260b828b3c294f8b59aa362825fe448f79fef61c6bddedb0f",
+   "size": 6560
+  },
+  {
+   "path": "payload/backend/material_matcher/services/composite_match_service.py",
+   "sha256": "360c4056182b87d08e152e37026ac42adcb5c917eb6ccd3ff890bf4621e37940",
+   "size": 16004
+  },
+  {
+   "path": "payload/backend/material_matcher/services/decision_calibration_service.py",
+   "sha256": "d615fee3f0febd1c9a258bfab978962b4d043d8230bb07c5be658d877d71b005",
+   "size": 25947
+  },
+  {
+   "path": "payload/backend/material_matcher/services/deployment_service.py",
+   "sha256": "984395b9326722c32c0d6c1715522f7b7e2c1c97cfea71f7dcc9aa1f1c870fe4",
+   "size": 3652
+  },
+  {
+   "path": "payload/backend/material_matcher/services/dictionary_service.py",
+   "sha256": "9fd5b38ac07eec6d3a7519ac9f8bafbccf7c4cb95c0bec95ffdc581b6e1eba17",
+   "size": 11565
+  },
+  {
+   "path": "payload/backend/material_matcher/services/export_profile.py",
+   "sha256": "905871b43b101b374e666e7760c004eb8069b69514f71524ca1b7250d8c20ec9",
+   "size": 11799
+  },
+  {
+   "path": "payload/backend/material_matcher/services/manual_review_service.py",
+   "sha256": "6cb2239721a9c92621b76564c6d3166df2c35bbd68e9f743203c5f6aca749aa9",
+   "size": 30782
+  },
+  {
+   "path": "payload/backend/material_matcher/services/match_service.py",
+   "sha256": "abaf9a6644c74d069c63d84eb6bae3cf6c1cf7590aadefa31af4a70df11b7a4d",
+   "size": 44874
+  },
+  {
+   "path": "payload/backend/material_matcher/services/profile_service.py",
+   "sha256": "2c76c66b26bec75d845a14caa98426123f30fc9365c09fc6e767b8e9b81beeb2",
+   "size": 16314
+  },
+  {
+   "path": "payload/backend/material_matcher/services/result_export_service.py",
+   "sha256": "6f9b936434cad5923798b0605f8e65db10c114127f9c6d88edb57411f12366b2",
+   "size": 32569
+  },
+  {
+   "path": "payload/backend/material_matcher/services/review_workbench_service.py",
+   "sha256": "33d021380b3f249a90876d2d79f790c31dea91d045ff51470289afff327d5b05",
+   "size": 45117
+  },
+  {
+   "path": "payload/backend/material_matcher/services/task_input_asset_service.py",
+   "sha256": "feea53040d5a61eba9a89d2d248c9371e6941e98fdedda669b26083fe1cfaab8",
+   "size": 19370
+  },
+  {
+   "path": "payload/backend/material_matcher/services/task_service.py",
+   "sha256": "559b527f854489f76e2129cc1091f1c686b1ac9a27b176d07bb4a47b04ce2d5c",
+   "size": 45903
+  },
+  {
+   "path": "payload/backend/material_matcher/services/text_profile_service.py",
+   "sha256": "6f228bf4acfbc0b8613f258a61b10cfac98198c613c6e57999203505b866f1b4",
+   "size": 3957
+  },
+  {
+   "path": "payload/backend/material_matcher/services/versioned_result_service.py",
+   "sha256": "8b214ad0cc95b89b4a582f752b87cffd81d10aa4a8be81cc4f4b9128a79b460b",
+   "size": 4504
+  },
+  {
+   "path": "payload/backend/material_matcher/settings.py",
+   "sha256": "7ad69bcfc9a3b6c34e7022b703fcc614e4be0cd124b45a9efb58fdc0ca207df4",
+   "size": 7641
+  },
+  {
+   "path": "payload/backend/material_matcher/storage/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/storage/files.py",
+   "sha256": "eb62ce8ef0df9fa41dcd124b1b61b74b166c073023218e27ab2cb55cc598b6e0",
+   "size": 4218
+  },
+  {
+   "path": "payload/backend/material_matcher/storage/metadata.py",
+   "sha256": "295112c7a31900fc21a698ba32ba58a7eab183ff12b22d6f4c768d0f4261962d",
+   "size": 14873
+  },
+  {
+   "path": "payload/backend/material_matcher/tasks/__init__.py",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "path": "payload/backend/material_matcher/tasks/worker.py",
+   "sha256": "cd1269495c9720fcaae0145ab97909920d33d672d08a5c61f85a7730254c20bc",
+   "size": 1599
+  },
+  {
+   "path": "payload/backend/material_matcher/vector/__init__.py",
+   "sha256": "40d40116594242c4795f59fb730c282a60863320cbf99b54213c38773fe4a930",
+   "size": 123
+  },
+  {
+   "path": "payload/backend/material_matcher/vector/index.py",
+   "sha256": "facfe732c50c742e1523e83b6b20aae14c4891761c26d30e9ac32be7f9a43fb5",
+   "size": 34206
+  },
+  {
+   "path": "payload/backend/material_matcher/vector/quality.py",
+   "sha256": "96f89cb300c0603c109622ee8607fa7d4e3b39d6ce8ef6127bb630a9ad715d83",
+   "size": 4536
+  },
+  {
+   "path": "payload/backend/material_matcher/vector/service.py",
+   "sha256": "916c4865bd6dbf87607c42148d346b939cb416c28826f30b56207504abe6e46d",
+   "size": 9985
+  },
+  {
+   "path": "payload/web/assets/index-D8asF3Pt.js",
+   "sha256": "9e6c37fe07fef63818c446f3037802332262a404c4e838030b54414d2c0e2fa0",
+   "size": 1368009
+  },
+  {
+   "path": "payload/web/assets/index-DKRSND23.css",
+   "sha256": "eb28ddda5646af4cc3be17e0968d216bb3c924f8452fcbc2a88f4db8fc5045c7",
+   "size": 457627
+  },
+  {
+   "path": "payload/web/browser-check.js",
+   "sha256": "4374da898d94b878a4fb1f8b7c7426687cf1c460a42b6efe20dcd765a3522f60",
+   "size": 1486
+  },
+  {
+   "path": "payload/web/favicon.svg",
+   "sha256": "198bc861ba58a6c6dd6765de9a79d4d0167ff6095a91565dc843502cec281e18",
+   "size": 570
+  },
+  {
+   "path": "payload/web/index.html",
+   "sha256": "da36a9d71e4c7df4984027fc998c2640a8762fd4d0e425e3c63755229df56f9d",
+   "size": 575
+  },
+  {
+   "path": "payload/web/unsupported-browser.html",
+   "sha256": "1013bf1f68725b79d58b2ec923060b8a5e89f912ad1e371d67ccda631be5b76f",
+   "size": 4707
+  },
+  {
+   "path": "rollback.sh",
+   "sha256": "3b96ee49861d6e80d11e2b0e8ab33d75ee19ba64905de5518f1d62c041a36e9b",
+   "size": 1529
+  },
+  {
+   "path": "scripts/backup",
+   "sha256": "659632b9d359bbe25ed9fb985a6cb0dabb1816669ed11ceae81c6d42fef4bf76",
+   "size": 1642
+  },
+  {
+   "path": "scripts/health-check",
+   "sha256": "7f74d3874a16675d590177a015a1450d20a4b069cdaf4f6cb8fcf21fd56ddbd0",
+   "size": 700
+  },
+  {
+   "path": "scripts/precheck",
+   "sha256": "d8af7b470357ba4eee6f804c20f78200c65591b78e79f277904b623ee6ede012",
+   "size": 828
+  },
+  {
+   "path": "scripts/sync_meta.py",
+   "sha256": "f8adcb12531e1e81f4688bd56f9ee64adc663a3dc4b146909b3716cd7e487276",
+   "size": 551
+  },
+  {
+   "path": "scripts/version-check",
+   "sha256": "0775318e733c08c8b3f76c9dcd3f043c710c39ff9efa247d9eea991471ebaff9",
+   "size": 1463
+  },
+  {
+   "path": "upgrade.sh",
+   "sha256": "47e03539e285859f60d919b5dacf790c769c703e35752010c92e794ce2cd9ad6",
+   "size": 3397
+  }
+ ],
+ "package_revision": 8
+}
