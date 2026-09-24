@@ -120,6 +120,8 @@ type FieldDescriptor = {
   targetFields: string[]
   ruleId?: string
   valueMapping?: Record<string, string>
+  weight?: number
+  critical?: boolean
 }
 
 type FieldComparison = {
@@ -273,6 +275,7 @@ const pageFieldDescriptors = computed<FieldDescriptor[]>(() => {
     if (referencedSource.has(key) || referencedTarget.has(key)) continue
     descriptors.push({ id: `raw:${key}`, label: key, sourceFields: sourceKeys.has(key) ? [key] : [], targetFields: targetKeys.has(key) ? [key] : [] })
   }
+  descriptors.sort((left, right) => (Number(right.critical) - Number(left.critical)) || (Number(right.weight ?? -1) - Number(left.weight ?? -1)))
   return descriptors
 })
 const visibleFieldDescriptors = computed(() => {
@@ -515,6 +518,8 @@ function mappingDescriptors(config: any): FieldDescriptor[] {
       targetFields,
       ruleId: String(rule?.id ?? index),
       valueMapping,
+      weight: Number(rule?.weight ?? 0),
+      critical: Boolean(rule?.critical),
     }
   })
 }

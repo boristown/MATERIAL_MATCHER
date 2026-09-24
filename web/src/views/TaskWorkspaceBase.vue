@@ -404,6 +404,7 @@ function ruleTargetValueOptions(rule: Rule): string[] {
     ...Object.values(rule.value_mapping ?? {}),
   ])
 }
+const valueMappingOpenFor = ref('')
 function ruleValueMappingVisible(rule: Rule): boolean {
   if (sideMode(rule.source) !== 'field' || sideMode(rule.target) !== 'field') return false
   if (rule.source.fields.length !== 1 || rule.target.fields.length !== 1) return false
@@ -1508,6 +1509,8 @@ onBeforeUnmount(() => {
               :width="560"
               :show-arrow="false"
               popper-class="value-mapping-popover"
+              :visible="valueMappingOpenFor === String(scope.row.id)"
+              @update:visible="(shown: boolean) => { valueMappingOpenFor = shown ? String(scope.row.id) : '' }"
             >
               <template #reference>
                 <el-button
