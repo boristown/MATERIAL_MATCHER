@@ -533,7 +533,7 @@ class ResultExportService:
         import io as _io
         import xlsxwriter as _XL
         output = _io.BytesIO()
-        workbook = _XL.Workbook(output, {"constant_memory": True})
+        workbook = _XL.Workbook(output, {"constant_memory": True, "use_zip64": True})
         formats = self._Formats(workbook, profile)
 
         summary = workbook.add_worksheet(profile.sheet("summary"))
