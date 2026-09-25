@@ -672,12 +672,19 @@ class ResultExportService:
         top5 = workbook.add_worksheet(profile.sheet("top_candidates"))
         top5.hide_gridlines(2)
         top_groups = [
-            (profile.group("source"), [profile.header("source_row_number"), profile.header("source_material_code"), *source_fields], "group_source_fill"),
-            (profile.group("candidate_result"), [profile.header("candidate_rank"), profile.header("target_row_number"), profile.header("group_code"), profile.header("similarity")], "group_result_fill"),
-            (profile.group("target"), target_fields, "group_target_fill"),
+            (profile.group("candidate_result"), [profile.header("candidate_rank"), profile.header("source_row_number"), profile.header("source_material_code"), profile.header("group_code"), profile.header("similarity"), profile.header("target_row_number")], "group_result_fill"),
         ]
+        if pair_headers:
+            top_groups.append(("映射依据（按权重成对）", pair_headers, "group_source_fill"))
+        if leftover_source:
+            top_groups.append((profile.group("source"), leftover_source, "group_target_fill"))
+        if leftover_target:
+            top_groups.append(("完整候选数据", leftover_target, "group_target_fill"))
         top_ranges = self._xl_group_headers(top5, formats, top_groups)
-        ts, tc, tt = top_ranges[profile.group("source")][0], top_ranges[profile.group("candidate_result")][0], top_ranges[profile.group("target")][0]
+        tc = top_ranges[profile.group("candidate_result")][0]
+        tp = top_ranges.get("映射依据（按权重成对）", (None, None))[0]
+        t_src_zone = top_ranges.get(profile.group("source"), (None, None))[0]
+        t_tgt_zone = top_ranges.get("完整候选数据", (None, None))[0]
         candidate_excel_row = 2
         for candidate in candidates:
             if int(candidate.get("rank") or 999) > profile.candidate_top_n:
@@ -687,22 +694,31 @@ class ResultExportService:
                 continue
             source_payload = item["source_payload"]
             target_payload = candidate.get("target_payload") or {}
-            top5.write_number(candidate_excel_row, ts, float(item.get("source_row_number") or 0), formats.text())
-            top5.write_string(candidate_excel_row, ts + 1, self._cell_text(item.get("source_id")), formats.text())
-            source_states, target_states = self._field_states(source_payload, target_payload, candidate, rules)
-            for offset, field in enumerate(source_fields):
-                top5.write_string(candidate_excel_row, ts + 2 + offset, self._cell_text(source_payload.get(field)), formats.text(source_states.get(field)))
             top5.write_number(candidate_excel_row, tc, float(candidate.get("rank") or 0), formats.text())
-            top5.write_number(candidate_excel_row, tc + 1, float(candidate.get("target_row_number") or 0), formats.text())
-            top5.write_string(candidate_excel_row, tc + 2, self._cell_text(candidate.get("target_group_code")), formats.text())
+            top5.write_number(candidate_excel_row, tc + 1, float(item.get("source_row_number") or 0), formats.text())
+            top5.write_string(candidate_excel_row, tc + 2, self._cell_text(item.get("source_id")), formats.text())
+            top5.write_string(candidate_excel_row, tc + 3, self._cell_text(candidate.get("target_group_code")), formats.text())
             if isinstance(candidate.get("score"), (int, float)):
-                top5.write_number(candidate_excel_row, tc + 3, float(candidate["score"]), formats.number())
+                top5.write_number(candidate_excel_row, tc + 4, float(candidate["score"]), formats.number())
             else:
-                top5.write_blank(candidate_excel_row, tc + 3, None, formats.text())
-            for offset, field in enumerate(target_fields):
-                top5.write_string(candidate_excel_row, tt + offset, self._cell_text(target_payload.get(field)), formats.text(target_states.get(field)))
+                top5.write_blank(candidate_excel_row, tc + 4, None, formats.text())
+            top5.write_number(candidate_excel_row, tc + 5, float(candidate.get("target_row_number") or 0), formats.text())
+            source_states, target_states = self._field_states(source_payload, target_payload, candidate, rules)
+            if tp is not None:
+                column = tp
+                for side, field in pair_cells:
+                    state = (source_states if side == "source" else target_states).get(field)
+                    top5.write_string(candidate_excel_row, column, self._cell_text((source_payload if side == "source" else target_payload).get(field)), formats.text(state))
+                    column += 1
+            if t_src_zone is not None:
+                for offset, field in enumerate(leftover_source):
+                    top5.write_string(candidate_excel_row, t_src_zone + offset, self._cell_text(source_payload.get(field)), formats.text())
+            if t_tgt_zone is not None:
+                for offset, field in enumerate(leftover_target):
+                    top5.write_string(candidate_excel_row, t_tgt_zone + offset, self._cell_text(target_payload.get(field)), formats.text())
             candidate_excel_row += 1
-        self._autofit(top5, {}, ts + 2 + len(source_fields) + 4 + len(target_fields) + 1, last_row=candidate_excel_row - 1)
+        flat_top_headers = [h for _g, hs, _f in top_groups for h in hs]
+        self._autofit(top5, {index: _result_width(str(header)) for index, header in enumerate(flat_top_headers)}, len(flat_top_headers), last_row=candidate_excel_row - 1)
 
         audit = workbook.add_worksheet(profile.sheet("audit"))
         audit.hide_gridlines(2)
@@ -728,7 +744,8 @@ class ResultExportService:
             audit.write_string(excel_row, aac + 3, self._cell_text(review.get("operator")), formats.text())
             audit.write_string(excel_row, aac + 4, self._cell_text(review.get("comment")), formats.text())
             self._xl_write(audit, excel_row, aac + 5, review.get("created_at"), is_time=True, formats=formats)
-        self._autofit(audit, {}, aac + 6)
+        flat_audit = [h for _g, hs, _f in audit_groups for h in hs]
+        self._autofit(audit, {index: _result_width(str(header)) for index, header in enumerate(flat_audit)}, len(flat_audit))
 
         unmatched = workbook.add_worksheet(profile.sheet("unmatched"))
         unmatched.hide_gridlines(2)
@@ -762,7 +779,8 @@ class ResultExportService:
             unmatched.write_string(unmatched_excel_row, urc + 4, self._cell_text((review or {}).get("operator")), formats.text())
             self._xl_write(unmatched, unmatched_excel_row, urc + 5, (review or {}).get("created_at"), is_time=True, formats=formats)
             unmatched_excel_row += 1
-        self._autofit(unmatched, {}, usc + 1 + len(source_fields) + 6)
+        flat_un = [h for _g, hs, _f in unmatched_groups for h in hs]
+        self._autofit(unmatched, {index: _result_width(str(header)) for index, header in enumerate(flat_un)}, len(flat_un))
 
         workbook.close()
         output.seek(0)
