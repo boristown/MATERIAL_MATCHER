@@ -373,7 +373,7 @@ class ResultExportService:
             return self._cache.setdefault("number", self.workbook.add_format({"num_format": "0.0", "font_name": "微软雅黑", "font_size": 10, "valign": "vcenter"}))
 
         def datetime(self) -> object:
-            return self._cache.setdefault("datetime", self.workbook.add_format({"num_format": self.profile.date_format, "font_name": "微软雅黑", "font_size": 10, "valign": "vcenter"}))
+            return self._cache.setdefault("datetime", self.workbook.add_format({"num_format": "yyyy-mm-dd hh:mm", "font_name": "微软雅黑", "font_size": 10, "valign": "vcenter"}))
 
         def group(self, fill_key: str) -> object:
             key = ("group", fill_key)
@@ -590,7 +590,7 @@ class ResultExportService:
                 pair_cells.append(("target", field))
         overview_name = profile.group("result")
         groups: list[tuple[str, list[str], str]] = [
-            (overview_name, [profile.header("source_row_number"), profile.header("status"), profile.header("final_group_code"), profile.header("similarity"), profile.header("match_method"), profile.header("operator"), profile.header("match_time"), profile.header("target_row_number")], "group_result_fill"),
+            (overview_name, [profile.header("source_row_number"), profile.header("status"), profile.header("final_group_code"), profile.header("similarity"), profile.header("target_row_number"), profile.header("match_method"), profile.header("operator"), profile.header("match_time")], "group_result_fill"),
         ]
         if pair_headers:
             groups.append(("映射依据（按权重成对）", pair_headers, "group_source_fill"))
@@ -621,14 +621,14 @@ class ResultExportService:
                 result_sheet.write_number(excel_row, ov + 3, float(similarity), formats.number())
             else:
                 result_sheet.write_blank(excel_row, ov + 3, None, formats.text())
-            result_sheet.write_string(excel_row, ov + 4, profile.method_label(status, reviewed=bool(review)), formats.text())
-            result_sheet.write_string(excel_row, ov + 5, self._cell_text(operator), formats.text())
-            self._xl_write(result_sheet, excel_row, ov + 6, match_time, is_time=True, formats=formats)
             target_row_number = selected.get("target_row_number") if selected else None
             if isinstance(target_row_number, (int, float)):
-                result_sheet.write_number(excel_row, ov + 7, float(target_row_number), formats.text())
+                result_sheet.write_number(excel_row, ov + 4, float(target_row_number), formats.text())
             else:
-                result_sheet.write_blank(excel_row, ov + 7, None, formats.text())
+                result_sheet.write_blank(excel_row, ov + 4, None, formats.text())
+            result_sheet.write_string(excel_row, ov + 5, profile.method_label(status, reviewed=bool(review)), formats.text())
+            result_sheet.write_string(excel_row, ov + 6, self._cell_text(operator), formats.text())
+            self._xl_write(result_sheet, excel_row, ov + 7, match_time, is_time=True, formats=formats)
             if pair_start is not None:
                 source_states, target_states = self._field_states(source_payload, target_payload, selected, rules)
                 column = pair_start
@@ -642,7 +642,32 @@ class ResultExportService:
             if tgt_zone is not None:
                 for offset, field in enumerate(leftover_target):
                     result_sheet.write_string(excel_row, tgt_zone + offset, self._cell_text(target_payload.get(field)), formats.text())
-        self._autofit(result_sheet, {index: 16 for index in range(sum(len(headers) for _, headers, _ in groups))}, sum(len(headers) for _, headers, _ in groups), last_row=2 + max(0, len(items) - 1))
+        def _result_width(header: str) -> float:
+            name = str(header)
+            if name.endswith("行号"):
+                return 9
+            if "集团码" in name or "编码" in name:
+                return 15
+            if "相似度" in name:
+                return 8
+            if "状态" in name or "方式" in name:
+                return 11
+            if "账号" in name:
+                return 10
+            if "时间" in name or "日期" in name:
+                return 16
+            if "名称" in name or "描述" in name:
+                return 26
+            if "规格" in name or "型号" in name:
+                return 20
+            return 13
+        widths: dict[int, float] = {}
+        column = 0
+        for _group, headers, _fill in groups:
+            for header in headers:
+                widths[column] = _result_width(header)
+                column += 1
+        self._autofit(result_sheet, widths, column, last_row=2 + max(0, len(items) - 1))
 
         top5 = workbook.add_worksheet(profile.sheet("top_candidates"))
         top5.hide_gridlines(2)
