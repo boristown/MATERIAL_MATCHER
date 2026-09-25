@@ -201,11 +201,18 @@ def test_low_scores_stay_real_across_score_decision_persistence_and_excel(tmp_pa
         assert result.cell(3, col_of("候选·名称", "映射依据（按权重成对）")).value in {None, ""}
 
         topn = exported["Top5候选"]
-        assert topn.cell(3, 1).value == 5
-        assert topn.cell(3, 2).value == "S-1"
-        assert topn.cell(3, 7).value == 7
-        assert topn.cell(3, 8).value == "G-1"
-        assert float(topn.cell(3, 9).value) == candidate_score.display_score
+
+        def tcol(title: str) -> int:
+            for column in range(1, topn.max_column + 1):
+                if str(topn.cell(2, column).value) == title:
+                    return column
+            raise AssertionError(title)
+
+        assert topn.cell(3, tcol("源表原始行号")).value == 5
+        assert topn.cell(3, tcol("源物料编码")).value == "S-1"
+        assert topn.cell(3, tcol("目标表原始行号")).value == 7
+        assert topn.cell(3, tcol("集团码")).value == "G-1"
+        assert float(topn.cell(3, tcol("相似度")).value) == candidate_score.display_score
     finally:
         exported.close()
 
