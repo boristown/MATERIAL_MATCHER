@@ -122,8 +122,14 @@ def test_manual_review_excel_contains_full_business_context_and_hidden_ids(authe
     assert "人工选择" in headers
     task_col = headers.index("__task_id") + 1
     source_col = headers.index("__source_row_id") + 1
-    assert sheet.column_dimensions[sheet.cell(1, task_col).column_letter].hidden is True
-    assert sheet.column_dimensions[sheet.cell(1, source_col).column_letter].hidden is True
+    def _hidden(col_index: int) -> bool:
+        for dim in sheet.column_dimensions.values():
+            if dim.min <= col_index <= (dim.max or dim.min) and dim.hidden:
+                return True
+        return False
+
+    assert _hidden(task_col) is True
+    assert _hidden(source_col) is True
     assert sheet.max_row == 4
     workbook.close()
 
