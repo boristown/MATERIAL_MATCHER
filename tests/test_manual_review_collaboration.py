@@ -292,3 +292,38 @@ def test_task_start_records_logged_in_creator_and_starter(authed: TestClient) ->
     assert current["started_at"]
     assert current["created_by"] == "admin"
     assert current["started_by"] == "admin"
+
+
+def test_manual_workbook_layout_selection_first_dropdown_and_pair_colors(authed: TestClient) -> None:
+    import re
+    import zipfile
+    from io import BytesIO as _B
+
+    task_id = _seed_review_task(authed)
+    config = {
+        "source_id_column": "物料编码",
+        "rules": [
+            {"id": "desc", "source": {"fields": ["物料描述"]}, "target": {"fields": ["物料描述"]}, "matcher": "exact", "weight": 60, "critical": True},
+            {"id": "spec", "source": {"fields": ["规格"]}, "target": {"fields": ["规格"]}, "matcher": "exact", "weight": 40},
+        ],
+    }
+    scores = [{"rule_id": "desc", "score": 1.0}, {"rule_id": "spec", "score": 0.5}]
+    with authed.app.state.meta.connect() as connection:
+        connection.execute("UPDATE tasks SET config_snapshot=? WHERE task_id=?", (json.dumps(config), task_id))
+        connection.execute("UPDATE match_candidates SET field_scores=? WHERE task_id=?", (json.dumps(scores), task_id))
+    content = authed.get(f"/api/tasks/{task_id}/manual-review.xlsx").content
+    workbook = load_workbook(_B(content))
+    sheet = workbook["人工匹配"]
+    assert str(sheet.cell(1, 1).value) == "人工选择"
+    assert str(sheet.cell(1, 2).value) == "源表原始行号"
+    headers = [str(sheet.cell(1, c).value) for c in range(1, sheet.max_column + 1)]
+    assert any(h.startswith("候选1·") for h in headers), headers[:20]
+    assert any(h.startswith("源·") for h in headers), headers[:20]
+    sel_idx = headers.index("人工选择") + 1
+    pair_src = headers.index([h for h in headers if h.startswith("源·")][0]) + 1
+    assert sheet.cell(2, sel_idx).fill.fgColor.rgb[-6:] in ("FFF2CC", "FFD966")
+    colored = [str(sheet.cell(r, c).fill.fgColor.rgb or "")[-6:] for r in range(2, sheet.max_row + 1) for c in range(1, sheet.max_column + 1)]
+    assert any(x in ("E2F0D9", "FFF2CC", "FCE4D6", "E7E6E6") for x in colored), "成对列应有状态色"
+    workbook.close()
+    xml = zipfile.ZipFile(_B(content)).read("xl/worksheets/sheet1.xml").decode("utf-8", "ignore")
+    assert re.search(r"<dataValidation[^>]*type=\"list\"", xml), "人工选择列必须带下拉"
