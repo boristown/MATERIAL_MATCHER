@@ -430,6 +430,65 @@ class ManualReviewService:
                 weights[name] = max(weights.get(name, -1.0), rank)
         return sorted(base_keys, key=lambda key: (-weights.get(key, -1.0), base_keys.index(key)))
 
+    _STATE_COLORS = {"exact": "E2F0D9", "partial": "FFF2CC", "different": "FCE4D6", "missing": "E7E6E6"}
+
+    @staticmethod
+    def _missing(value: object) -> bool:
+        return value is None or (isinstance(value, str) and not value.strip())
+
+    def _pair_states(self, source_payload, target_payload, candidate, rules) -> tuple[dict, dict]:
+        source_states: dict[str, str] = {}
+        target_states: dict[str, str] = {}
+        priority = {"exact": 1, "partial": 2, "different": 3, "missing": 4}
+
+        def bump(states, field, state, payload):
+            if self._missing(payload.get(field)):
+                state = "missing"
+            current = states.get(field)
+            if current is None or priority[state] > priority[current]:
+                states[field] = state
+
+        for fs in candidate.get("field_scores") or []:
+            if not isinstance(fs, dict):
+                continue
+            rule = rules.get(str(fs.get("rule_id") or ""))
+            if not rule:
+                continue
+            try:
+                score = float(fs.get("score") or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            state = "exact" if score >= 0.999999 else "partial" if score > 0 else "different"
+            for field in rule["source"]:
+                bump(source_states, field, state, source_payload)
+            for field in rule["target"]:
+                bump(target_states, field, state, target_payload)
+        for field, value in source_payload.items():
+            if self._missing(value):
+                source_states[field] = "missing"
+        for field, value in target_payload.items():
+            if self._missing(value):
+                target_states[field] = "missing"
+        return source_states, target_states
+
+    def _manual_pairs(self, document, source_keys, target_keys) -> list[dict]:
+        ordered = [r for r in document.get("rules") or [] if isinstance(r, dict)]
+        ordered.sort(key=lambda r: (0 if r.get("critical") else 1, -float(r.get("weight") or 0)))
+        available_s, available_t = set(source_keys), set(target_keys)
+        pairs: list[dict] = []
+        rules_map: dict[str, dict[str, list[str]]] = {}
+        for rule in ordered:
+            sid = str(rule.get("id") or "")
+            s_fields = [str(f) for f in ((rule.get("source") or {}).get("fields") if isinstance(rule.get("source"), dict) else []) or [] if str(f) in available_s]
+            t_fields = [str(f) for f in ((rule.get("target") or {}).get("fields") if isinstance(rule.get("target"), dict) else []) or [] if str(f) in available_t]
+            rules_map[sid] = {"source": [str(f) for f in ((rule.get("source") or {}).get("fields") if isinstance(rule.get("source"), dict) else []) or []], "target": [str(f) for f in ((rule.get("target") or {}).get("fields") if isinstance(rule.get("target"), dict) else []) or []]}
+            if not (s_fields and t_fields):
+                continue
+            available_s.difference_update(s_fields)
+            available_t.difference_update(t_fields)
+            pairs.append({"id": sid, "source": s_fields, "target": t_fields})
+        return pairs, rules_map
+
     def export_workbook(self, task_id: str) -> BytesIO:
         import xlsxwriter
 
@@ -452,38 +511,58 @@ class ManualReviewService:
                         target_key_set.add(key)
         source_keys = self._ordered_from_keys(sorted(source_key_set), document, "source")
         target_keys = self._ordered_from_keys(sorted(target_key_set), document, "target")
+        pairs, rules_map = self._manual_pairs(document, source_keys, target_keys)
+        id_column = str(document.get("source_id_column") or "")
 
-        headers = ["源表原始行号"] + [f"源.{key}" for key in source_keys]
-        headers.append("人工选择")
+        headers: list[str] = ["人工选择", "源表原始行号", f"源.{id_column or '源标识'}"]
         for rank in range(1, 6):
             headers.extend([f"候选{rank}.目标表原始行号", f"候选{rank}.集团码", f"候选{rank}.相似度"])
+            for pair in pairs:
+                headers.extend(f"源·{field}" for field in pair["source"])
+                headers.extend(f"候选{rank}·{field}" for field in pair["target"])
+        headers.extend(f"源.{key}" for key in source_keys)
+        for rank in range(1, 6):
             headers.extend(f"候选{rank}.{key}" for key in target_keys)
         headers.extend(["__task_id", "__source_row_id"])
-        selection_col = headers.index("人工选择")
+        selection_col = 0
         task_col = headers.index("__task_id")
         source_row_id_col = headers.index("__source_row_id")
 
         output = BytesIO()
         workbook = xlsxwriter.Workbook(output, {"constant_memory": True, "use_zip64": True})
-        header_format = workbook.add_format({"bold": True, "font_color": "FFFFFF", "bg_color": "1F4E79", "align": "center", "valign": "vcenter"})
-        source_header_format = workbook.add_format({"bold": True, "font_color": "FFFFFF", "bg_color": "2E75B6", "align": "center", "valign": "vcenter"})
-        candidate_header_format = workbook.add_format({"bold": True, "font_color": "FFFFFF", "bg_color": "548235", "align": "center", "valign": "vcenter"})
-        selection_header_format = workbook.add_format({"bold": True, "font_color": "7F5F00", "bg_color": "FFD966", "align": "center", "valign": "vcenter"})
+        header_blue = workbook.add_format({"bold": True, "font_color": "FFFFFF", "bg_color": "2E75B6", "align": "center", "valign": "vcenter", "text_wrap": True})
+        header_green = workbook.add_format({"bold": True, "font_color": "FFFFFF", "bg_color": "548235", "align": "center", "valign": "vcenter", "text_wrap": True})
+        header_yellow = workbook.add_format({"bold": True, "font_color": "7F5F00", "bg_color": "FFD966", "align": "center", "valign": "vcenter"})
+        header_plain_blue = workbook.add_format({"bold": True, "font_color": "1F4E79", "bg_color": "DDEBF7", "align": "center", "valign": "vcenter", "text_wrap": True})
+        header_plain_green = workbook.add_format({"bold": True, "font_color": "375623", "bg_color": "E2EFDA", "align": "center", "valign": "vcenter", "text_wrap": True})
         text_format = workbook.add_format({"num_format": "@"})
         score_format = workbook.add_format({"num_format": "0.0"})
-        selection_body_format = workbook.add_format({"bg_color": "FFF2CC", "border": 1, "border_color": "BF8F00"})
+        selection_body = workbook.add_format({"bg_color": "FFF2CC", "border": 1, "border_color": "BF8F00"})
+        state_formats = {state: workbook.add_format({"num_format": "@", "bg_color": color}) for state, color in self._STATE_COLORS.items()}
         sheet = workbook.add_worksheet("人工匹配")
-        for index, header in enumerate(headers):
-            name = str(header)
-            if name == "人工选择":
-                fmt = selection_header_format
-            elif name.startswith("候选"):
-                fmt = candidate_header_format
-            else:
-                fmt = source_header_format
-            sheet.write(0, index, name, fmt)
-        sheet.freeze_panes(1, 2)
-        def _width_for(header: str) -> int:
+        pair_span = 3 + sum(len(p["source"]) + len(p["target"]) for p in pairs)
+        column = 0
+        sheet.write(0, column, headers[column], header_yellow); column += 1
+        sheet.write(0, column, headers[column], header_blue); column += 1
+        sheet.write(0, column, headers[column], header_blue); column += 1
+        for rank in range(1, 6):
+            for offset in range(3):
+                sheet.write(0, column, headers[column], header_green); column += 1
+            for pair in pairs:
+                for _field in pair["source"]:
+                    sheet.write(0, column, headers[column], header_blue); column += 1
+                for _field in pair["target"]:
+                    sheet.write(0, column, headers[column], header_green); column += 1
+        for _field in source_keys:
+            sheet.write(0, column, headers[column], header_plain_blue); column += 1
+        for _rank in range(1, 6):
+            for _field in target_keys:
+                sheet.write(0, column, headers[column], header_plain_green); column += 1
+        sheet.write(0, task_col, headers[task_col], header_blue)
+        sheet.write(0, source_row_id_col, headers[source_row_id_col], header_blue)
+        sheet.freeze_panes(1, 3)
+
+        def _width(header: str) -> int:
             name = str(header)
             if name == "人工选择":
                 return 16
@@ -491,18 +570,19 @@ class ManualReviewService:
                 return 9
             if name.endswith("行号"):
                 return 9
-            if "集团码" in name or "编码" in name:
+            if "集团码" in name or "编码" in name or "标识" in name:
                 return 15
             if "名称" in name or "描述" in name:
-                return 26
-            if "规格" in name or "型号" in name:
-                return 20
+                return 24
+            if "规格" in name or "型号" in name or "尺寸" in name:
+                return 18
             return 12
         for index, header in enumerate(headers):
             if index in (task_col, source_row_id_col):
                 sheet.set_column(index, index, 10, None, {"hidden": True})
             else:
-                sheet.set_column(index, index, _width_for(header))
+                sheet.set_column(index, index, _width(header))
+
         with self.repo.connect() as count_connection:
             total_items = int(count_connection.execute(
                 "SELECT COUNT(*) FROM match_items WHERE task_id=?", (task_id,),
@@ -511,18 +591,20 @@ class ManualReviewService:
             sheet.data_validation(1, selection_col, total_items, selection_col, {
                 "validate": "list",
                 "source": '"候选1,候选2,候选3,候选4,候选5,均不匹配"',
-                "allow_blank": True,
+                "ignore_blank": True,
+                "input_title": "人工选择",
+                "input_message": "下拉选择 候选1～候选5 或 均不匹配；空白行导入时忽略",
             })
 
-        def write_cell(row: int, column: int, value: object) -> None:
+        def write_cell(row: int, col: int, value: object, fmt=None) -> None:
             if value is None or value == "":
-                sheet.write_blank(row, column, None, text_format)
+                sheet.write_blank(row, col, None, fmt or text_format)
             elif isinstance(value, bool):
-                sheet.write_string(row, column, str(value), text_format)
+                sheet.write_string(row, col, str(value), fmt or text_format)
             elif isinstance(value, (int, float)):
-                sheet.write_number(row, column, float(value))
+                sheet.write_number(row, col, float(value), fmt)
             else:
-                sheet.write_string(row, column, str(value), text_format)
+                sheet.write_string(row, col, str(value), fmt or text_format)
 
         with self.repo.connect() as connection:
             cursor = connection.execute(
@@ -543,32 +625,46 @@ class ManualReviewService:
                 ).fetchall():
                     candidate = dict(candidate_row)
                     candidate["target_payload"] = self._decode_payload(candidate.get("target_payload"))
+                    try:
+                        candidate["field_scores"] = json.loads(str(candidate.get("field_scores") or "[]"))
+                    except Exception:  # noqa: BLE001
+                        candidate["field_scores"] = []
                     candidates_by_source.setdefault(str(candidate["source_row_id"]), {})[int(candidate["rank"])] = candidate
                 for item_row in batch:
                     item = dict(item_row)
-                    payload = self._decode_payload(item.get("source_payload"))
-                    column = 0
-                    write_cell(row_index, column, item.get("source_row_number")); column += 1
-                    for key in source_keys:
-                        write_cell(row_index, column, payload.get(key)); column += 1
+                    source_payload = self._decode_payload(item.get("source_payload"))
+                    sheet.write_blank(row_index, selection_col, None, selection_body)
+                    write_cell(row_index, 1, item.get("source_row_number"))
+                    write_cell(row_index, 2, source_payload.get(id_column) if id_column else item.get("source_id"))
                     per_row = candidates_by_source.get(str(item["source_row_id"]), {})
+                    column = 3
                     for rank in range(1, 6):
                         candidate = per_row.get(rank)
                         if candidate is None:
-                            column += 3 + len(target_keys)
+                            column += 3 + sum(len(p["source"]) + len(p["target"]) for p in pairs)
+                            continue
+                        write_cell(row_index, column, candidate.get("target_row_number")); column += 1
+                        write_cell(row_index, column, candidate.get("target_group_code")); column += 1
+                        score_value = candidate.get("score")
+                        if isinstance(score_value, (int, float)):
+                            sheet.write_number(row_index, column, float(score_value), score_format)
                         else:
-                            write_cell(row_index, column, candidate.get("target_row_number")); column += 1
-                            write_cell(row_index, column, candidate.get("target_group_code")); column += 1
-                            score_value = candidate.get("score")
-                            if isinstance(score_value, (int, float)):
-                                sheet.write_number(row_index, column, float(score_value), score_format)
-                            else:
-                                write_cell(row_index, column, score_value)
-                            column += 1
-                            target_payload = candidate.get("target_payload") if isinstance(candidate.get("target_payload"), dict) else {}
-                            for key in target_keys:
-                                write_cell(row_index, column, target_payload.get(key)); column += 1
-                    sheet.write_blank(row_index, selection_col, None, selection_body_format)
+                            write_cell(row_index, column, score_value)
+                        column += 1
+                        target_payload = candidate.get("target_payload") if isinstance(candidate.get("target_payload"), dict) else {}
+                        source_states, target_states = self._pair_states(source_payload, target_payload, candidate, rules_map)
+                        for pair in pairs:
+                            for field in pair["source"]:
+                                write_cell(row_index, column, source_payload.get(field), state_formats.get(source_states.get(field))); column += 1
+                            for field in pair["target"]:
+                                write_cell(row_index, column, target_payload.get(field), state_formats.get(target_states.get(field))); column += 1
+                    for field in source_keys:
+                        write_cell(row_index, column, source_payload.get(field)); column += 1
+                    for rank in range(1, 6):
+                        candidate = per_row.get(rank)
+                        target_payload = (candidate.get("target_payload") if candidate and isinstance(candidate.get("target_payload"), dict) else {})
+                        for field in target_keys:
+                            write_cell(row_index, column, target_payload.get(field)); column += 1
                     write_cell(row_index, task_col, task_id)
                     write_cell(row_index, source_row_id_col, str(item["source_row_id"]))
                     row_index += 1
@@ -578,9 +674,11 @@ class ManualReviewService:
         guide.write(1, 0, "方案名称")
         guide.write(1, 1, resolve_task_scheme_name(self.repo, dict(task)))
         guide.write(2, 0, "填写方式")
-        guide.write(2, 1, "仅填写“人工选择”列；可选择候选1～候选5或“均不匹配”。空白行会被忽略。")
-        guide.write(3, 0, "多人协作")
-        guide.write(3, 1, "可复制或拆分本文件给多人处理，再分别上传；系统会幂等合并，相同结果安全跳过，不同结果返回冲突且不会覆盖。")
+        guide.write(2, 1, "仅填写最左侧“人工选择”列（黄色区，点击单元格右侧下拉箭头可选 候选1～候选5 或 均不匹配）。空白行会被忽略。")
+        guide.write(3, 0, "颜色说明")
+        guide.write(3, 1, "成对列中：绿=完全一致，黄=部分一致，橙=不一致，灰=缺失；源列与候选列相邻并排便于逐字段核对。")
+        guide.write(4, 0, "多人协作")
+        guide.write(4, 1, "可复制或拆分本文件给多人处理，再分别上传；系统会幂等合并，相同结果安全跳过，不同结果返回冲突且不会覆盖。")
         guide.set_column(0, 0, 18)
         guide.set_column(1, 1, 90)
         workbook.close()
