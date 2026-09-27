@@ -1,43 +1,36 @@
-cat > assets_src/pipeline.svg <<'EOF'
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Microsoft YaHei,Noto Sans CJK SC,sans-serif">
 <rect width="1600" height="900" fill="#f4f6fa"/>
-<text x="800" y="70" font-size="40" font-weight="bold" fill="#1F4E79" text-anchor="middle">智能匹配全流程</text>
-<defs><marker id="m" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#1F4E79"/></marker></defs>
-<rect x="70" y="160" width="280" height="90" rx="12" fill="#fff" stroke="#2E75B6" stroke-width="3"/>
-<text x="210" y="197" font-size="24" font-weight="bold" fill="#1F4E79" text-anchor="middle">SAP 待匹配物料</text><text x="210" y="230" font-size="18" fill="#666" text-anchor="middle">Excel · 数十万行</text>
-<rect x="70" y="290" width="280" height="90" rx="12" fill="#fff" stroke="#548235" stroke-width="3"/>
-<text x="210" y="327" font-size="24" font-weight="bold" fill="#375623" text-anchor="middle">集团码标准库</text><text x="210" y="360" font-size="18" fill="#666" text-anchor="middle">Excel · 百万行级</text>
-<rect x="450" y="160" width="330" height="220" rx="12" fill="#fff" stroke="#7F5F00" stroke-width="3"/>
-<text x="615" y="200" font-size="24" font-weight="bold" fill="#7F5F00" text-anchor="middle">匹配方案（可复用）</text>
-<text x="615" y="245" font-size="20" fill="#333" text-anchor="middle">字段映射 · 权重 · 匹配器</text>
-<text x="615" y="280" font-size="20" fill="#333" text-anchor="middle">值映射（10→国产）· 同义词</text>
-<text x="615" y="315" font-size="20" fill="#333" text-anchor="middle">自动/复核阈值 · TopN</text>
-<line x1="350" y1="205" x2="450" y2="240" stroke="#1F4E79" stroke-width="4" marker-end="url(#m)"/>
-<line x1="350" y1="335" x2="450" y2="300" stroke="#1F4E79" stroke-width="4" marker-end="url(#m)"/>
-<rect x="880" y="160" width="300" height="220" rx="12" fill="#fff" stroke="#1F4E79" stroke-width="3"/>
-<text x="1030" y="200" font-size="24" font-weight="bold" fill="#1F4E79" text-anchor="middle">引擎计算</text>
-<text x="1030" y="245" font-size="20" fill="#333" text-anchor="middle">① 目标向量化+索引（一次）</text>
-<text x="1030" y="280" font-size="20" fill="#333" text-anchor="middle">② ANN 候选召回</text>
-<text x="1030" y="315" font-size="20" fill="#333" text-anchor="middle">③ 逐字段加权精排</text>
-<text x="1030" y="350" font-size="20" fill="#333" text-anchor="middle">④ 阈值三分流</text>
-<line x1="780" y1="270" x2="880" y2="270" stroke="#1F4E79" stroke-width="4" marker-end="url(#m)"/>
-<rect x="1270" y="160" width="270" height="90" rx="12" fill="#E2EFDA" stroke="#548235" stroke-width="3"/>
-<text x="1405" y="197" font-size="22" font-weight="bold" fill="#375623" text-anchor="middle">自动匹配</text><text x="1405" y="230" font-size="18" fill="#333" text-anchor="middle">≥ 自动阈值</text>
-<rect x="1270" y="270" width="270" height="90" rx="12" fill="#FFF2CC" stroke="#BF8F00" stroke-width="3"/>
-<text x="1405" y="307" font-size="22" font-weight="bold" fill="#7F5F00" text-anchor="middle">待人工复核</text><text x="1405" y="340" font-size="18" fill="#333" text-anchor="middle">复核带内 · 卡片式处理</text>
-<rect x="1270" y="380" width="270" height="70" rx="12" fill="#FCE4D6" stroke="#C55A11" stroke-width="3"/>
-<text x="1405" y="422" font-size="22" font-weight="bold" fill="#843C0C" text-anchor="middle">未匹配</text>
-<line x1="1180" y1="205" x2="1270" y2="205" stroke="#548235" stroke-width="4" marker-end="url(#m)"/>
-<line x1="1180" y1="315" x2="1270" y2="315" stroke="#BF8F00" stroke-width="4" marker-end="url(#m)"/>
-<line x1="1180" y1="360" x2="1270" y2="415" stroke="#C55A11" stroke-width="4" marker-end="url(#m)"/>
-<rect x="450" y="480" width="1090" height="150" rx="12" fill="#fff" stroke="#2E75B6" stroke-width="3"/>
-<text x="995" y="525" font-size="24" font-weight="bold" fill="#1F4E79" text-anchor="middle">人工调整（第三步）</text>
-<text x="995" y="565" font-size="20" fill="#333" text-anchor="middle">逐条确认 / 改选候选 / 标记均不匹配 · 批量确认 Top1 · 阈值重判 · 离线 Excel 协作（下拉选择、幂等合并、冲突不覆盖）</text>
-<text x="995" y="600" font-size="20" fill="#333" text-anchor="middle">全部操作留痕：操作人 · 时间 · 备注，可追溯</text>
-<line x1="1405" y1="360" x2="1405" y2="440" stroke="#1F4E79" stroke-width="0"/>
-<line x1="1100" y1="430" x2="1100" y2="480" stroke="#1F4E79" stroke-width="4" marker-end="url(#m)"/>
-<rect x="450" y="690" width="1090" height="140" rx="12" fill="#1F4E79"/>
-<text x="995" y="735" font-size="24" font-weight="bold" fill="#fff" text-anchor="middle">正式结果 Excel（五表 · 成对四色版式）</text>
-<text x="995" y="775" font-size="19" fill="#DDEBF7" text-anchor="middle">匹配摘要 ｜ 最终匹配结果（源·X 与 候选·X 并列，绿一致/黄部分/橙不一致/灰缺失） ｜ Top5 候选 ｜ 人工操作记录 ｜ 未匹配清单</text>
-<line x1="995" y1="630" x2="995" y2="690" stroke="#1F4E79" stroke-width="4" marker-end="url(#m)"/>
+<text x="800" y="70" font-size="40" font-weight="bold" fill="#1F4E79" text-anchor="middle">离线内网部署架构</text>
+<defs><marker id="a" markerWidth="12" markerHeight="12" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#1F4E79"/></marker></defs>
+<rect x="60" y="180" width="330" height="420" rx="16" fill="#ffffff" stroke="#2E75B6" stroke-width="3"/>
+<text x="225" y="235" font-size="28" font-weight="bold" fill="#1F4E79" text-anchor="middle">离线交付介质</text>
+<text x="225" y="290" font-size="22" fill="#333333" text-anchor="middle">DVD / U 盘</text>
+<rect x="100" y="330" width="250" height="56" rx="8" fill="#DDEBF7"/><text x="225" y="366" font-size="20" fill="#1F4E79" text-anchor="middle">Docker 镜像 + 模型</text>
+<rect x="100" y="400" width="250" height="56" rx="8" fill="#DDEBF7"/><text x="225" y="436" font-size="20" fill="#1F4E79" text-anchor="middle">Native 安装包</text>
+<rect x="100" y="470" width="250" height="56" rx="8" fill="#DDEBF7"/><text x="225" y="506" font-size="20" fill="#1F4E79" text-anchor="middle">增量升级包 / 回滚</text>
+<line x1="390" y1="390" x2="490" y2="390" stroke="#1F4E79" stroke-width="5" marker-end="url(#a)"/>
+<rect x="500" y="140" width="640" height="620" rx="16" fill="#ffffff" stroke="#548235" stroke-width="3"/>
+<text x="820" y="195" font-size="28" font-weight="bold" fill="#375623" text-anchor="middle">客户内网服务器（数据不出内网）</text>
+<rect x="540" y="230" width="560" height="120" rx="10" fill="#E2EFDA"/>
+<text x="820" y="275" font-size="24" font-weight="bold" fill="#375623" text-anchor="middle">应用服务（二选一）</text>
+<text x="820" y="315" font-size="20" fill="#333333" text-anchor="middle">Docker Compose（推荐）｜ systemd 源码安装</text>
+<rect x="540" y="380" width="270" height="110" rx="10" fill="#DDEBF7"/>
+<text x="675" y="425" font-size="22" font-weight="bold" fill="#1F4E79" text-anchor="middle">Web 服务</text>
+<text x="675" y="460" font-size="18" fill="#333333" text-anchor="middle">FastAPI + Vue3</text>
+<rect x="830" y="380" width="270" height="110" rx="10" fill="#DDEBF7"/>
+<text x="965" y="425" font-size="22" font-weight="bold" fill="#1F4E79" text-anchor="middle">匹配引擎</text>
+<text x="965" y="460" font-size="18" fill="#333333" text-anchor="middle">后台 Worker · 有界并发</text>
+<rect x="540" y="520" width="270" height="110" rx="10" fill="#FFF2CC"/>
+<text x="675" y="565" font-size="22" font-weight="bold" fill="#7F5F00" text-anchor="middle">本地语义模型</text>
+<text x="675" y="600" font-size="18" fill="#333333" text-anchor="middle">BGE-base · ONNX 量化</text>
+<rect x="830" y="520" width="270" height="110" rx="10" fill="#FFF2CC"/>
+<text x="965" y="565" font-size="22" font-weight="bold" fill="#7F5F00" text-anchor="middle">SQLite 元数据库</text>
+<text x="965" y="600" font-size="18" fill="#333333" text-anchor="middle">方案 / 任务 / 结果 / 审计</text>
+<text x="820" y="700" font-size="20" fill="#C00000" text-anchor="middle" font-weight="bold">全程零外网依赖 · 无云端调用 · 材料数据不出域</text>
+<rect x="1210" y="240" width="330" height="300" rx="16" fill="#ffffff" stroke="#2E75B6" stroke-width="3"/>
+<text x="1375" y="300" font-size="28" font-weight="bold" fill="#1F4E79" text-anchor="middle">业务人员</text>
+<rect x="1250" y="340" width="250" height="56" rx="8" fill="#DDEBF7"/><text x="1375" y="376" font-size="20" fill="#1F4E79" text-anchor="middle">浏览器直接使用</text>
+<rect x="1250" y="410" width="250" height="56" rx="8" fill="#DDEBF7"/><text x="1375" y="446" font-size="20" fill="#1F4E79" text-anchor="middle">无需安装客户端</text>
+<line x1="1140" y1="390" x2="1210" y2="390" stroke="#1F4E79" stroke-width="5" marker-end="url(#a)"/>
+<text x="800" y="840" font-size="22" fill="#666666" text-anchor="middle">介质一次拷贝上机 → 一键安装 → 浏览器访问；升级用增量包（自动备份 / 预检 / 回滚）</text>
 </svg>

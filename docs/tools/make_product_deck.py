@@ -80,8 +80,9 @@ def bullets(s, x, y, w, items, size=17, gap=0.52, mark_color=BLUE):
 
 def kpi(s, x, y, w, h, num, label, color=NAVY):
     box(s, x, y, w, h, fill=RGBColor(0xFF, 0xFF, 0xFF), line=LIGHT, round_=True)
-    text(s, x, y + 0.18, w, 0.85, num, size=34, color=color, bold=True, align=PP_ALIGN.CENTER)
-    text(s, x, y + 1.05, w, h - 1.1, label, size=13, color=DARK, align=PP_ALIGN.CENTER)
+    text(s, x + 0.1, y + 0.22, w - 0.2, 0.8, num, size=30, color=color, bold=True, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    lines = label.split("\n")
+    text(s, x + 0.12, y + 1.12, w - 0.24, h - 1.25, lines, size=13, color=DARK, align=PP_ALIGN.CENTER)
 
 def placeholder(s, x, y, w, h, note="此处可替换：客户现场照片 / 系统截图"):
     box(s, x, y, w, h, fill=RGBColor(0xFF, 0xFF, 0xFF), line=GRAY, round_=True)
@@ -235,9 +236,9 @@ text(vs, 0.8, 4.5, 11.7, 0.5, "配置入口：方案/任务第一步 → 字段�
 text(vs, 0.8, 5.05, 11.7, 1.3, ["值映射只作用于打分对比，不篡改任何原始数据；", "映射关系同步体现在结果 Excel 的成对列与四色标注中。"], size=15, color=GRAY)
 s = slide(); header(s, "同义词与文本清洗", None, "03 核心功能")
 bullets(s, 0.8, 1.7, 11.7, [
-    ("同义词表", "内置行业同义词（如 六角螺栓↔外六角螺栓），支持在线维护，即时生效于语义打分"),
-    ("清洗管线", "全半角、繁简、空格标点归一；字段可挂多步清洗算子"),
+    ("清洗管线", "全半角、繁简、空格标点归一；字段可挂多步清洗算子，比对前先标准化"),
     ("固定值/拼接", "一侧可用固定值或多字段拼接参与比对，兼容不同建库习惯"),
+    ("口径沉淀", "复核中发现的写法差异，沉淀为同义词或值映射（见下页），后续任务自动生效"),
 ], size=17, gap=1.1)
 s = slide(); header(s, "跨类目组合方案", "一份 SAP 源文件 × 多个集团码目标文件，一次任务覆盖多类目", "03 核心功能")
 bullets(s, 0.8, 1.7, 11.7, [
@@ -246,7 +247,7 @@ bullets(s, 0.8, 1.7, 11.7, [
     ("结果统一", "五表版式不变，候选列标注来源子方案，复核与定稿一次完成"),
 ], size=17, gap=1.05)
 placeholder(s, 0.8, 4.6, 11.7, 1.9, "此处可替换：跨类目绑定界面截图")
-img_slide("数据管理", A / "05-data.png", "上传文件、集团码目录版本、匹配方案、同义词集中管理，来源可溯", "03 核心功能")
+img_slide("业务维护 · 同义词配置", A / "05-data.png", "同义词按实体类型（名称/厂家/规格）维护，带版本历史与生效时间；修改即时生效，不影响历史任务口径", "03 核心功能")
 img_slide("任务四步向导", A / "07-task-progress.png", "第一步上传 → 第二步进度 → 第三步人工调整 → 第四步输出，全程状态实时（冻结中/排队中/运行中）", "03 核心功能")
 s = slide(); header(s, "进度监控与大数据性能", None, "03 核心功能")
 rows = [["能力", "说明"],
