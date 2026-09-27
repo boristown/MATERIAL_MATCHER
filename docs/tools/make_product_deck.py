@@ -10,7 +10,6 @@ NAVY = RGBColor(0x1F, 0x4E, 0x79); BLUE = RGBColor(0x2E, 0x75, 0xB6); LIGHT = RG
 GREEN = RGBColor(0x54, 0x82, 0x35); LGREEN = RGBColor(0xE2, 0xEF, 0xDA); AMBER = RGBColor(0xBF, 0x8F, 0x00)
 YELL = RGBColor(0xFF, 0xD9, 0x66); BG = RGBColor(0xF4, 0xF6, 0xFA); DARK = RGBColor(0x33, 0x33, 0x33); GRAY = RGBColor(0x88, 0x88, 0x88)
 FONT = "微软雅黑"
-# 素材目录：assets/ 为系统界面截图（playwright 采集），EV 为结果 Excel 渲染截图
 A = Path(os.environ.get("DECK_ASSETS", "assets")); EV = Path(os.environ.get("DECK_EVIDENCE", "docs/deploy-evidence/2026-09-25-matbjlzc-demo"))
 
 prs = Presentation(); prs.slide_width = Inches(13.333); prs.slide_height = Inches(7.5)
@@ -102,12 +101,12 @@ def img_slide(title, img, caption, chapter, sub=None):
     pic_fit(s, img, 0.55, 1.55, 12.25, 4.9)
     text(s, 0.55, 6.55, 12.25, 0.5, caption, size=13, color=GRAY, align=PP_ALIGN.CENTER)
 
-def table_slide(title, rows, chapter, col_w=None, widths=None):
-    s = slide(); header(s, title, None, chapter)
-    x0, y0 = 0.7, 1.7
+def table_slide(title, rows, chapter, col_w=None, y0=1.7, sub=None):
+    s = slide(); header(s, title, sub, chapter)
+    x0 = 0.7
     col_w = col_w or [3.2, 9.4]
     from pptx.util import Inches as I
-    gtab = s.shapes.add_table(len(rows), len(rows[0]), I(x0), I(y0), I(sum(col_w)), I(0.5 * len(rows))).table
+    gtab = s.shapes.add_table(len(rows), len(rows[0]), I(x0), I(y0), I(sum(col_w)), I(0.52 * len(rows))).table
     for ci, cw in enumerate(col_w): gtab.columns[ci].width = I(cw)
     for ri, row in enumerate(rows):
         for ci, val in enumerate(row):
@@ -182,7 +181,6 @@ bullets(s, 1.1, 4.9, 11.2, [
     "改过的判断有沉淀：值映射、同义词一次配置，下次自动生效",
 ], size=15, gap=0.55)
 # 7 适用对象
-s = slide(); header(s, "适用对象与典型场景", None, "01 产品概述")
 table_slide_rows = [
     ["角色", "使用方式"],
     ["物资/主数据管理员", "维护匹配方案、同义词与值映射；发起任务、审定结果"],
@@ -190,16 +188,15 @@ table_slide_rows = [
     ["信息化/运维", "一台内网服务器安装即用；增量升级、备份回滚、账号管理"],
     ["集团报送接口人", "下载正式结果 Excel，直接对接集团码报送口径"],
 ]
-table_slide("适用对象与典型场景", table_slide_rows, "01 产品概述")
+table_slide("适用对象与典型场景", table_slide_rows, "01 产品概述", col_w=[3.4, 8.4])
 # 8 数据说话
-s = slide(); header(s, "用数据说话（真实环境实测）", "以下均为交付版本在客户孪生环境的实测结果", "01 产品概述")
 rows = [["场景", "旧方式痛点", "本平台实测"],
         ["90 万行集团码上传", "页面假死数分钟", "22 秒完成，期间页面全程可操作"],
         ["点击“开始匹配”", "转圈 20 分钟无反馈", "秒级返回，任务状态实时可见"],
         ["4 万×90 万匹配（冷）", "人工数周", "约 1 小时（含一次性索引），热跑约 40-60 分钟"],
         ["生成正式结果", "10 分钟+ 且卡死其他操作", "后台导出 46 秒，可离开页面"],
         ["结果 Excel（4 万行）", "打开即卡", "36 秒生成 28.5MB，成对四色版式"]]
-table_slide("", rows, "01 产品概述", col_w=[3.4, 3.9, 4.9])
+table_slide("用数据说话（真实环境实测）", rows, "01 产品概述", col_w=[3.4, 3.9, 4.9], sub="以下均为交付版本在客户孪生环境（13 所同构）的实测结果")
 
 # 章节二
 divider("02", "系统架构", "一张介质进内网，浏览器即开即用")
@@ -229,21 +226,26 @@ divider("03", "核心功能", "方案可复用 · 引擎扛得住 · 人工有�
 img_slide("智能匹配全流程", A / "pipeline.png", "两份 Excel 进，五表成对结果出；人工判断沉淀回方案", "03 核心功能")
 img_slide("匹配方案管理", A / "03-profiles.png", "内置 6 个领域方案（元器件/紧固件/金属材料/非金属/复合材料/跨类目），支持复制、发布、版本化", "03 核心功能")
 img_slide("字段映射与权重", A / "04-profile-editor.png", "源/目标字段对应关系、匹配器（精确/模糊/语义/包含）、权重合计 100%，支持固定值与多字段拼接", "03 核心功能")
-s = slide(); header(s, "值映射：让编码口径自动对齐", "示例来自真实交付方案 A001", "03 核心功能")
 rows = [["源字段值（SAP）", "映射后", "集团码库值", "结果"],
         ["10", "国产", "国产", "一致 ✓"],
         ["11", "进口", "进口", "一致 ✓"],
         ["（空）", "—", "国产", "缺失（灰）"]]
-table_slide("", rows, "03 核心功能", col_w=[3.2, 2.4, 2.8, 2.6])
-text(s, 0.8, 4.6, 11.7, 0.5, "配置入口：方案/任务第一步 → 字段行“值映射”（支持连续录入、候选值下拉）", size=15, color=DARK)
-text(s, 0.8, 5.15, 11.7, 1.3, ["值映射只作用于打分对比，不篡改任何原始数据；", "映射关系同步体现在结果 Excel 的成对列与四色标注中。"], size=15, color=GRAY)
+vs = table_slide("值映射：让编码口径自动对齐", rows, "03 核心功能", col_w=[3.2, 2.4, 2.8, 2.6], y0=1.9, sub="示例来自真实交付方案 A001（国产进口 10→国产、11→进口）")
+text(vs, 0.8, 4.5, 11.7, 0.5, "配置入口：方案/任务第一步 → 字段行“值映射”（支持连续录入、候选值下拉）", size=15, color=DARK)
+text(vs, 0.8, 5.05, 11.7, 1.3, ["值映射只作用于打分对比，不篡改任何原始数据；", "映射关系同步体现在结果 Excel 的成对列与四色标注中。"], size=15, color=GRAY)
 s = slide(); header(s, "同义词与文本清洗", None, "03 核心功能")
 bullets(s, 0.8, 1.7, 11.7, [
     ("同义词表", "内置行业同义词（如 六角螺栓↔外六角螺栓），支持在线维护，即时生效于语义打分"),
     ("清洗管线", "全半角、繁简、空格标点归一；字段可挂多步清洗算子"),
     ("固定值/拼接", "一侧可用固定值或多字段拼接参与比对，兼容不同建库习惯"),
 ], size=17, gap=1.1)
-img_slide("跨类目组合方案", A / "10-new-task.png", "一份 SAP 源文件 + 多个集团码目标文件按子方案绑定，一次任务覆盖多类目（如 A007 物资类其他）", "03 核心功能")
+s = slide(); header(s, "跨类目组合方案", "一份 SAP 源文件 × 多个集团码目标文件，一次任务覆盖多类目", "03 核心功能")
+bullets(s, 0.8, 1.7, 11.7, [
+    ("适用场景", "物资类其他（A007）等横跨多个专业领域的物料，逐领域分别匹配"),
+    ("操作方式", "上传一份待匹配源数据 + 各子方案对应的集团码文件，系统按子方案自动路由"),
+    ("结果统一", "五表版式不变，候选列标注来源子方案，复核与定稿一次完成"),
+], size=17, gap=1.05)
+placeholder(s, 0.8, 4.6, 11.7, 1.9, "此处可替换：跨类目绑定界面截图")
 img_slide("数据管理", A / "05-data.png", "上传文件、集团码目录版本、匹配方案、同义词集中管理，来源可溯", "03 核心功能")
 img_slide("任务四步向导", A / "07-task-progress.png", "第一步上传 → 第二步进度 → 第三步人工调整 → 第四步输出，全程状态实时（冻结中/排队中/运行中）", "03 核心功能")
 s = slide(); header(s, "进度监控与大数据性能", None, "03 核心功能")
@@ -272,14 +274,13 @@ bullets(s, 0.8, 1.7, 11.7, [
 img_slide("正式结果 · 匹配摘要页", EV / "shot-result-summary.png", "方案名称、任务信息、四类计数、输入文件与图例，一页看全", "03 核心功能")
 img_slide("正式结果 · 成对四色版式", EV / "shot-result-final.png", "匹配结果区在前；源·X 与 候选·X 按权重成对并排；绿=一致 黄=部分 橙=不一致 灰=缺失；未参与字段沉入完整数据专区", "03 核心功能")
 img_slide("正式结果 · Top5 候选", EV / "shot-result-top5.png", "每个源行的前五候选完整呈现（排名/集团码/相似度/成对字段），落选原因一目了然", "03 核心功能")
-s = slide(); header(s, "结果追溯与审计", None, "03 核心功能")
 rows = [["工作表", "内容"],
         ["匹配摘要", "任务与方案快照、统计、图例"],
         ["最终匹配结果", "逐行结论 + 成对字段四色 + 操作人/时间"],
         ["Top5候选", "全部候选及相似度，支撑抽查"],
         ["人工操作记录", "谁在何时改了什么、备注原因"],
         ["未匹配清单", "无结论行集中复核清单"]]
-table_slide("", rows, "03 核心功能", col_w=[3.2, 8.6])
+table_slide("结果追溯与审计", rows, "03 核心功能", col_w=[3.2, 8.6])
 
 # 章节四
 divider("04", "使用向导", "六步完成一次对码交付")
@@ -324,14 +325,13 @@ bullets(s, 0.8, 1.7, 11.7, [
     "任务、结果、操作记录长期保留，支撑审计与复盘",
 ], size=17, gap=1.0)
 img_slide("系统管理", A / "06-system.png", "账号、参数与运行状态集中管理（管理员）", "04 使用向导")
-s = slide(); header(s, "常见问题", None, "04 使用向导")
 rows = [["问题", "回答"],
         ["匹配结果不准怎么办？", "调权重/阈值即时重判；把差异配成值映射；关键冲突字段单独设防"],
         ["数据量很大会不会卡死？", "上传/匹配/导出全部后台化，实测 90 万行上传期间页面零卡顿"],
         ["能不能断网使用？", "可以，系统本就为纯内网设计，无任何外网依赖"],
         ["如何升级？", "增量包一条命令升级，自动备份、失败自动回滚，数据零丢失"],
         ["结果能直接报送集团吗？", "正式结果 Excel 含集团码/相似度/依据字段，可直接对接报送口径"]]
-table_slide("", rows, "04 使用向导", col_w=[4.2, 7.6])
+table_slide("常见问题", rows, "04 使用向导", col_w=[4.2, 7.6])
 # 结尾
 s = slide()
 box(s, 0, 0, W, H, fill=NAVY)
