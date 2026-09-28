@@ -130,7 +130,12 @@ def test_manual_review_excel_contains_full_business_context_and_hidden_ids(authe
 
     assert _hidden(task_col) is True
     assert _hidden(source_col) is True
-    assert sheet.max_row == 4
+    assert sheet.max_row == 3
+    exported_ids = {
+        str(sheet.cell(row, source_col).value)
+        for row in range(2, sheet.max_row + 1)
+    }
+    assert exported_ids == {"1", "2"}
     workbook.close()
 
 
