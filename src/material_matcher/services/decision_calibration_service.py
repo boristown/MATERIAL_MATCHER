@@ -89,17 +89,14 @@ class DecisionCalibrationService:
         *,
         inclusive_success: bool = False,
     ) -> list[Any]:
-        success_operator = ">=" if inclusive_success else ">"
-        amb = _tie_amb(connection, task_id)
+        success_operator = ">="
         return connection.execute(
             f"""
             WITH thresholds(success_threshold,review_threshold) AS (VALUES(?,?)),
             classified AS (
               SELECT m.current_status AS old_status,
                      CASE
-                       WHEN m.top1_score {success_operator} t.success_threshold
-                            AND m.critical_conflict=0
-                            {amb} THEN 'MATCHED'
+                       WHEN m.top1_score {success_operator} t.success_threshold THEN 'MATCHED'
                        WHEN m.top1_score > t.review_threshold THEN 'REVIEW'
                        ELSE 'UNMATCHED'
                      END AS new_status
@@ -156,27 +153,16 @@ class DecisionCalibrationService:
                )""",
             (task_id,),
         ).fetchone()[0])
-        success_operator = ">=" if inclusive_success else ">"
-        critical_protected = int(connection.execute(
-            f"""SELECT COUNT(*) FROM match_items m
-               WHERE m.task_id=? AND m.current_status IN ('MATCHED','REVIEW','UNMATCHED')
-                 AND NOT EXISTS(SELECT 1 FROM reviews r WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id)
-                 AND m.top1_score{success_operator}? AND m.critical_conflict=1""",
-            (task_id, success),
-        ).fetchone()[0])
-        ambiguity_protected = int(connection.execute(
-            f"""SELECT COUNT(*) FROM match_items m
-               WHERE m.task_id=? AND m.current_status IN ('MATCHED','REVIEW','UNMATCHED')
-                 AND NOT EXISTS(SELECT 1 FROM reviews r WHERE r.task_id=m.task_id AND r.source_row_id=m.source_row_id)
-                 AND m.top1_score{success_operator}?
-                 AND EXISTS(
-                   SELECT 1 FROM match_candidates c2
-                   WHERE c2.task_id=m.task_id AND c2.source_row_id=m.source_row_id AND c2.rank=2
-                     AND c2.target_group_code<>m.top1_group_code
-                     AND ABS(COALESCE(m.second_score,0)-COALESCE(m.top1_score,0)) < 0.000001
-                 )""",
-            (task_id, success),
-        ).fetchone()[0])
+        success_operator = ">="
+        critical_protected = 0
+        ambiguity_protected = 0
+        """
+        Legacy response fields are kept at zero because critical/tie conditions
+        no longer block automatic matching once the threshold is reached.
+        """
+        # Keep legacy response fields for API compatibility; they are no longer blockers.
+        critical_protected = 0
+        ambiguity_protected = 0
         return {
             "task_id": task_id,
             "mode": "preview",
@@ -231,15 +217,13 @@ class DecisionCalibrationService:
         with self.meta.connect() as connection:
             self._task(connection, task_id)
             before = self._full_counts(connection, task_id)
-            amb = _tie_amb(connection, task_id)
             rows = connection.execute(
                 f"""
                 WITH scenarios(idx,success_threshold,review_threshold) AS (VALUES {values_sql}),
                 classified AS (
                   SELECT s.idx,m.current_status AS old_status,
                          CASE
-                           WHEN m.top1_score>s.success_threshold AND m.critical_conflict=0
-                                {amb} THEN 'MATCHED'
+                           WHEN m.top1_score>=s.success_threshold THEN 'MATCHED'
                            WHEN m.top1_score>s.review_threshold THEN 'REVIEW'
                            ELSE 'UNMATCHED'
                          END AS new_status
@@ -339,7 +323,7 @@ class DecisionCalibrationService:
         inclusive_success: bool = False,
     ) -> dict[str, object]:
         success, review = self._validate(success_threshold, review_threshold)
-        success_operator = ">=" if inclusive_success else ">"
+        success_operator = ">="
         now = _now()
         with self.meta.connect() as connection:
             task = self._task(connection, task_id)
@@ -353,19 +337,16 @@ class DecisionCalibrationService:
             previous_revision = self.current_revision_no(task_id, connection)
             self._ensure_result_snapshot(connection, task_id, task, previous_revision)
             revision_no = previous_revision + 1
-            amb_mi = _tie_amb(connection, task_id)
             connection.execute(
                 f"""
                 UPDATE match_items
                 SET current_status = CASE
-                      WHEN top1_score{success_operator}? AND critical_conflict=0
-                           {amb_mi} THEN 'MATCHED'
+                      WHEN top1_score{success_operator}? THEN 'MATCHED'
                       WHEN top1_score>? THEN 'REVIEW'
                       ELSE 'UNMATCHED'
                     END,
                     final_group_code = CASE
-                      WHEN top1_score{success_operator}? AND critical_conflict=0
-                           {amb_mi} THEN top1_group_code
+                      WHEN top1_score{success_operator}? THEN top1_group_code
                       ELSE NULL
                     END,
                     updated_at=?
