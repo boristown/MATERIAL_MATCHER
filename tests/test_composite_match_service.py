@@ -336,7 +336,8 @@ def test_composite_pipeline_runs_three_heterogeneous_children_without_merging_ex
     strict_rows = matcher.composite_matcher.execute(source=source, parent_config=strict_parent)
     assert strict_rows[0].status == "REVIEW"
 
-    # Parent minimum score gap is also a final-decision rule, not a child rule.
+    # Legacy minimum_score_gap remains readable in frozen configs, but it no
+    # longer blocks an otherwise valid automatic match.
     gap_parent = _parent_config(
         fixture["children"],
         fixture["catalogs"],
@@ -344,7 +345,7 @@ def test_composite_pipeline_runs_three_heterogeneous_children_without_merging_ex
         minimum_score_gap=100.0,
     )
     gap_rows = matcher.composite_matcher.execute(source=source, parent_config=gap_parent)
-    assert gap_rows[0].status == "REVIEW"
+    assert gap_rows[0].status == "MATCHED"
 
     # Frozen child order plus deterministic global sort makes repeat runs stable.
     repeated = matcher.composite_matcher.execute(source=source, parent_config=parent)
