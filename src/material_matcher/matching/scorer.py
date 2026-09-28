@@ -351,7 +351,9 @@ def allowed_by_scope(
 
 
 def decide_status(score: float, config: MatchingConfig) -> str:
-    if score > float(config.decision.success_threshold):
+    # Visible business rule: the automatic threshold is inclusive.
+    # score >= threshold is an automatic match; Top1/Top2 gap is not a gate.
+    if score >= float(config.decision.success_threshold):
         return "MATCHED"
     if config.decision.review_enabled and score > float(config.decision.review_threshold):
         return "REVIEW"
