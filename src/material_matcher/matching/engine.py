@@ -20,7 +20,6 @@ from material_matcher.ingestion.reader import (
 from material_matcher.matching.scorer import (
     allowed_by_scope,
     decide_status,
-    minimum_score_gap,
     score_candidate,
 )
 from material_matcher.vector.index import EmbeddedBBQFlatIndex
@@ -220,30 +219,9 @@ def _row_result(
     second = candidates[1].score if len(candidates) > 1 else 0.0
     status = decide_status(first, config) if candidates else "UNMATCHED"
 
-    if status == "MATCHED" and candidates and not candidates[0].auto_match_safe:
-        status = _unsafe_match_status(config)
-
-    if status == "MATCHED" and candidates:
-        top_code = candidates[0].group_code
-        competitor = next(
-            (candidate for candidate in candidates[1:] if candidate.group_code != top_code),
-            None,
-        )
-        required_gap = minimum_score_gap(config)
-        if competitor is not None and first - competitor.score < required_gap:
-            status = _unsafe_match_status(config)
-
-    # 并列保护策略：tie_break=top1（默认）时同分并列自动取第一条；
-    # tie_break=review 时同分不同码转人工。最小分差与 critical 冲突保护始终生效。
-    if (
-        status == "MATCHED"
-        and config.decision.tie_break == "review"
-        and config.decision.review_enabled
-        and len(candidates) > 1
-        and candidates[1].score == first
-        and candidates[1].group_code != candidates[0].group_code
-    ):
-        status = "REVIEW"
+    # 2026-09-28 product decision:
+    # once Top1 reaches the visible automatic threshold, the decision is final.
+    # Do not downgrade it because of Top1/Top2 gap, tie, or hidden safety gates.
 
     final = candidates[0].group_code if status == "MATCHED" and candidates else None
     source_id = (
