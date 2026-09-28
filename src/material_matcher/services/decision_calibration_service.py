@@ -153,13 +153,6 @@ class DecisionCalibrationService:
                )""",
             (task_id,),
         ).fetchone()[0])
-        success_operator = ">="
-        critical_protected = 0
-        ambiguity_protected = 0
-        """
-        Legacy response fields are kept at zero because critical/tie conditions
-        no longer block automatic matching once the threshold is reached.
-        """
         # Keep legacy response fields for API compatibility; they are no longer blockers.
         critical_protected = 0
         ambiguity_protected = 0
