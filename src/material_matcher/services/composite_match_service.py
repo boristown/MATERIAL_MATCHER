@@ -7,7 +7,7 @@ from typing import Callable
 from material_matcher.domain.errors import DomainError
 from material_matcher.domain.models import MatchingConfig
 from material_matcher.matching.engine import CandidateResult, RowResult
-from material_matcher.matching.scorer import decide_status, minimum_score_gap
+from material_matcher.matching.scorer import decide_status
 from material_matcher.storage.files import FileRepository
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -262,25 +262,9 @@ class CompositeMatchService:
         second = float(candidates[1].score) if len(candidates) > 1 else 0.0
         status = decide_status(first, parent_config) if candidates else "UNMATCHED"
 
-        if status == "MATCHED" and candidates and not candidates[0].auto_match_safe:
-            status = cls._unsafe_status(parent_config)
-
-        if status == "MATCHED" and candidates:
-            competitor = next(
-                (candidate for candidate in candidates[1:] if candidate.group_code != candidates[0].group_code),
-                None,
-            )
-            if competitor is not None and first - float(competitor.score) < minimum_score_gap(parent_config):
-                status = cls._unsafe_status(parent_config)
-
-        if (
-            status == "MATCHED"
-            and parent_config.decision.review_enabled
-            and len(candidates) > 1
-            and float(candidates[1].score) == first
-            and candidates[1].group_code != candidates[0].group_code
-        ):
-            status = "REVIEW"
+        # Keep composite decisions aligned with ordinary matching:
+        # score >= automatic threshold is final; Top1/Top2 gap/ties do not
+        # downgrade an automatic match.
 
         return RowResult(
             source_row_id=str(source_row_id),
