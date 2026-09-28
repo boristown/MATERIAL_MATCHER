@@ -280,6 +280,7 @@ def test_result_export_reloads_template_without_service_restart(tmp_path: Path) 
     # Change the export template after ResultExportService has already been
     # constructed. The next real export must use the new template immediately.
     profile_path = service.settings.config_dir / "export_profile.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(
         json.dumps({"sheets": {"final_result": "最新最终结果"}}, ensure_ascii=False),
         encoding="utf-8",
