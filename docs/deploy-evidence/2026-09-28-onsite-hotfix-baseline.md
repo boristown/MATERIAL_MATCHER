@@ -22,9 +22,11 @@
 正式代码基线采用更完整的兼容实现：
 
 - 保留历史配置键 `advanced.matching_safety.minimum_score_gap`，避免冻结方案/旧任务反序列化失败；
-- `minimum_score_gap(config)` 固定返回 `0.0`；
-- 普通方案与组合方案统一失效，不再因 Top1/Top2 分差小而阻断自动匹配；
-- `critical_conflict`、`auto_match_safe`、显式 `tie_break=review` 等其它安全逻辑保持不变。
+- `minimum_score_gap(config)` 保留兼容入口，但固定返回 `0.0`；
+- 普通方案与组合方案都不再使用 Top1/Top2 分差或并列分数作为自动匹配阻断条件；
+- 自动匹配阈值改为**包含边界**：`Top1 >= success_threshold` 即自动匹配；
+- `critical_conflict`、`auto_match_safe`、`tie_break` 继续保留为诊断/兼容元数据，但不再把已达到阈值的记录降级为人工处理；
+- 已存在人工操作记录的行仍受人工保护，不被阈值重判覆盖。
 
 ### 2. 人工匹配 Excel 排除自动匹配记录
 
@@ -93,7 +95,7 @@ Docker/Native 当前正式后端源码位置：
 2. 不重复携带现场手改逻辑之外的旧版本差异；
 3. 升级后验证：
    - health/version = 1.3.22 或更高目标版本；
-   - 自动匹配不再受 minimum_score_gap 阻断；
+   - `Top1 >= 自动匹配阈值` 时自动匹配，且不再受 Top1/Top2 分差、并列或隐藏安全门槛降级；
    - 人工匹配 Excel 不含 `MATCHED`；
    - 旧方案中存在 minimum_score_gap 字段仍可正常加载；
 4. 不把本次一次性 SQL 数据修复做成全局迁移；
