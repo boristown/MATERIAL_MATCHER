@@ -25,7 +25,7 @@ def _write(tmp_path: Path, name: str, header: str, rows: list[str]) -> Path:
     return path
 
 
-def test_tie_between_different_group_codes_is_sent_to_review(tmp_path: Path) -> None:
+def test_tie_between_different_group_codes_does_not_override_threshold(tmp_path: Path) -> None:
     target = _write(tmp_path, "target.csv", "编码,集团码,名称,型号", [
         "T1,G1,电阻,R10", "T2,G2,电阻,R10",
     ])
@@ -33,8 +33,8 @@ def test_tie_between_different_group_codes_is_sent_to_review(tmp_path: Path) -> 
     rows = match_rows(source, target, config=_config(tie_break="review"), group_code_column="集团码", max_target_rows=1000)
     assert len(rows) == 1
     row = rows[0]
-    assert row.status == "REVIEW"
-    assert row.final_group_code is None
+    assert row.status == "MATCHED"
+    assert row.final_group_code == "G1"
     assert row.first_score == row.second_score == 100.0
     assert {item.group_code for item in row.candidates} == {"G1", "G2"}
 
