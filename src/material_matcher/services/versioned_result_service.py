@@ -51,10 +51,17 @@ class VersionedResultService:
             ).fetchone()
         return row is not None
 
-    def finalize(self, task_id: str, *, allow_unresolved_review: bool = False) -> dict[str, object]:
-        ready = self.finalize_ready(task_id, allow_unresolved_review=allow_unresolved_review)
-        if ready is not None:
-            return ready
+    def finalize(
+        self,
+        task_id: str,
+        *,
+        allow_unresolved_review: bool = False,
+        force_regenerate: bool = False,
+    ) -> dict[str, object]:
+        if not force_regenerate:
+            ready = self.finalize_ready(task_id, allow_unresolved_review=allow_unresolved_review)
+            if ready is not None:
+                return ready
         if task_id in _EXPORTING:
             return {"task_id": task_id, "status": "EXPORTING"}
         _EXPORTING.add(task_id)
