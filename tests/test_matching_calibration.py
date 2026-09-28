@@ -126,7 +126,7 @@ def test_dynamic_weight_exposes_weak_evidence_and_blocks_auto_release(tmp_path: 
     assert rows[0].final_group_code is None
 
 
-def test_minimum_score_gap_routes_near_tie_to_review() -> None:
+def test_minimum_score_gap_legacy_config_no_longer_blocks_auto_match() -> None:
     config = MatchingConfig.model_validate(
         {
             "source_id_column": "id",
@@ -169,4 +169,5 @@ def test_minimum_score_gap_routes_near_tie_to_review() -> None:
     assert row.first_score == 100.0
     assert row.second_score == 90.0
     assert row.score_gap == 10.0
-    assert row.status == "REVIEW"
+    assert row.status == "MATCHED"
+    assert row.final_group_code == "G1"
