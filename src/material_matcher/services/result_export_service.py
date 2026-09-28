@@ -493,7 +493,9 @@ class ResultExportService:
             sheet.autofilter(1, 0, max(1, last_row), max_column - 1)
 
     def export_task(self, task_id: str, task: Mapping[str, object], *, unresolved_review: int) -> dict[str, object]:
-        profile = self.export_profile
+        # Reload on every real export so an updated /etc/material_matcher/export_profile.json
+        # takes effect immediately without restarting the backend.
+        profile = load_export_profile(self.settings.config_dir)
         with self.meta.connect() as connection:
             items = [dict(row) for row in connection.execute(
                 "SELECT * FROM match_items WHERE task_id=? ORDER BY COALESCE(source_row_number, CAST(source_row_id AS INTEGER)), CAST(source_row_id AS INTEGER)",
