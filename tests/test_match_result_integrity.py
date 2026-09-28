@@ -271,7 +271,7 @@ def _insert_redecide_row(
             )
 
 
-def test_redecide_preview_is_side_effect_free_and_apply_keeps_protections(tmp_path: Path) -> None:
+def test_redecide_preview_is_side_effect_free_and_threshold_only(tmp_path: Path) -> None:
     service, meta, _ = _service(tmp_path)
     _seed_task(meta, _config(), task_id="t-red", rows=6)
     with meta.connect() as connection:
@@ -297,13 +297,13 @@ def test_redecide_preview_is_side_effect_free_and_apply_keeps_protections(tmp_pa
 
     preview = service.re_decide("t-red", 70, 55, mode="preview")
     assert preview["before"] == {"matched": 0, "review": 3, "unmatched": 1}
-    assert preview["after"] == {"matched": 1, "review": 2, "unmatched": 1}
-    assert preview["matched_delta"] == 1
-    assert preview["review_reduction"] == 1
+    assert preview["after"] == {"matched": 3, "review": 0, "unmatched": 1}
+    assert preview["matched_delta"] == 3
+    assert preview["review_reduction"] == 3
     assert preview["unmatched_delta"] == 0
-    assert preview["affected_rows"] == 1
-    assert preview["critical_conflict_protected"] == 1
-    assert preview["ambiguity_protected"] == 1
+    assert preview["affected_rows"] == 3
+    assert preview["critical_conflict_protected"] == 0
+    assert preview["ambiguity_protected"] == 0
 
     with meta.connect() as connection:
         before_apply = {
@@ -322,5 +322,5 @@ def test_redecide_preview_is_side_effect_free_and_apply_keeps_protections(tmp_pa
         audit = connection.execute(
             "SELECT payload FROM audit_events WHERE entity_type='task' AND entity_id='t-red' AND action='REDECIDE_THRESHOLDS'"
         ).fetchone()
-    assert after_apply == {"r1": "MATCHED", "r2": "REVIEW", "r3": "REVIEW", "r4": "UNMATCHED", "r5": "UNMATCHED", "r6": "CONFIRMED"}
+    assert after_apply == {"r1": "MATCHED", "r2": "MATCHED", "r3": "MATCHED", "r4": "UNMATCHED", "r5": "UNMATCHED", "r6": "CONFIRMED"}
     assert json.loads(str(audit["payload"]))["success_threshold"] == 70
