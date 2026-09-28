@@ -681,14 +681,9 @@ class MatchService:
             before={"matched":0,"review":0,"unmatched":0}; after={"matched":0,"review":0,"unmatched":0}; changes=[]; critical_protected=0; ambiguity_protected=0; protected_rows:set[str]=set()
             for row in rows:
                 old=str(row["current_status"]); before["matched" if old=="MATCHED" else ("review" if old=="REVIEW" else "unmatched")]+=1; score=float(row["top1_score"] or 0.0)
-                if score > float(success_threshold): new,final="MATCHED",row["top1_group_code"]
+                if score >= float(success_threshold): new,final="MATCHED",row["top1_group_code"]
                 elif score > float(review_threshold): new,final="REVIEW",None
                 else: new,final="UNMATCHED",None
-                if new=="MATCHED":
-                    critical=bool(row["critical_conflict"]); second_group=row["second_group_code"]; ambiguous=second_group is not None and row["top1_group_code"] is not None and float(row["second_score"] or 0.0)==score and str(second_group)!=str(row["top1_group_code"])
-                    if critical: critical_protected+=1; protected_rows.add(str(row["source_row_id"]))
-                    if ambiguous and tie_break=="review": ambiguity_protected+=1; protected_rows.add(str(row["source_row_id"]))
-                    if critical or (ambiguous and tie_break=="review"): new,final="REVIEW",None
                 after["matched" if new=="MATCHED" else ("review" if new=="REVIEW" else "unmatched")]+=1
                 if new != old or (new=="MATCHED" and final != row["final_group_code"]): changes.append((new,final,str(row["source_row_id"])))
             if mode=="apply":
