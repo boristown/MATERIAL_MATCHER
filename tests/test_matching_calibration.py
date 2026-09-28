@@ -63,7 +63,7 @@ def test_hybrid_containment_can_be_penalized_without_breaking_exact_equality() -
     assert extended.display_score < exact.display_score
 
 
-def test_dynamic_weight_exposes_weak_evidence_and_blocks_auto_release(tmp_path: Path) -> None:
+def test_dynamic_weight_exposes_weak_evidence_but_threshold_controls_release(tmp_path: Path) -> None:
     source_path = tmp_path / "source.csv"
     target_path = tmp_path / "target.csv"
     with source_path.open("w", encoding="utf-8-sig", newline="") as stream:
@@ -122,8 +122,8 @@ def test_dynamic_weight_exposes_weak_evidence_and_blocks_auto_release(tmp_path: 
         max_target_rows=100,
     )
     assert rows[0].first_score == 100.0
-    assert rows[0].status == "REVIEW"
-    assert rows[0].final_group_code is None
+    assert rows[0].status == "MATCHED"
+    assert rows[0].final_group_code == "G1"
 
 
 def test_minimum_score_gap_legacy_config_no_longer_blocks_auto_match() -> None:
