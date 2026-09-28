@@ -19,7 +19,9 @@ base = v1.3.22
 
 ## 已纳入基线的现场变更
 
-- 全局禁用 `minimum_score_gap` 自动匹配阻断，兼容旧配置；
+- 自动匹配规则统一为 `Top1 >= success_threshold`；
+- 全局禁用 `minimum_score_gap` / Top1-Top2 并列分差对自动匹配的阻断，兼容旧配置字段；
+- 已达到阈值的记录不再因 critical/auto_match_safe/tie_break 等隐藏安全门槛被降级；人工已处理记录仍保持保护；
 - 人工匹配 Excel 排除 `MATCHED` 自动匹配记录；
 - 版本号升级到 1.3.22；
 - 对应回归测试同步更新。
