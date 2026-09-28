@@ -1112,7 +1112,7 @@ async function finalize(): Promise<boolean> {
   }
   finalizing.value = true
   try {
-    const started = await api.post(`/tasks/${task.value.task_id}/finalize`, { allow_unresolved_review: allow })
+    const started = await api.post(`/tasks/${task.value.task_id}/finalize`, { allow_unresolved_review: allow, force_regenerate: true })
     if (started.data?.status === 'EXPORTING') {
       ElMessage.info('正式结果正在后台生成，数据量大时约需数分钟；可离开本页，生成完成后在第四步直接下载。')
       const settled = await waitExportSettled()

@@ -268,3 +268,30 @@ def test_final_excel_is_business_complete_colored_and_auditable(tmp_path: Path) 
         assert unmatched.cell(3, 1).value == 10
     finally:
         workbook.close()
+
+def test_result_export_reloads_template_without_service_restart(tmp_path: Path) -> None:
+    service, meta, files = _service(tmp_path)
+    _seed_task(meta)
+    service._persist_rows(
+        "business-result",
+        [_row("1", 8, "MATCHED", "0000456", 34567, 88.0)],
+    )
+
+    # Change the export template after ResultExportService has already been
+    # constructed. The next real export must use the new template immediately.
+    profile_path = service.settings.config_dir / "export_profile.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(
+        json.dumps({"sheets": {"final_result": "最新最终结果"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    finalized = service.finalize("business-result")
+    record = files.get(str(finalized["result_file_id"]))
+    workbook = load_workbook(Path(str(record["stored_path"])), data_only=True)
+    try:
+        assert "最新最终结果" in workbook.sheetnames
+        assert "最终匹配结果" not in workbook.sheetnames
+    finally:
+        workbook.close()
+

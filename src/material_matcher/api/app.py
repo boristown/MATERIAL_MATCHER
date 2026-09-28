@@ -39,6 +39,7 @@ class BatchCalibrationRequest(BaseModel):
 
 class FinalizeRequest(BaseModel):
     allow_unresolved_review: bool = False
+    force_regenerate: bool = False
 
 
 class BusinessEvaluationRequest(BaseModel):
@@ -602,17 +603,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def finalize(task_id: str, payload: FinalizeRequest) -> dict[str, object]:
         from material_matcher.services.versioned_result_service import _EXPORTING
 
-        ready = versioned_results.finalize_ready(task_id, allow_unresolved_review=payload.allow_unresolved_review)
-        if ready is not None:
-            return ready
+        if not payload.force_regenerate:
+            ready = versioned_results.finalize_ready(task_id, allow_unresolved_review=payload.allow_unresolved_review)
+            if ready is not None:
+                return ready
         if task_id in _EXPORTING:
             return {"task_id": task_id, "status": "EXPORTING"}
-        app.state.result_exporter.submit(_run_result_export, task_id)
+        app.state.result_exporter.submit(_run_result_export, task_id, payload.force_regenerate)
         return {"task_id": task_id, "status": "EXPORTING"}
 
-    def _run_result_export(task_id: str) -> None:
+    def _run_result_export(task_id: str, force_regenerate: bool = False) -> None:
         try:
-            versioned_results.finalize(task_id, allow_unresolved_review=True)
+            versioned_results.finalize(
+                task_id,
+                allow_unresolved_review=True,
+                force_regenerate=force_regenerate,
+            )
         except Exception:  # noqa: BLE001 - recorded by the service registry
             pass
 

@@ -740,7 +740,7 @@ async function finalizeNow(): Promise<void> {
   try {
     const taskId = activeTaskId.value
     const previousResultFileId = activeTask.value?.result_file_id ?? null
-    const started = await api.post(`/tasks/${taskId}/finalize`, { allow_unresolved_review: true })
+    const started = await api.post(`/tasks/${taskId}/finalize`, { allow_unresolved_review: true, force_regenerate: true })
     if (started.data?.status === 'EXPORTING') {
       ElMessage.info('正在后台生成最终结果，请稍候…')
       await waitForFinalResult(taskId, previousResultFileId)

@@ -361,7 +361,7 @@ async function forceGenerate(): Promise<void> {
   if (!pendingTask.value) return
   forceBusy.value = true
   try {
-    const started = await api.post(`/tasks/${pendingTask.value.id}/finalize`, { allow_unresolved_review: true })
+    const started = await api.post(`/tasks/${pendingTask.value.id}/finalize`, { allow_unresolved_review: true, force_regenerate: true })
     if (started.data?.status === 'EXPORTING') {
       ElMessage.info('正式结果正在后台生成，数据量大时约需数分钟，完成后此处自动可下载')
     } else {
