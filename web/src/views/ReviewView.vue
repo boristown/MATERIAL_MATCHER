@@ -714,6 +714,20 @@ async function refreshSummary(taskId: string): Promise<void> {
   }
 }
 const finalBusy = ref(false)
+
+async function waitForFinalResult(taskId: string, previousResultFileId: string | null): Promise<void> {
+  const deadline = Date.now() + 10 * 60 * 1000
+  while (Date.now() < deadline) {
+    const response = await api.get(`/tasks/${taskId}`)
+    const task = response.data ?? {}
+    if (task.export_error) throw new Error(String(task.export_error))
+    const resultFileId = task.result_file_id ? String(task.result_file_id) : null
+    if (!task.exporting && resultFileId && resultFileId !== previousResultFileId) return
+    await new Promise(resolve => window.setTimeout(resolve, 1000))
+  }
+  throw new Error('最终结果生成超时，请稍后刷新第四步查看')
+}
+
 async function finalizeNow(): Promise<void> {
   if (!activeTaskId.value) { ElMessage.info('请先在上方选择任务'); return }
   const pending = Number(summary.value.pending_review ?? 0)
@@ -724,9 +738,15 @@ async function finalizeNow(): Promise<void> {
   }
   finalBusy.value = true
   try {
-    await api.post(`/tasks/${activeTaskId.value}/finalize`, { allow_unresolved_review: true })
+    const taskId = activeTaskId.value
+    const previousResultFileId = activeTask.value?.result_file_id ?? null
+    const started = await api.post(`/tasks/${taskId}/finalize`, { allow_unresolved_review: true })
+    if (started.data?.status === 'EXPORTING') {
+      ElMessage.info('正在后台生成最终结果，请稍候…')
+      await waitForFinalResult(taskId, previousResultFileId)
+    }
     ElMessage.success('最终结果已生成，正在打开第四步')
-    router.push(`/results?task=${activeTaskId.value}`)
+    await router.push(`/results?task=${taskId}`)
   } catch (error) {
     ElMessage.error(apiErrorMessage(error, '生成最终结果失败'))
   } finally {

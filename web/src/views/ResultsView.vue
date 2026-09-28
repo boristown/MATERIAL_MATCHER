@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { formatDurationMs } from '../taskTime'
@@ -86,6 +86,7 @@ type InputAssetBundle = {
 }
 
 const router = useRouter()
+const route = useRoute()
 const tasks = ref<TaskRow[]>([])
 const resultFiles = ref<Record<string, FileRecord>>({})
 const latestSummary = ref<ResultSummary>({ pending_review: 0, confirmed: 0, unmatched: 0, automatic_matched: 0 })
@@ -110,12 +111,28 @@ const generatedResults = computed(() => tasks.value
   .slice()
   .sort((a, b) => resultCompletedAt(b).localeCompare(resultCompletedAt(a))))
 
-const latestResult = computed(() => generatedResults.value[0] ?? null)
+const requestedTaskId = computed(() => typeof route.query.task === 'string' ? route.query.task : '')
+const requestedTask = computed(() => requestedTaskId.value
+  ? tasks.value.find(task => task.id === requestedTaskId.value) ?? null
+  : null)
 
-const pendingTask = computed(() => tasks.value
-  .filter(task => !task.result_file_id && task.status !== 'FAILED')
-  .slice()
-  .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null)
+const latestResult = computed(() => {
+  if (requestedTaskId.value) {
+    return requestedTask.value?.result_file_id ? requestedTask.value : null
+  }
+  return generatedResults.value[0] ?? null
+})
+
+const pendingTask = computed(() => {
+  if (requestedTaskId.value) {
+    const task = requestedTask.value
+    return task && !task.result_file_id && task.status !== 'FAILED' ? task : null
+  }
+  return tasks.value
+    .filter(task => !task.result_file_id && task.status !== 'FAILED')
+    .slice()
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
+})
 
 const waitingState = computed(() => {
   const task = pendingTask.value
