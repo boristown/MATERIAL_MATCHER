@@ -325,16 +325,15 @@ def test_composite_pipeline_runs_three_heterogeneous_children_without_merging_ex
     assert "规格型号B" in from_b.target_payload and "品牌名称C" not in from_b.target_payload
     assert "品牌名称C" in from_c.target_payload and "名称A" not in from_c.target_payload
 
-    # Parent threshold controls the final decision. Child thresholds are 50, but
-    # setting the parent threshold to 100 makes a score of exactly 100 REVIEW
-    # under the existing strict threshold semantics.
+    # Parent threshold controls the final decision and is inclusive.
+    # A score exactly equal to the parent threshold is automatically matched.
     strict_parent = _parent_config(
         fixture["children"],
         fixture["catalogs"],
         success_threshold=100,
     )
     strict_rows = matcher.composite_matcher.execute(source=source, parent_config=strict_parent)
-    assert strict_rows[0].status == "REVIEW"
+    assert strict_rows[0].status == "MATCHED"
 
     # Legacy minimum_score_gap remains readable in frozen configs, but it no
     # longer blocks an otherwise valid automatic match.
