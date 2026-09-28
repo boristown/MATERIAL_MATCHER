@@ -14,7 +14,7 @@ def test_best_of_supports_many_to_many():
     assert score.display_score==100
 
 
-def test_critical_conflict_blocks_auto_match_without_zeroing_total_score():
+def test_critical_conflict_is_exposed_as_metadata_without_zeroing_total_score():
     config = MatchingConfig.model_validate({
         'rules': [
             {
