@@ -287,10 +287,11 @@ def _matching_safety(config: MatchingConfig) -> tuple[int, float]:
 
 
 def minimum_score_gap(config: MatchingConfig) -> float:
-    raw = config.advanced.get("matching_safety", {})
-    if not isinstance(raw, Mapping):
-        return 0.0
-    return max(0.0, float(raw.get("minimum_score_gap", 0.0) or 0.0))
+    # 2026-09-28 onsite decision: disable score-gap blocking globally.
+    # Keep the helper/config key for backward compatibility with frozen schemes,
+    # but no longer let a Top1/Top2 gap override an otherwise valid auto-match.
+    _ = config
+    return 0.0
 
 
 def score_candidate(
@@ -350,7 +351,9 @@ def allowed_by_scope(
 
 
 def decide_status(score: float, config: MatchingConfig) -> str:
-    if score > float(config.decision.success_threshold):
+    # Visible business rule: the automatic threshold is inclusive.
+    # score >= threshold is an automatic match; Top1/Top2 gap is not a gate.
+    if score >= float(config.decision.success_threshold):
         return "MATCHED"
     if config.decision.review_enabled and score > float(config.decision.review_threshold):
         return "REVIEW"

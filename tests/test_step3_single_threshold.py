@@ -84,10 +84,9 @@ def test_step3_single_threshold_routes_positive_candidates_to_review_and_protect
     service, meta = _environment(tmp_path)
     _seed(meta)
 
-    # Historical dual-threshold behavior stays strict: score == 72 is not an
-    # automatic match when callers do not opt into STEP3 single-threshold mode.
+    # Automatic threshold semantics are inclusive for every caller.
     legacy_preview = service.preview("task-step3", 72, 0)
-    assert legacy_preview["after"] == {"matched": 0, "review": 2, "unmatched": 2, "confirmed": 1}
+    assert legacy_preview["after"] == {"matched": 1, "review": 1, "unmatched": 2, "confirmed": 1}
     assert legacy_preview["single_threshold"] is False
 
     # STEP3's new mode implements the visible business rule exactly:

@@ -585,7 +585,7 @@ class ManualReviewService:
 
         with self.repo.connect() as count_connection:
             total_items = int(count_connection.execute(
-                "SELECT COUNT(*) FROM match_items WHERE task_id=?", (task_id,),
+                "SELECT COUNT(*) FROM match_items WHERE task_id=? AND current_status <> 'MATCHED'", (task_id,),
             ).fetchone()[0])
         if total_items:
             sheet.data_validation(1, selection_col, total_items, selection_col, {
@@ -608,7 +608,7 @@ class ManualReviewService:
 
         with self.repo.connect() as connection:
             cursor = connection.execute(
-                "SELECT * FROM match_items WHERE task_id=? ORDER BY COALESCE(source_row_number, 2147483647), CAST(source_row_id AS INTEGER), source_row_id",
+                "SELECT * FROM match_items WHERE task_id=? AND current_status <> 'MATCHED' ORDER BY COALESCE(source_row_number, 2147483647), CAST(source_row_id AS INTEGER), source_row_id",
                 (task_id,),
             )
             row_index = 1
