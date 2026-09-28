@@ -175,6 +175,33 @@ def test_existing_formal_result_is_preserved_and_new_decision_gets_result_v2(tmp
     assert files.get(str(old["file_id"]))["file_id"] == old["file_id"]
 
 
+def test_force_regenerate_creates_new_result_for_same_decision_revision(tmp_path: Path) -> None:
+    _service, meta, files, settings = _environment(tmp_path)
+    _insert_task(meta, total=1)
+    now = "2026-09-17T12:00:00+08:00"
+    with meta.connect() as connection:
+        connection.execute(
+            f"INSERT INTO match_items({_ITEM_COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("task-1", "r1", "r1", "{}", "MATCHED", "MATCHED", "G1", 90.0, 50.0, 40.0, 0, "G1", now, now),
+        )
+        connection.execute(
+            f"INSERT INTO match_candidates({_CANDIDATE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?)",
+            ("task-1", "r1", 1, "G1", '{"名称":"测试物料"}', 90.0, "[]", 0),
+        )
+
+    versioned = VersionedResultService(meta, files, settings)
+    first = versioned.finalize("task-1")
+    reused = versioned.finalize("task-1")
+    forced = versioned.finalize("task-1", force_regenerate=True)
+
+    assert reused["result_file_id"] == first["result_file_id"]
+    assert reused["reused"] is True
+    assert forced["result_file_id"] != first["result_file_id"]
+    assert forced["reused"] is False
+    assert forced["decision_revision"] == first["decision_revision"]
+    assert forced["result_revision"] > first["result_revision"]
+
+
 def test_100k_statistics_and_batch_preview_do_not_materialize_python_rows(tmp_path: Path) -> None:
     service, meta, _, _ = _environment(tmp_path)
     total = 100_000
