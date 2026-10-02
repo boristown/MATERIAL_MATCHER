@@ -28,15 +28,17 @@
     "test:app-version": "node scripts/test-app-version.mjs"
   },
   "devDependencies": {
+    "@vitejs/plugin-legacy": "^6.1.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "terser": "^5.51.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.1",
-    "@vitejs/plugin-vue": "^5.2.1",
     "vue-tsc": "^2.2.0"
   },
   "dependencies": {
-    "vue-router": "^4.5.0",
+    "axios": "^1.7.9",
     "element-plus": "^2.8.8",
     "vue": "^3.5.13",
-    "axios": "^1.7.9"
+    "vue-router": "^4.5.0"
   }
 }
