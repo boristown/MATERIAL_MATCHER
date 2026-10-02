@@ -43,12 +43,24 @@ Vue 3.5 + Element Plus 2.8 + Vite 6 + vue-router 4，**Vue 3 的 Proxy 响应式
 
 ## 4. 里程碑与完成定义
 
-| 里程碑 | 内容 | DoD |
-|---|---|---|
-| M0 审计 | 语法/组件/双文件扫描，锁定迁移面 | 本文档 §3 补全 + audit.md |
-| M1 构建管线 | Vue3 基线上接通 plugin-legacy，验证 SystemJS/ES5 产物与体积 | `npm run build` 出 legacy chunk，Chrome49 仿真环境（VM/便携浏览器）可加载骨架页 |
-| M2 迁移 | Vue2.7 + Element UI + router3 全量迁移，五步工作流功能回归 | 契约测试+CI 绿；XP 仿真浏览器完成登录→上传→方案→匹配→导出全流程 |
-| M3 交付 | 介质 winxp/、门禁与兼容规范 2.0、现场 XP 真机验收 | 现场 XP 机器实测通过；切 v1.3.23，产 1.3.22→1.3.23 增量包 |
+| 里程碑 | 内容 | DoD | 状态 |
+|---|---|---|---|
+| M0 审计 | 语法/组件/双文件扫描，锁定迁移面 | 本文档 §3 补全 + audit.md | 基本完成（§3 已录） |
+| M1 构建管线 | Vue3 基线上接通 plugin-legacy，验证 SystemJS/ES5 产物与体积 | `npm run build` 出 legacy chunk，Chrome49 仿真环境（VM/便携浏览器）可加载骨架页 | **构建侧完成（2026-10-02），真浏览器加载=待 M3** |
+| M2 迁移 | Vue2.7 + Element UI + router3 全量迁移，五步工作流功能回归 | 契约测试+CI 绿；XP 仿真浏览器完成登录→上传→方案→匹配→导出全流程 | 未开始 |
+| M3 交付 | 介质 winxp/、门禁与兼容规范 2.0、现场 XP 真机验收 | 现场 XP 机器实测通过；切 v1.3.23，产 1.3.22→1.3.23 增量包 | 未开始 |
+
+### M1 结果记录（2026-10-02）
+
+- `@vitejs/plugin-legacy@6` + `terser@5` 接入，targets=chrome>=49/firefox>=52；产物双轨：
+  `index.js 1.39MB(gzip 445KB) + index-legacy.js 1.91MB + polyfills-legacy.js 155KB`，`nomodule` 接线正确（polyfill→entry→老浏览器兜底）。
+- **语法验证**：legacy chunk 以 `es-check es6`（ECMAScript 2015 解析）通过——即 async/await、对象展开、`?.`/`??` 等 FF52/Chrome49 不支持的语法已全部被 Babel 转译；箭头函数/class/模板字符串保留属**正确行为**（XP 的 Chrome 49/FF 52 原生支持，严格 ES5 是过度目标）。
+- 全量 `npm run build`（20 项契约测试 + vue-tsc + 双轨构建）通过。
+- 关键发现（影响 M3 浏览器策略）：
+  1. Chrome 49 / Firefox 52 ESR **均原生支持 Proxy**（Vue 3 的核心依赖）。理论上当前 Vue3 经 legacy 轨即可在 XP 启动；真正卡点是 **CSS**：自研样式含 44 处 `gap/grid`，flex `gap` 需 Chrome 84+（FF 52 已支持）。
+  2. 结论：降级方向不变（Vue2.7+Element UI 对老浏览器更稳、且覆盖未来更老客户端），但 **XP 现场首选 Firefox 52 ESR**（随介质 winxp/ 目录分发），Chrome 49 作为备用并预期布局降级。
+  3. M3 真机验收以 XP+FF52 为主通道。
+- 遗留到 M2：`src` 下 `.js/.ts` 双份文件定源；`defineModel` 1 处（DualExcelUploadPanel.vue，Vue2.7 不支持，改 props/emit）；Element Plus→Element UI 组件映射清单（§3 组件盘点可直接复用）。
 
 ## 5. 风险登记
 
