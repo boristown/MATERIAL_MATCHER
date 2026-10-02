@@ -108,7 +108,7 @@ onBeforeUnmount(() => { if (liveTimer) window.clearInterval(liveTimer) })
 
     <div class="panel">
       <div class="section-head"><h3 style="margin:0">历史运行与草稿</h3></div>
-      <el-table :data="rows" size="default">
+      <el-table :data="rows">
         <el-table-column label="方案名称" min-width="240"><template #default="scope"><a class="row-link" @click="open(scope.row)">{{ scope.row.schemeName }}</a><div v-if="scope.row.kind === 'task'" class="row-sub">第 {{ scope.row.runNumber }} 次计算</div></template></el-table-column>
         <el-table-column prop="stage" label="阶段" width="120"/>
         <el-table-column label="进度" width="170"><template #default="scope"><el-progress :percentage="Math.round(Number(scope.row.progress ?? 0))" :stroke-width="8" :status="scope.row.status==='FAILED'?'exception':scope.row.status==='COMPLETED'?'success':undefined"/></template></el-table-column>

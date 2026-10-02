@@ -1419,8 +1419,8 @@ onBeforeUnmount(() => {
           <label><span>方案名称</span><el-input v-model="name" maxlength="120" show-word-limit placeholder="输入可复用方案名称"/></label>
           <label><span>方案类型</span>
             <el-radio-group v-model="profileKind">
-              <el-radio-button value="single">普通匹配方案</el-radio-button>
-              <el-radio-button value="composite">跨类目组合方案</el-radio-button>
+              <el-radio-button label="single">普通匹配方案</el-radio-button>
+              <el-radio-button label="composite">跨类目组合方案</el-radio-button>
             </el-radio-group>
           </label>
         </div>
@@ -1482,7 +1482,7 @@ onBeforeUnmount(() => {
         >
           <el-table-column label="源侧" min-width="260"><template #default="scope">
             <div class="field-side-editor">
-              <el-select :model-value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event), scope.row)">
+              <el-select :value="sideMode(scope.row.source)" size="small" class="side-mode-select" @change="setSideMode(scope.row.source, String($event), scope.row)">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
               </el-select>
               <el-input v-if="sideMode(scope.row.source) === 'fixed'" v-model="scope.row.source.fixed_value" clearable placeholder="例如：Z001"/>
@@ -1493,7 +1493,7 @@ onBeforeUnmount(() => {
           <el-table-column label="" width="36" align="center"><template #default><span class="rule-arrow">→</span></template></el-table-column>
           <el-table-column label="目标侧" min-width="260"><template #default="scope">
             <div class="field-side-editor">
-              <el-select :model-value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event), scope.row)">
+              <el-select :value="sideMode(scope.row.target)" size="small" class="side-mode-select" @change="setSideMode(scope.row.target, String($event), scope.row)">
                 <el-option label="字段" value="field"/><el-option label="固定值" value="fixed"/>
               </el-select>
               <el-input v-if="sideMode(scope.row.target) === 'fixed'" v-model="scope.row.target.fixed_value" clearable placeholder="例如：Z001"/>
@@ -1509,8 +1509,8 @@ onBeforeUnmount(() => {
               :width="560"
               :show-arrow="false"
               popper-class="value-mapping-popover"
-              :visible="valueMappingOpenFor === String(scope.row.id)"
-              @update:visible="(shown: boolean) => { valueMappingOpenFor = shown ? String(scope.row.id) : '' }"
+              :value="valueMappingOpenFor === String(scope.row.id)"
+              @input="valueMappingOpenFor = $event ? String(scope.row.id) : ''"
             >
               <template #reference>
                 <el-button
@@ -1565,13 +1565,13 @@ onBeforeUnmount(() => {
                 <div v-for="sourceValue in ruleSourceValueOptions(scope.row)" :key="sourceValue" class="value-mapping-row">
                   <span class="source-enum-value">{{ sourceValue }}</span><span class="value-arrow">→</span>
                   <el-select
-                    :model-value="scope.row.value_mapping?.[sourceValue] ?? ''"
+                    :value="scope.row.value_mapping?.[sourceValue] ?? ''"
                     clearable
                     filterable
                     allow-create
                     default-first-option
                     placeholder="手工选择或输入目标值"
-                    @update:model-value="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))"
+                    @input="setRuleValueMapping(scope.row, sourceValue, String($event ?? ''))"
                   >
                     <el-option v-for="targetValue in ruleTargetValueOptions(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
                   </el-select>
@@ -1806,7 +1806,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <el-drawer v-model="drawerVisible" title="候选对比" size="68%">
+    <el-drawer :visible.sync="drawerVisible" title="候选对比" size="68%">
       <div v-if="drawerItem">
         <p class="drawer-source"><b>{{ drawerItem.source_id }}</b>　{{ Object.values(drawerItem.source_payload ?? {}).filter(v=>v).slice(0,6).join(' · ') }}</p>
         <el-tabs v-model="candidateIndex">

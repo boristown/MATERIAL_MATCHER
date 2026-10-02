@@ -1288,7 +1288,7 @@ onBeforeUnmount(() => {
 
         <div class="review-bulk-bar" :class="{ 'has-selection': hasSelection }">
           <div class="review-bulk-select">
-            <el-checkbox :model-value="selectAllFiltered || allPageSelected" :indeterminate="selectedExplicitCount > 0 && !allPageSelected && !selectAllFiltered" @change="togglePageSelection">全选本页</el-checkbox>
+            <el-checkbox :value="selectAllFiltered || allPageSelected" :indeterminate="selectedExplicitCount > 0 && !allPageSelected && !selectAllFiltered" @change="togglePageSelection">全选本页</el-checkbox>
             <strong v-if="selectAllFiltered">已选择当前筛选出的全部 {{ formatNumber(workbenchTotal) }} 条</strong>
             <strong v-else-if="selectedExplicitCount">已选择本页 {{ formatNumber(selectedExplicitCount) }} 条</strong>
             <span v-else>可先全选本页，再扩展到当前筛选全部结果</span>
@@ -1321,9 +1321,9 @@ onBeforeUnmount(() => {
               </tr>
             </thead>
             <tbody>
-              <template v-for="item in workbenchItems" :key="item.source_row_id">
-                <tr>
-                  <td class="review-check-col"><el-checkbox :model-value="selectAllFiltered || selectedRowIds.includes(item.source_row_id)" @change="onRowCheckboxChange(item.source_row_id, $event)" /></td>
+              <template v-for="item in workbenchItems">
+                <tr :key="item.source_row_id">
+                  <td class="review-check-col"><el-checkbox :value="selectAllFiltered || selectedRowIds.includes(item.source_row_id)" @change="onRowCheckboxChange(item.source_row_id, $event)" /></td>
                   <td class="review-source-col">
                     <el-tag size="small" :type="statusTagType(item.current_status)">{{ statusLabel(item.current_status) }}</el-tag>
                     <strong :title="item.source_id">{{ item.source_id || '未命名源物料' }}</strong>
