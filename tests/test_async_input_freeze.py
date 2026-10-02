@@ -114,6 +114,7 @@ def test_sync_mode_keeps_legacy_pending_semantics(authed):
     prepared = _prepare_task(authed)
     response = authed.post(f"/api/task-drafts/{prepared['draft_id']}/start")
     assert response.status_code == 202, response.text
-    assert response.json()["status"] == "PENDING"
+    # 同步冻结在返回前已 notify worker，PENDING 可能在序列化前被领取为 PREPARING（与 L68 同口径）
+    assert response.json()["status"] in {"PENDING", "PREPARING"}
     task = _wait(authed, str(response.json()["task_id"]))
     assert task["status"] == "COMPLETED"
