@@ -749,7 +749,7 @@ onMounted(load)
         <div><h3>历史结果</h3><p>已生成过正式 Excel 的匹配结果，可再次查看或下载。</p></div>
         <span class="results-history-count">{{ generatedResults.length }} 个结果</span>
       </div>
-      <el-table :data="generatedResults" size="default" empty-text="暂无历史结果">
+      <el-table :data="generatedResults" empty-text="暂无历史结果">
         <el-table-column label="方案名称" min-width="230"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a></template></el-table-column>
         <el-table-column label="任务开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
         <el-table-column label="自动计算耗时" width="170"><template #default="scope">{{ formatDurationMs(scope.row.compute_duration_ms) }}</template></el-table-column>

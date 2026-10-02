@@ -24,10 +24,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'source-parsed': [payload: { file: FileRecord; columns: ColumnInfo[]; inspection: Inspection }]
-  'update:sourceIdColumn': [value: string]
-  'update:targetInputs': [value: CompositeTargetInput[]]
-  'update:assignments': [value: Record<string, CompositeAssignment>]
+  (e: 'source-parsed', payload: { file: FileRecord; columns: ColumnInfo[]; inspection: Inspection }): void
+  (e: 'update:sourceIdColumn', value: string): void
+  (e: 'update:targetInputs', value: CompositeTargetInput[]): void
+  (e: 'update:assignments', value: Record<string, CompositeAssignment>): void
 }>()
 
 const uploading = ref<'source' | 'target' | ''>('')
@@ -45,6 +45,8 @@ function columnsFromInspection(inspection: Inspection): ColumnInfo[] {
   return sheet?.columns ?? []
 }
 
+function onSourceChange(file: any): Promise<void> { return upload('source', file) }
+function onTargetChange(file: any): Promise<void> { return upload('target', file) }
 async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
   if (!selected?.raw) return
   uploading.value = kind
@@ -170,12 +172,12 @@ watch(
     <div class="upload-grid">
       <section class="upload-card">
         <div class="card-head"><div><b>SAP 待匹配文件</b><p>本次任务只有一个源文件。</p></div><el-tag v-if="source" type="success" size="small">已解析</el-tag></div>
-        <el-upload drag :auto-upload="false" :show-file-list="false" :on-change="(file:any) => upload('source', file)" accept=".xlsx,.xlsm,.csv" :disabled="Boolean(uploading)">
+        <el-upload action="" drag :auto-upload="false" :show-file-list="false" :on-change="onSourceChange" accept=".xlsx,.xlsm,.csv" :disabled="Boolean(uploading)">
           <div class="upload-copy"><b>{{ source ? '重新上传 SAP 待匹配文件' : '上传 SAP 待匹配文件' }}</b><span>上传后自动识别字段</span></div>
         </el-upload>
         <label v-if="sourceColumns.length">
           <span>客户物料编码字段</span>
-          <el-select :model-value="sourceIdColumn" filterable @update:model-value="(value: unknown) => emit('update:sourceIdColumn', String(value ?? ''))">
+          <el-select :value="sourceIdColumn" filterable @input="emit('update:sourceIdColumn', String( $event ?? ''))">
             <el-option v-for="column in sourceColumns" :key="column.header" :label="column.header" :value="column.header"/>
           </el-select>
         </label>
@@ -183,7 +185,7 @@ watch(
 
       <section class="upload-card target-card">
         <div class="card-head"><div><b>集团目标文件</b><p>可连续上传多份，字段结构无需一致。</p></div><el-tag size="small">{{ targetInputs.length }} 份</el-tag></div>
-        <el-upload drag multiple :auto-upload="false" :show-file-list="false" :on-change="(file:any) => upload('target', file)" accept=".xlsx,.xlsm,.csv" :disabled="Boolean(uploading)">
+        <el-upload action="" drag multiple :auto-upload="false" :show-file-list="false" :on-change="onTargetChange" accept=".xlsx,.xlsm,.csv" :disabled="Boolean(uploading)">
           <div class="upload-copy"><b>上传一份或多份集团文件</b><span>每份文件独立解析字段；可继续追加上传</span></div>
         </el-upload>
         <div v-if="targetInputs.length" class="file-chips">
@@ -204,11 +206,11 @@ watch(
       <el-table-column label="版本" width="85"><template #default="scope">v{{ scope.row.version_no }}</template></el-table-column>
       <el-table-column label="本次集团文件" min-width="240"><template #default="scope">
         <el-select
-          :model-value="assignments[scope.row.profile_id]?.file_id ?? ''"
+          :value="assignments[scope.row.profile_id]?.file_id ?? ''"
           filterable
           placeholder="选择对应文件"
           style="width:100%"
-          @update:model-value="(value: unknown) => onFileChange(scope.row, String(value ?? ''))"
+          @input="onFileChange(scope.row, String( $event ?? ''))"
         >
           <el-option
             v-for="input in targetInputs"
@@ -227,12 +229,12 @@ watch(
       </template></el-table-column>
       <el-table-column label="集团码字段" min-width="180"><template #default="scope">
         <el-select
-          :model-value="assignments[scope.row.profile_id]?.group_code_column ?? ''"
+          :value="assignments[scope.row.profile_id]?.group_code_column ?? ''"
           filterable
           placeholder="请选择"
           style="width:100%"
           :disabled="!inputOf(scope.row)"
-          @update:model-value="(value: unknown) => onGroupCodeChange(scope.row, String(value ?? ''))"
+          @input="onGroupCodeChange(scope.row, String( $event ?? ''))"
         >
           <el-option v-for="column in (inputOf(scope.row)?.columns ?? [])" :key="column.header" :label="column.header" :value="column.header"/>
         </el-select>

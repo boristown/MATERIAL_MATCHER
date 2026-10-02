@@ -376,8 +376,8 @@ onMounted(async () => {
         </div>
       </div>
 
-      <el-radio-group v-if="dictionaries.length > 1 && !creatingNew" class="syn-switch" :model-value="selectedId" @change="(value: unknown) => switchDictionary(String(value))">
-        <el-radio-button v-for="item in dictionaries" :key="item.dictionary_id" :value="item.dictionary_id">{{ item.name }}</el-radio-button>
+      <el-radio-group v-if="dictionaries.length > 1 && !creatingNew" class="syn-switch" :value="selectedId" @change="switchDictionary(String($event))">
+        <el-radio-button v-for="item in dictionaries" :key="item.dictionary_id" :label="item.dictionary_id">{{ item.name }}</el-radio-button>
       </el-radio-group>
 
       <div class="syn-meta">
@@ -427,11 +427,11 @@ onMounted(async () => {
           <span class="syn-check-head">
             <el-checkbox
               v-if="canMaintain"
-              :model-value="pageAllChecked"
+              :value="pageAllChecked"
               :indeterminate="pageSomeChecked"
               :disabled="!visibleRows.length"
               aria-label="本页全选或取消全选"
-              @change="(value: boolean) => togglePageAll(Boolean(value))"
+              @change="togglePageAll(Boolean($event))"
             />
           </span>
           <span>其他写法</span>
@@ -510,7 +510,7 @@ onMounted(async () => {
       </el-collapse>
     </section>
 
-    <el-dialog v-model="historyVisible" :title="`同义词版本历史：${selectedName}`" width="820px">
+    <el-dialog :visible.sync="historyVisible" :title="`同义词版本历史：${selectedName}`" width="820px">
       <p class="history-explain">历史版本仅供查看，不可修改；已运行的任务始终使用当时的版本。</p>
       <el-table :data="historyVersions" empty-text="暂无历史版本">
         <el-table-column type="expand">

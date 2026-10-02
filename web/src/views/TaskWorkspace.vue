@@ -173,6 +173,7 @@ watch(taskId, () => void loadCalibration())
 </script>
 
 <template>
+  <div class="xp-single-root">
   <section v-if="taskId && stats" class="calibration-panel" v-loading="loading">
     <div class="calibration-title-row">
       <div>
@@ -274,7 +275,9 @@ watch(taskId, () => void loadCalibration())
   </section>
 
   <TaskWorkspaceBase :key="baseKey" />
+  </div>
 </template>
+
 
 <style scoped>
 .calibration-panel { margin: 16px 20px 0; padding: 16px 18px; border: 1px solid #d9e2ef; border-radius: 10px; background: #fff; box-shadow: 0 1px 4px rgba(15, 23, 42, .05); }

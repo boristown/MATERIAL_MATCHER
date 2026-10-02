@@ -122,7 +122,7 @@
           </span>
         </div>
         <div class="body">
-          <div id="requirement" class="requirement">请使用 Chrome ≥87 或 Firefox ≥79</div>
+          <div id="requirement" class="requirement">请使用 Chrome ≥49 或 Firefox ≥52</div>
           <p id="detected" class="detected"></p>
           <p class="hint">升级完成后，重新打开当前系统地址即可。系统不会因为本页面产生任何业务数据修改。</p>
           <div class="foot">MATERIAL MATCHER · Browser Compatibility Guard</div>
@@ -151,13 +151,13 @@
       var detected = document.getElementById('detected');
 
       if (browser === 'firefox') {
-        requirement.innerHTML = '请使用 Firefox &ge;79';
+        requirement.innerHTML = '请使用 Firefox &ge;52';
         detected.innerHTML = version ? '检测到当前 Firefox 版本：' + version : '检测到当前浏览器为 Firefox';
       } else if (browser === 'chrome') {
-        requirement.innerHTML = '请使用 Chrome &ge;87';
+        requirement.innerHTML = '请使用 Chrome &ge;49';
         detected.innerHTML = version ? '检测到当前 Chrome 版本：' + version : '检测到当前浏览器为 Chrome';
       } else {
-        requirement.innerHTML = '请使用 Chrome &ge;87 或 Firefox &ge;79';
+        requirement.innerHTML = '请使用 Chrome &ge;49 或 Firefox &ge;52';
         detected.innerHTML = '检测到当前浏览器缺少本系统所需的基础 Web 能力';
       }
     })();

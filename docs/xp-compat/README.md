@@ -47,8 +47,24 @@ Vue 3.5 + Element Plus 2.8 + Vite 6 + vue-router 4，**Vue 3 的 Proxy 响应式
 |---|---|---|---|
 | M0 审计 | 语法/组件/双文件扫描，锁定迁移面 | 本文档 §3 补全 + audit.md | 基本完成（§3 已录） |
 | M1 构建管线 | Vue3 基线上接通 plugin-legacy，验证 SystemJS/ES5 产物与体积 | `npm run build` 出 legacy chunk，Chrome49 仿真环境（VM/便携浏览器）可加载骨架页 | **构建侧完成（2026-10-02），真浏览器加载=待 M3** |
-| M2 迁移 | Vue2.7 + Element UI + router3 全量迁移，五步工作流功能回归 | 契约测试+CI 绿；XP 仿真浏览器完成登录→上传→方案→匹配→导出全流程 | 未开始 |
+| M2 迁移 | Vue2.7 + Element UI + router3 全量迁移，五步工作流功能回归 | 契约测试+CI 绿；XP 仿真浏览器完成登录→上传→方案→匹配→导出全流程 | **进行中（2026-10-03 首轮跑通）** |
 | M3 交付 | 介质 winxp/、门禁与兼容规范 2.0、现场 XP 真机验收 | 现场 XP 机器实测通过；切 v1.3.23，产 1.3.22→1.3.23 增量包 | 未开始 |
+
+### M2 首轮进展记录（2026-10-03，分支 `feat/xp-vue2`，未合入 main）
+
+- 依赖切换完成：vue@2.7.16 + vue-router@3.6.5 + element-ui@2.15.14；构建用 @vitejs/plugin-vue2 + plugin-legacy。
+- **适配层**（不改业务源码语义）：`src/vue-router-compat.ts`（createRouter/createWebHistory/useRouter/useRoute → VueRouter3 + Proxy 实时 $route + push/replace Promise 化）与 `src/element-plus-compat.ts`（ElMessage/ElMessageBox → element-ui Message/MessageBox），经 vite alias 按 `^vue-router$`/`^element-plus$` 精确注入；`src/compat-shims.d.ts`+`vue-router-shim.d.ts` 补类型。
+- 模板机械转换：`el-dialog/el-drawer v-model→:visible.sync`；`:model-value→:value`、`@update:model-value→@input`（注意 sed 误产 `@update:value` 已修正为 `@input`）；`el-radio-button value→label`；模板内 TS 注解与非空断言 `!`/`as` 全部移除（Vue2 模板编译器不认 TS）；`defineEmits` 元组式→调用签名式×4；多根模板（FieldMappingCanvas/TaskWorkspace）补单根 wrapper。
+- 浏览器门禁改造：`browser-check.js` 基线 Firefox≥52/Chrome≥49；能力门从 noModule 改为 Promise+Proxy+Symbol 探测（FF52/Chrome49 原生具备，IE 被拦）；unsupported-browser.html 文案与 test-browser-check 契约同步更新。
+- **低内核真机验收（首轮）**：Linux Firefox 52.9.0esr（XP 同源引擎）+ Xvfb，直连生产 `dist/index.html`（含守卫与 nomodule 双轨），legacy SystemJS 轨成功渲染应用壳+四步导航+标题文案；FF52 注意其 UA 伪装为 `rv:60.0/Firefox/60.0`（官方行为），门禁解析兼容。geckodriver 0.15/0.19 与 52.9 Marionette 握手均失败，改用"采集页 + XHR 自报"无驱动方案（脚本：`/tmp/opencode/ff52_test.sh`，本轮环境工具，不进仓库）。
+- 全量 `npm run build`（20 项契约测试 + vue-tsc + 双轨构建）在分支上全绿；es-check es6 过。
+- **低内核验证（重要事实修正）**：
+  1. Mozilla 归档 `52.9.0esr/linux-x86_64` 路径现被轮换返回 **Firefox 140**（`browser/application.ini Version=140.17.0`、UA `rv:140.0`、实测支持 ES module）。外网当前拿不到真 52 二进制，早期"FF52 渲染成功"记录实为 FF140 module 轨，**作废重记**。
+  2. 改用真同代引擎验证：**Node 6.17.1 / V8 5.1.281**（Chrome 45–53 时代，无 async/await、对象展开、`??`；XP Chrome49=V8 4.9，为其子集）+ jsdom@11 加载 dist 的 **legacy SystemJS 轨**（剥除 module 轨页面 `xp-legacy.html`，资源经本地 http.server 供给）：`window.System` 就位、Vue2 挂载完成（`#app` 被替换为渲染根，符合 Vue2 行为）、UI 文本 545 字符（登录壳+四步导航完整）、**jsErrors=0 / consoleErrs=0**。
+  3. 辅助门禁：`es-check es6` 对 `*-legacy*.js` 通过（语法面）；FF140（现代引擎）在 module 轨跑通后端全链（登录→STEP1/2/3/4 页面+API 全部 200，登录经 UI 表单事件填充）。
+  4. Node6+jsdom11 验证环境脚本存于 `/tmp/opencode/es5run/es5_boot.js`（环境工具，不进仓库）；XP 真机（Chrome49/FF52 + 现场数据）验收仍为 M3 必做项。
+- 后端全链回归（同分支 dist + 本地 1.3.22 实例，独立数据目录）：上传→目录→草稿→规则→启动→COMPLETED→`/result` 直出合法 xlsx（5 sheet 齐全，未定稿可导 r1 语义生效）。
+- 未完（M2 剩余）：带后端 API 的五步全流程回归（登录/上传/方案/匹配/导出，本地起 material_matcher 服务）；Element UI 尺寸/图标观感走查（size="large" 语义、empty/descriptions 渲染）；样式 `gap` 在 XP Chrome49 的降级核对（FF52 无碍）；`.js` 编译残留与 `.ts` 定源最终清理（当前靠 resolve.extensions .ts 优先规避）。
 
 ### M1 结果记录（2026-10-02）
 

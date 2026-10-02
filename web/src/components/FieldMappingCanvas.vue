@@ -16,10 +16,10 @@ const props = defineProps<{
   pendingSource: string | null
 }>()
 const emit = defineEmits<{
-  sourceClick: [header: string]
-  targetClick: [header: string]
-  connect: [sourceField: string, targetField: string]
-  removeLine: [payload: RemoveLinePayload]
+  (e: 'sourceClick', header: string): void
+  (e: 'targetClick', header: string): void
+  (e: 'connect', sourceField: string, targetField: string): void
+  (e: 'removeLine', payload: RemoveLinePayload): void
 }>()
 
 const viewMode = ref<'all' | 'connected'>('all')
@@ -175,11 +175,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
 </script>
 
 <template>
+  <div class="xp-single-root">
   <div class="mapping-view-tools">
     <span>字段显示</span>
     <el-radio-group v-model="viewMode" size="small">
-      <el-radio-button value="all">全部字段</el-radio-button>
-      <el-radio-button value="connected">仅看已连接</el-radio-button>
+      <el-radio-button label="all">全部字段</el-radio-button>
+      <el-radio-button label="connected">仅看已连接</el-radio-button>
     </el-radio-group>
     <span v-if="viewMode === 'connected'" class="mapping-view-count">{{ linePositions.length }} 条连线</span>
   </div>
@@ -245,6 +246,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLines))
         <span>{{ column.header }}</span><em v-if="column.business_hint" class="hint">{{ column.business_hint }}</em>
       </div>
     </div>
+  </div>
   </div>
 </template>
 

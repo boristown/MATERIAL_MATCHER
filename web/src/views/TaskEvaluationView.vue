@@ -159,7 +159,7 @@ onMounted(refresh)
       <h3>1. 上传业务真值</h3>
       <el-alert title="标注表只用于验收。至少包含一个源记录标识列和一个正确集团码列；推荐使用客户物料编码作为验收键。" type="info" :closable="false" />
       <div class="actions">
-        <el-upload :auto-upload="false" :show-file-list="false" :on-change="uploadTruth">
+        <el-upload action="" :auto-upload="false" :show-file-list="false" :on-change="uploadTruth">
           <el-button :loading="busy">选择 Excel / CSV 标注表</el-button>
         </el-upload>
         <span v-if="truthFile">{{ truthFile.original_name }}</span>

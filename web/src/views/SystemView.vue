@@ -67,7 +67,7 @@ function recallText(row: any): string {
   if (row?.kind !== 'vector_kernel') return '-'
   const recall = row?.metrics?.recall_quality?.recall_at
   if (!recall) return '-'
-  const percent = (value: unknown) => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '-'
+  const percent = (value: number | null): string => typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '-'
   return `R@10 ${percent(recall['10'])} / R@50 ${percent(recall['50'])} / R@100 ${percent(recall['100'])}`
 }
 
@@ -245,13 +245,13 @@ onMounted(refresh)
               <el-table-column prop="username" label="用户名" min-width="150" />
               <el-table-column label="角色" width="170">
                 <template #default="scope">
-                  <el-select class="system-role-select" :model-value="scope.row.role" @change="(value:string)=>changeRole(scope.row,value)">
+                  <el-select class="system-role-select" :value="scope.row.role" @change="changeRole(scope.row, $event)">
                     <el-option v-for="role in availableRoles" :key="role" :label="roleLabel[role] ?? role" :value="role" />
                   </el-select>
                 </template>
               </el-table-column>
               <el-table-column label="启用" width="90" align="center" header-align="center">
-                <template #default="scope"><el-switch :model-value="scope.row.enabled" @change="(value:boolean)=>toggleEnabled(scope.row,value)" /></template>
+                <template #default="scope"><el-switch :value="scope.row.enabled" @change="toggleEnabled(scope.row, $event)" /></template>
               </el-table-column>
               <el-table-column label="需改密" width="90" align="center" header-align="center">
                 <template #default="scope"><el-tag :type="scope.row.must_change_password?'warning':'success'">{{ scope.row.must_change_password?'是':'否' }}</el-tag></template>
@@ -371,7 +371,7 @@ onMounted(refresh)
       </el-tabs>
     </div>
 
-    <el-dialog v-model="userDialogVisible" title="创建本地账号" width="560px">
+    <el-dialog :visible.sync="userDialogVisible" title="创建本地账号" width="560px">
       <el-form label-width="100px">
         <el-form-item label="用户名"><el-input v-model="userForm.username" /></el-form-item>
         <el-form-item label="初始密码"><el-input v-model="userForm.password" type="password" show-password /></el-form-item>
@@ -380,7 +380,7 @@ onMounted(refresh)
       <el-alert title="新账号首次登录必须修改初始密码。密码至少10位且包含字母和数字。" type="info" :closable="false"/>
       <template #footer><el-button @click="userDialogVisible=false">取消</el-button><el-button type="primary" :loading="userSaving" @click="createUser">创建账号</el-button></template>
     </el-dialog>
-    <el-dialog v-model="resetDialogVisible" :title="resetTarget ? `重置密码：${resetTarget.username}` : '重置密码'" width="560px">
+    <el-dialog :visible.sync="resetDialogVisible" :title="resetTarget ? `重置密码：${resetTarget.username}` : '重置密码'" width="560px">
       <el-form label-width="120px">
         <el-form-item label="新密码"><el-input v-model="resetPassword" type="password" show-password /></el-form-item>
         <el-form-item label="下次登录改密"><el-switch v-model="resetMustChange" /></el-form-item>

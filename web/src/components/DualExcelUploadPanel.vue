@@ -40,9 +40,9 @@ const props = withDefaults(defineProps<{
 const isTemplateMode = computed(() => props.mode === 'template')
 
 const emit = defineEmits<{
-  parsed: [payload: ParsedPayload]
-  'update:sourceIdColumn': [value: string]
-  'update:groupCodeColumn': [value: string]
+  (e: 'parsed', payload: ParsedPayload): void
+  (e: 'update:sourceIdColumn', value: string): void
+  (e: 'update:groupCodeColumn', value: string): void
 }>()
 
 const uploading = ref<'source' | 'target' | ''>('')
@@ -91,6 +91,8 @@ async function loadInspection(kind: 'source' | 'target', file: FileRecord | null
 watch(() => props.source?.file_id, () => void loadInspection('source', props.source), { immediate: true })
 watch(() => props.target?.file_id, () => void loadInspection('target', props.target), { immediate: true })
 
+function onSourceChange(file: any): Promise<void> { return upload('source', file) }
+function onTargetChange(file: any): Promise<void> { return upload('target', file) }
 async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
   if (!selected?.raw) return
   uploading.value = kind
@@ -137,11 +139,11 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
         </div>
         <el-tag v-if="source" type="success" size="small">已解析</el-tag>
       </div>
-      <el-upload
+      <el-upload action=""
         drag
         :auto-upload="false"
         :show-file-list="false"
-        :on-change="(file:any) => upload('source', file)"
+        :on-change="onSourceChange"
         accept=".xlsx,.xlsm,.csv"
         :disabled="Boolean(uploading)"
       >
@@ -165,10 +167,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
             <small v-if="isTemplateMode">用于唯一识别每条客户物料。系统会自动识别；未识别时只需在这里确认一次。</small>
           </span>
           <el-select
-            :model-value="sourceIdColumn"
+            :value="sourceIdColumn"
             filterable
             placeholder="系统未识别，请选择"
-            @update:model-value="(value: unknown) => emit('update:sourceIdColumn', String(value ?? ''))"
+            @input="emit('update:sourceIdColumn', String( $event ?? ''))"
           >
             <el-option v-for="column in sourceColumns" :key="column.header" :label="column.header" :value="column.header"/>
           </el-select>
@@ -198,11 +200,11 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
         </div>
         <el-tag v-if="target" type="success" size="small">已解析</el-tag>
       </div>
-      <el-upload
+      <el-upload action=""
         drag
         :auto-upload="false"
         :show-file-list="false"
-        :on-change="(file:any) => upload('target', file)"
+        :on-change="onTargetChange"
         accept=".xlsx,.xlsm,.csv"
         :disabled="Boolean(uploading)"
       >
@@ -226,10 +228,10 @@ async function upload(kind: 'source' | 'target', selected: any): Promise<void> {
             <small v-if="isTemplateMode">最终返回给客户的集团码所在列。系统会自动识别；未识别时只需在这里确认一次。</small>
           </span>
           <el-select
-            :model-value="groupCodeColumn"
+            :value="groupCodeColumn"
             filterable
             placeholder="系统未识别，请选择"
-            @update:model-value="(value: unknown) => emit('update:groupCodeColumn', String(value ?? ''))"
+            @input="emit('update:groupCodeColumn', String( $event ?? ''))"
           >
             <el-option v-for="column in targetColumns" :key="column.header" :label="column.header" :value="column.header"/>
           </el-select>
