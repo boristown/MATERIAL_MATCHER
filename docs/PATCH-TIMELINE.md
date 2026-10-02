@@ -59,3 +59,4 @@
 - tag 事实核对：远端**尚无 v1.3.22 tag**（NEXT-BASELINE 原表述为目标 tag）；#207 打包前先在 main 补打。
 - CI 修复：2026-09-25 起所有 PR backend 恒红，根因=check_repo_files.py 缺 `docs/deploy-evidence/**`、`ops/incremental/**`（含离线 vendor wheel）白名单；PR 带红照合是既成事实但不可持续。本批补前缀白名单+放行逻辑。
 - 分支保护核实：GitHub 实测 main **无 protection、无 ruleset**；CI 仅 PR 触发，main 无 push 流水线（文档 §7 已记）。
+- 落地：PR#214 合并（CI backend+frontend 全绿，9/25 以来首次）；随后于 main 补打并推送 tag **v1.3.22**（= #207 增量包差异起点）。#207 下一步：以 v1.3.22 制作 1.3.20→1.3.22 现场增量包（现场另有 9/28 手改态，打包脚本需预检版本门）。
