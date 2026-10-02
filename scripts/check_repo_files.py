@@ -21,6 +21,20 @@ ALLOWED_BINARY_PATHS = {
     Path("installer/docs/test-report.docx"),
 }
 
+# Intentionally versioned artifact trees:
+#   docs/deploy-evidence/**  = field/demo evidence packs (screenshots, workbooks, run records)
+#   ops/incremental/**       = on-site incremental packages incl. offline vendor wheels
+ALLOWED_BINARY_PREFIXES = (
+    Path("docs/deploy-evidence"),
+    Path("ops/incremental"),
+)
+
+
+def is_allowed_artifact(path: Path) -> bool:
+    if path in ALLOWED_BINARY_PATHS:
+        return True
+    return any(path.is_relative_to(prefix) for prefix in ALLOWED_BINARY_PREFIXES)
+
 
 def tracked_files() -> list[Path]:
     result = subprocess.run(["git", "ls-files", "-z"], check=True, capture_output=True)
@@ -34,8 +48,10 @@ def main() -> int:
             errors.append(f"禁止提交目录: {path}")
             continue
         if path.suffix.lower() in FORBIDDEN_SUFFIXES:
-            if path not in ALLOWED_BINARY_PATHS:
+            if not is_allowed_artifact(path):
                 errors.append(f"禁止提交二进制/运行产物: {path}")
+            continue
+        if is_allowed_artifact(path):
             continue
         if path.exists() and path.stat().st_size > MAX_TEXT_BYTES:
             errors.append(f"文本文件超过 5MB: {path}")

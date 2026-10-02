@@ -51,3 +51,11 @@
 - 版本基线：**v1.3.22**；代码回灌后进入“等待制作增量安装补丁”状态，下一增量补丁必须从该 tag 起算。
 - 详细证据：`docs/deploy-evidence/2026-09-28-onsite-hotfix-baseline.md`；机器可读/运维入口：`ops/incremental/NEXT-BASELINE.md`。
 
+
+
+## 2026-10-02 · XP 兼容项目立项 + CI 文件门禁修复
+- 现场存在 Windows XP 客户端（上限 Chrome 49 / Firefox 52 ESR，仅 ES5；Vue 3 的 Proxy 不可 polyfill）→ 立项 #213：前端降级 Vue 2.7 + Element UI + plugin-legacy 双轨构建；项目文档 `docs/xp-compat/README.md`；开发基线 v1.3.22；XP 包不混入 #207，完成后以 1.3.23 独立增量交付。
+- 下次增量入包内容已标记：`ops/incremental/NEXT-BASELINE.md` "待入内容标记" 节（#207 必入 / #204 应入 / #203 候选 / #213 后续独立包）。
+- tag 事实核对：远端**尚无 v1.3.22 tag**（NEXT-BASELINE 原表述为目标 tag）；#207 打包前先在 main 补打。
+- CI 修复：2026-09-25 起所有 PR backend 恒红，根因=check_repo_files.py 缺 `docs/deploy-evidence/**`、`ops/incremental/**`（含离线 vendor wheel）白名单；PR 带红照合是既成事实但不可持续。本批补前缀白名单+放行逻辑。
+- 分支保护核实：GitHub 实测 main **无 protection、无 ruleset**；CI 仅 PR 触发，main 无 push 流水线（文档 §7 已记）。
