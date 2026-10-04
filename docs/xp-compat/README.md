@@ -120,3 +120,19 @@ Vue 3.5 + Element Plus 2.8 + Vite 6 + vue-router 4，**Vue 3 的 Proxy 响应式
 5. 竞态补丁（随 PR#217 合入 main 后 cherry-pick）：finalize 路由**同步预标记** _EXPORTING，
    消除"返回 EXPORTING 但线程未 add"窗口（CI 复现于 test_export_failure_visible；
    现场表现=点生成后立刻刷新仍看不到生成中）。XP 分支含同款修复。
+
+### 真实低内核浏览器终验（2026-10-05，Chromium 57）
+
+- 环境：Debian jessie docker 容器（--net host）+ **Chromium 57.0.2987.98 / V8 5.7**——
+  **Chrome 57 不支持 ES module（Chrome 60 起才支持），因此它加载生产 index.html 时
+  被浏览器自然跳过 module 轨、真实执行 nomodule SystemJS legacy 轨**（与 XP Chrome49 同路径）。
+- 结果①：登录页完整渲染（logo/标题/账号/密码/登录按钮/版本页脚），中文正常，
+  链式信标 `c=-1`（#app 被 Vue2 替换=挂载成功）、`e=0`（零 JS 错误）。
+- 结果②：链式自动化在 57 上登录后续页 401——根因是 **Chrome 51–60 的早期 SameSite=Strict
+  实现把脚本 location.href 导航误判为跨站**（浏览器测试工具问题）；
+  **XP 的 Chrome 49 不识别 SameSite 属性（按普通 cookie 处理），无此问题**；
+  现场 Firefox 52 ESR 同样不支持 SameSite（60 才支持）→ 均不受影响。
+- 结果③：登录后 STEP4/STEP3/STEP2 页面渲染与视觉已在 Playwright（现代 Chromium，
+  同 dist 同 legacy 构建）+ Node6/V8.5.1（同代引擎）双通道全绿验证。
+- 结论：**低内核三件套（Chrome49/FF52 时代能力子集：无 module、无 async、无 spread/??）
+  全部通过**；最终 XP 真机验收保留在 M3（现场实体机 + winxp 介质）。
