@@ -117,3 +117,6 @@ Vue 3.5 + Element Plus 2.8 + Vite 6 + vue-router 4，**Vue 3 的 Proxy 响应式
 
 **终验截图（全部正常，pageerror=0）**：STEP4 历史清单（生成中/已完成两行+横幅）、STEP3 人工调整
 （历史计算记录 5 行+汇总卡+调参区）、STEP2 任务列表、Profiles、登录页；后端 pytest 307 全绿。
+5. 竞态补丁（随 PR#217 合入 main 后 cherry-pick）：finalize 路由**同步预标记** _EXPORTING，
+   消除"返回 EXPORTING 但线程未 add"窗口（CI 复现于 test_export_failure_visible；
+   现场表现=点生成后立刻刷新仍看不到生成中）。XP 分支含同款修复。
