@@ -218,7 +218,7 @@ onMounted(refresh)
         <el-table-column label="覆盖率" width="110"><template #default="scope">{{ percent(scope.row.metrics.truth_coverage) }}</template></el-table-column>
         <el-table-column label="Top1准确率" width="120"><template #default="scope">{{ percent(scope.row.metrics.top1_accuracy) }}</template></el-table-column>
         <el-table-column label="最终准确率" width="120"><template #default="scope">{{ percent(scope.row.metrics.final_accuracy) }}</template></el-table-column>
-        <el-table-column label="操作" width="100"><template #default="scope"><el-button link type="primary" @click="loadEvaluation(scope.row.run_id)">查看</el-button></template></el-table-column>
+        <el-table-column label="操作" width="100"><template #default="scope"><el-button type="text" @click="loadEvaluation(scope.row.run_id)">查看</el-button></template></el-table-column>
       </el-table>
     </div>
   </div>

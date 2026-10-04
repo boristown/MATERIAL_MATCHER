@@ -258,7 +258,7 @@ watch(taskId, () => void loadCalibration())
           <el-table-column prop="review_threshold" label="人工下限" width="90" />
           <el-table-column prop="operator" label="操作人" min-width="110" />
           <el-table-column label="时间" min-width="170"><template #default="scope">{{ formatTime(scope.row.created_at) }}</template></el-table-column>
-          <el-table-column label="操作" width="90"><template #default="scope"><el-button link type="primary" @click="rollback(scope.row)">恢复</el-button></template></el-table-column>
+          <el-table-column label="操作" width="90"><template #default="scope"><el-button type="text" @click="rollback(scope.row)">恢复</el-button></template></el-table-column>
         </el-table>
       </div>
 

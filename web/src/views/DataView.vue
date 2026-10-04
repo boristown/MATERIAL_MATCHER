@@ -388,7 +388,7 @@ onMounted(async () => {
           · 共 {{ mappingCount }} 条
           · 最近更新：{{ formatDateTime(currentUpdated) }}
         </span>
-        <el-button v-if="selectedId && !creatingNew" link type="primary" @click="showHistory">查看历史</el-button>
+        <el-button v-if="selectedId && !creatingNew" type="text" @click="showHistory">查看历史</el-button>
       </div>
 
       <div v-if="creatingNew" class="syn-name">
@@ -447,7 +447,7 @@ onMounted(async () => {
           <span class="syn-arrow" aria-hidden="true">→</span>
           <el-input v-model="row.target" placeholder="例如：光电耦合器" :disabled="!canMaintain" />
           <span class="syn-actions">
-            <el-button v-if="canMaintain" link type="danger" @click="removeMappingRow(index)">删除</el-button>
+            <el-button v-if="canMaintain" type="text" class="mm-text-danger" @click="removeMappingRow(index)">删除</el-button>
           </span>
         </div>
         <p v-if="!visibleRows.length && rows.length" class="syn-empty">没有匹配“{{ searchKeyword }}”的同义词。</p>

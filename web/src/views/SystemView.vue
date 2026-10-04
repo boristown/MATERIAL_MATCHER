@@ -260,7 +260,7 @@ onMounted(refresh)
                 <template #default="scope"><span class="date-value">{{ formatDateTime(scope.row.updated_at) }}</span></template>
               </el-table-column>
               <el-table-column label="操作" width="120" align="center" header-align="center">
-                <template #default="scope"><el-button link type="primary" @click="openReset(scope.row)">重置密码</el-button></template>
+                <template #default="scope"><el-button type="text" @click="openReset(scope.row)">重置密码</el-button></template>
               </el-table-column>
             </el-table>
             <el-alert title="管理员可维护账号；操作员可执行匹配任务和同义词配置维护；复核员负责人工确认与结果复核；只读用户仅查看。系统禁止停用或降级最后一个管理员。" type="info" :closable="false" />

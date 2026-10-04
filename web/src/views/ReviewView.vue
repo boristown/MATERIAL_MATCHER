@@ -1176,16 +1176,16 @@ onBeforeUnmount(() => {
                 <td class="review-history-num-col">{{ formatNumber(row.unmatched) }}</td>
                 <td class="review-history-status-col"><span class="review-history-status" :class="row.result_file_id ? 'is-final' : (row.review > 0 ? 'is-pending' : 'is-done')">{{ historyStatusLabel(row) }}</span></td>
                 <td class="review-history-action-col">
-                  <el-button v-if="row.task_id === activeTaskId" link type="primary" disabled>查看中</el-button>
-                  <el-button v-else link type="primary" @click.stop="selectTask(row.task_id)">查看</el-button>
-                  <el-button link type="info" @click.stop="openTask(row.task_id)">详情</el-button>
+                  <el-button v-if="row.task_id === activeTaskId" type="text" disabled>查看中</el-button>
+                  <el-button v-else type="text" @click.stop="selectTask(row.task_id)">查看</el-button>
+                  <el-button type="text" class="mm-text-info" @click.stop="openTask(row.task_id)">详情</el-button>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div v-if="workspaceTasks.length > HISTORY_PREVIEW_LIMIT" class="review-history-more">
-          <el-button link type="primary" @click="historyExpanded = !historyExpanded">{{ historyExpanded ? '收起，只看最近 8 条' : `查看全部计算记录（${formatNumber(workspaceTasks.length)} 条）` }}</el-button>
+          <el-button type="text" @click="historyExpanded = !historyExpanded">{{ historyExpanded ? '收起，只看最近 8 条' : `查看全部计算记录（${formatNumber(workspaceTasks.length)} 条）` }}</el-button>
         </div>
       </section>
 
@@ -1200,7 +1200,7 @@ onBeforeUnmount(() => {
       <section v-if="importFeedback" class="review-import-feedback">
         <div class="review-feedback-head">
           <div><strong>人工匹配 Excel 上传结果</strong><span>已按服务端审计结果处理；冲突不会被静默覆盖。</span></div>
-          <el-button link @click="importFeedback = null">关闭</el-button>
+          <el-button type="text" @click="importFeedback = null">关闭</el-button>
         </div>
         <div class="review-import-grid">
           <div><span>成功</span><b>{{ formatNumber(importFeedback.success) }}</b></div>
@@ -1292,7 +1292,7 @@ onBeforeUnmount(() => {
             <strong v-if="selectAllFiltered">已选择当前筛选出的全部 {{ formatNumber(workbenchTotal) }} 条</strong>
             <strong v-else-if="selectedExplicitCount">已选择本页 {{ formatNumber(selectedExplicitCount) }} 条</strong>
             <span v-else>可先全选本页，再扩展到当前筛选全部结果</span>
-            <el-button v-if="allPageSelected && workbenchTotal > currentPageIds.length && !selectAllFiltered" link type="primary" @click="selectFilteredResults">选择当前筛选出的全部 {{ formatNumber(workbenchTotal) }} 条</el-button>
+            <el-button v-if="allPageSelected && workbenchTotal > currentPageIds.length && !selectAllFiltered" type="text" @click="selectFilteredResults">选择当前筛选出的全部 {{ formatNumber(workbenchTotal) }} 条</el-button>
           </div>
           <div class="review-bulk-actions">
             <el-button size="small" :disabled="!hasSelection" :loading="batchBusy" @click="runBatch('confirm_top1')">确认第一候选</el-button>
@@ -1353,15 +1353,15 @@ onBeforeUnmount(() => {
                       <button type="button" class="is-none" :class="{ 'is-selected': selectedByRow[item.source_row_id] === NONE_SELECTION }" @click="setSelectedValue(item, NONE_SELECTION)"><span>无匹配</span><b>均不匹配</b><small>不选 Top5</small></button>
                     </div>
                     <div v-else class="review-lazy-candidates">
-                      <el-button link type="primary" :loading="candidateLoading[item.source_row_id]" @click="toggleCandidates(item)">查看 Top 1～Top 5</el-button>
+                      <el-button type="text" :loading="candidateLoading[item.source_row_id]" @click="toggleCandidates(item)">查看 Top 1～Top 5</el-button>
                       <span v-if="candidateError[item.source_row_id]">候选读取失败，可重试</span>
                     </div>
                   </td>
                   <td class="review-action-col">
                     <div class="review-row-actions">
-                      <el-button link type="primary" :loading="candidateLoading[item.source_row_id]" @click="toggleCandidates(item)">{{ expandedRows[item.source_row_id] ? '收起对比' : '字段对比' }}</el-button>
-                      <el-button link type="primary" :disabled="!selectedByRow[item.source_row_id]" :loading="mutationBusyRow === item.source_row_id" @click="applyRowSelection(item)">确认</el-button>
-                      <el-button v-if="item.current_status === 'CONFIRMED' || item.current_status === 'UNMATCHED'" link type="info" :loading="mutationBusyRow === item.source_row_id" @click="restoreRow(item)">恢复原结果</el-button>
+                      <el-button type="text" :loading="candidateLoading[item.source_row_id]" @click="toggleCandidates(item)">{{ expandedRows[item.source_row_id] ? '收起对比' : '字段对比' }}</el-button>
+                      <el-button type="text" :disabled="!selectedByRow[item.source_row_id]" :loading="mutationBusyRow === item.source_row_id" @click="applyRowSelection(item)">确认</el-button>
+                      <el-button v-if="item.current_status === 'CONFIRMED' || item.current_status === 'UNMATCHED'" type="text" class="mm-text-info" :loading="mutationBusyRow === item.source_row_id" @click="restoreRow(item)">恢复原结果</el-button>
                     </div>
                   </td>
                 </tr>

@@ -1575,7 +1575,7 @@ onBeforeUnmount(() => {
                   >
                     <el-option v-for="targetValue in ruleTargetValueOptions(scope.row)" :key="targetValue" :label="targetValue" :value="targetValue"/>
                   </el-select>
-                  <el-button v-if="scope.row.value_mapping?.[sourceValue] !== undefined" link type="danger" size="small" @click="removeRuleValueMapping(scope.row, sourceValue)">清除</el-button>
+                  <el-button v-if="scope.row.value_mapping?.[sourceValue] !== undefined" type="text" class="mm-text-danger" size="small" @click="removeRuleValueMapping(scope.row, sourceValue)">清除</el-button>
                 </div>
               </div>
             </el-popover>
@@ -1596,7 +1596,7 @@ onBeforeUnmount(() => {
             </template>
             <template #default="scope"><el-switch v-model="scope.row.critical" size="small"/></template>
           </el-table-column>
-          <el-table-column label="" width="48" align="center"><template #default="scope"><el-button link type="danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
+          <el-table-column label="" width="48" align="center"><template #default="scope"><el-button type="text" class="mm-text-danger" size="small" @click="removeRule(scope.row.id)">删除</el-button></template></el-table-column>
         </el-table>
       </div>
 
@@ -1719,9 +1719,11 @@ onBeforeUnmount(() => {
         <el-table-column label="分/分差" width="110"><template #default="scope">{{ Number(scope.row.top1_score).toFixed(0) }} / {{ Number(scope.row.score_gap).toFixed(0) }}</template></el-table-column>
         <el-table-column label="冲突" width="70"><template #default="scope"><el-tag size="small" :type="scope.row.critical_conflict?'danger':'success'">{{ scope.row.critical_conflict?'有':'无' }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="230"><template #default="scope">
-          <el-button link size="small" @click="openCandidates(scope.row)">候选对比</el-button>
-          <el-button link type="primary" size="small" @click="confirmCandidate(scope.row)">确认</el-button>
-          <el-button link type="danger" size="small" @click="rejectItem(scope.row)">未匹配</el-button>
+          <span class="row-actions">
+            <el-button type="text" size="small" @click="openCandidates(scope.row)">候选对比</el-button>
+            <el-button type="text" size="small" @click="confirmCandidate(scope.row)">确认</el-button>
+            <el-button type="text" class="mm-text-danger" size="small" @click="rejectItem(scope.row)">未匹配</el-button>
+          </span>
         </template></el-table-column>
       </el-table>
       <div class="actions"><el-button @click="stage=1">← 查看进度</el-button><el-button type="primary" :loading="finalizing" @click="finalizeAndOpenResults">{{ finalizing ? '正式结果生成中…' : '下一步:输出结果 →' }}</el-button></div>
@@ -1817,9 +1819,11 @@ onBeforeUnmount(() => {
           <el-table :data="currentCandidate.field_scores" size="small">
             <el-table-column prop="rule_id" label="规则" width="120"/>
             <el-table-column label="源值" min-width="180"><template #default="scope">
-              <div>{{ scope.row.source_value }}</div>
-              <div v-if="scope.row.value_mapping_applied && scope.row.source_value_before_mapping" class="muted">原值 {{ scope.row.source_value_before_mapping }}</div>
-              <el-tag v-if="scope.row.unconfigured_source_values?.length" size="small" type="warning">未配置值：{{ scope.row.unconfigured_source_values.join('、') }}</el-tag>
+              <div class="mapping-source-cell">
+                <div>{{ scope.row.source_value }}</div>
+                <div v-if="scope.row.value_mapping_applied && scope.row.source_value_before_mapping" class="muted">原值 {{ scope.row.source_value_before_mapping }}</div>
+                <el-tag v-if="scope.row.unconfigured_source_values?.length" size="small" type="warning">未配置值：{{ scope.row.unconfigured_source_values.join('、') }}</el-tag>
+              </div>
             </template></el-table-column>
             <el-table-column prop="target_value" label="目标值" min-width="150"/>
             <el-table-column label="得分" width="80"><template #default="scope">{{ (scope.row.score*100).toFixed(0) }}</template></el-table-column>
