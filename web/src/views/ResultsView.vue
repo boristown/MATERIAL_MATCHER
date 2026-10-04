@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
@@ -18,6 +18,7 @@ type TaskRow = Record<string, unknown> & {
   finished_at?: string | null
   compute_duration_ms?: number | null
   result_file_id?: string | null
+  exporting?: boolean
   processed_rows: number
   total_rows: number
 }
@@ -106,10 +107,27 @@ function resultCompletedAt(task: TaskRow): string {
   return String(file?.created_at || task.finished_at || task.created_at || '')
 }
 
+function isGenerating(task: TaskRow): boolean {
+  return Boolean(task.exporting)
+}
+
 const generatedResults = computed(() => tasks.value
-  .filter(task => Boolean(task.result_file_id))
+  .filter(task => Boolean(task.result_file_id) || isGenerating(task))
   .slice()
   .sort((a, b) => resultCompletedAt(b).localeCompare(resultCompletedAt(a))))
+
+const generatingResults = computed(() => generatedResults.value.filter(isGenerating))
+
+let generatingPoll = 0
+watch(generatingResults, rows => {
+  if (rows.length && !generatingPoll) {
+    generatingPoll = window.setInterval(() => { void refreshTaskRows().catch(() => {}) }, 5000)
+  } else if (!rows.length && generatingPoll) {
+    window.clearInterval(generatingPoll)
+    generatingPoll = 0
+  }
+}, { immediate: true })
+onUnmounted(() => { if (generatingPoll) window.clearInterval(generatingPoll) })
 
 const requestedTaskId = computed(() => typeof route.query.task === 'string' ? route.query.task : '')
 const requestedTask = computed(() => requestedTaskId.value
@@ -378,24 +396,7 @@ async function forceGenerate(): Promise<void> {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [tasksResponse, filesResponse] = await Promise.all([api.get('/tasks'), api.get('/files')])
-    const files = (filesResponse.data ?? []) as FileRecord[]
-    resultFiles.value = Object.fromEntries(files.filter(file => file.role === 'result').map(file => [file.file_id, file]))
-    tasks.value = ((tasksResponse.data ?? []) as Record<string, unknown>[]).map(task => ({
-      ...task,
-      id: String(task.task_id),
-      scheme_name: String(task.scheme_name ?? '未命名方案'),
-      stage: String(task.stage ?? ''),
-      progress: Number(task.progress ?? 0),
-      status: String(task.status ?? ''),
-      created_at: String(task.created_at ?? ''),
-      started_at: task.started_at ? String(task.started_at) : null,
-      finished_at: task.finished_at ? String(task.finished_at) : null,
-      compute_duration_ms: task.compute_duration_ms == null ? null : Number(task.compute_duration_ms),
-      result_file_id: task.result_file_id ? String(task.result_file_id) : null,
-      processed_rows: Number(task.processed_rows ?? 0),
-      total_rows: Number(task.total_rows ?? 0),
-    }))
+    await refreshTaskRows()
     latestSummary.value = { pending_review: 0, confirmed: 0, unmatched: 0, automatic_matched: 0 }
     latestRows.value = []
     latestExports.value = {}
@@ -406,6 +407,28 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false
   }
+}
+
+async function refreshTaskRows(): Promise<void> {
+  const [tasksResponse, filesResponse] = await Promise.all([api.get('/tasks'), api.get('/files')])
+  const files = (filesResponse.data ?? []) as FileRecord[]
+  resultFiles.value = Object.fromEntries(files.filter(file => file.role === 'result').map(file => [file.file_id, file]))
+  tasks.value = ((tasksResponse.data ?? []) as Record<string, unknown>[]).map(task => ({
+    ...task,
+    id: String(task.task_id),
+    scheme_name: String(task.scheme_name ?? '未命名方案'),
+    stage: String(task.stage ?? ''),
+    progress: Number(task.progress ?? 0),
+    status: String(task.status ?? ''),
+    created_at: String(task.created_at ?? ''),
+    started_at: task.started_at ? String(task.started_at) : null,
+    finished_at: task.finished_at ? String(task.finished_at) : null,
+    compute_duration_ms: task.compute_duration_ms == null ? null : Number(task.compute_duration_ms),
+    result_file_id: task.result_file_id ? String(task.result_file_id) : null,
+    exporting: Boolean(task.exporting),
+    processed_rows: Number(task.processed_rows ?? 0),
+    total_rows: Number(task.total_rows ?? 0),
+  }))
 }
 
 function inputAssetDisplayName(asset: InputAssetInfo | null | undefined): string {
@@ -749,16 +772,24 @@ onMounted(load)
         <div><h3>历史结果</h3><p>已生成过正式 Excel 的匹配结果，可再次查看或下载。</p></div>
         <span class="results-history-count">{{ generatedResults.length }} 个结果</span>
       </div>
+      <div v-if="generatingResults.length" class="results-generating-banner">
+        <strong>{{ generatingResults.length }} 个任务的正式结果正在后台生成</strong>
+        <span>数据量大时可能需要 10–30 分钟；标为"生成中"的行正在后台生成新版，其现有文件为上一版而非最新结果。生成完成后会自动刷新入列，本页无需手动操作。</span>
+      </div>
       <el-table :data="generatedResults" size="default" empty-text="暂无历史结果">
-        <el-table-column label="方案名称" min-width="230"><template #default="scope"><a class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a></template></el-table-column>
+        <el-table-column label="方案名称" min-width="230"><template #default="scope"><a v-if="!isGenerating(scope.row)" class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a><span v-else>{{ scope.row.scheme_name }}</span></template></el-table-column>
         <el-table-column label="任务开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
         <el-table-column label="自动计算耗时" width="170"><template #default="scope">{{ formatDurationMs(scope.row.compute_duration_ms) }}</template></el-table-column>
-        <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
+        <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ isGenerating(scope.row) && !scope.row.result_file_id ? '—' : formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
         <el-table-column label="源数据总数" width="120"><template #default="scope">{{ scope.row.total_rows ? formatCount(scope.row.total_rows) : '—' }}</template></el-table-column>
-        <el-table-column label="状态" width="105"><template #default="scope"><el-tag size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="105"><template #default="scope"><el-tag v-if="isGenerating(scope.row)" size="small" type="warning">生成中</el-tag><el-tag v-else size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="操作" min-width="190"><template #default="scope">
-          <el-button link type="primary" @click="openTask(scope.row)">查看</el-button>
-          <el-button link type="primary" :loading="downloadingTaskId===scope.row.id" @click="download(scope.row)">下载正式结果</el-button>
+          <span v-if="isGenerating(scope.row) && !scope.row.result_file_id" class="results-generating-hint">完成后自动出现在此清单</span>
+          <span v-else class="results-row-actions">
+            <el-button link type="primary" @click="openTask(scope.row)">查看</el-button>
+            <el-button link type="primary" :loading="downloadingTaskId===scope.row.id" @click="download(scope.row)">下载正式结果</el-button>
+            <span v-if="isGenerating(scope.row)" class="results-generating-hint">新版生成中，此为上一版</span>
+          </span>
         </template></el-table-column>
       </el-table>
     </div>

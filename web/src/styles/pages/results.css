@@ -203,3 +203,7 @@
   .result-downloads-head span { display: block; margin-top: 3px; }
   .results-history { padding: 18px; }
 }
+
+.results-generating-banner { display: flex; flex-direction: column; gap: 4px; margin: 8px 0 12px; padding: 10px 14px; border: 1px solid #e6a23c; border-left-width: 4px; border-radius: 8px; background: #fdf6ec; color: #7c5314; font-size: 13px; line-height: 1.6; }
+.results-generating-banner strong { color: #b25e09; }
+.results-generating-hint { color: #b36b00; font-size: 12px; }
