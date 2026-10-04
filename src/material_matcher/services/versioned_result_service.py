@@ -57,12 +57,13 @@ class VersionedResultService:
         *,
         allow_unresolved_review: bool = False,
         force_regenerate: bool = False,
+        _premarked: bool = False,
     ) -> dict[str, object]:
         if not force_regenerate:
             ready = self.finalize_ready(task_id, allow_unresolved_review=allow_unresolved_review)
             if ready is not None:
                 return ready
-        if task_id in _EXPORTING:
+        if not _premarked and task_id in _EXPORTING:
             return {"task_id": task_id, "status": "EXPORTING"}
         _EXPORTING.add(task_id)
         _EXPORT_ERRORS.pop(task_id, None)
