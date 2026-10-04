@@ -98,3 +98,22 @@ Vue 3.5 + Element Plus 2.8 + Vite 6 + vue-router 4，**Vue 3 的 Proxy 响应式
 - 2026-09-25 以来所有 PR backend 恒红：根因是 `scripts/check_repo_files.py` 缺 `docs/deploy-evidence/**` 与 `ops/incremental/**`（vendor wheel）白名单，PR 均带红照合——本 PR 已修复
 - 红线：**9/15–9/21 未整理完的未提交内容（本地旧分支如 pr28 系列、.scratch 区）不得提交/推送**；本轮只提交：CI 门禁修复、本目录文档、NEXT-BASELINE 与 PATCH-TIMELINE 标记
 - 客户现场手改 5 处（MANUAL-手敲diff.md）与 r1/r2 均已同步回外网（tie_break 开关 / _tie_amb() / NOT EXISTS），核对记录见 git log 7305b0f、6f325ad 及 src 相应文件
+
+### M2 视觉回归与修复（2026-10-05，Playwright 真截图驱动）
+
+用户要求"调 Vue 版本后视觉核对"→ 真机截图暴露三组缺陷，已全部修复（commit 731f0d4）：
+
+1. **致命·双 Vue 实例**：element-ui 是 CJS，其 `require('vue')` 被 rollup 解析成第二份
+   `vue.runtime.common.js`，导致**所有 el-table 的 body 跨实例渲染崩溃**（表头在、行全空，
+   控制台 `getTagNamespace`/`toLowerCase`/`setAttribute` 报错）。此前"渲染成功"的截图只看了
+   无表格页面（登录/外壳），表格页从未真正通过。修复：vite alias `^vue$` → `vue/dist/vue.runtime.esm.js`
+   单副本 + `resolve.dedupe:['vue']`。**教训：npm ls vue 显示 deduped 不代表 bundle 单副本，必须查产物。**
+2. **el-button link 是 Element Plus 独有 prop**：UI2 下 27 处 link 按钮渲染成大块 primary 按钮。
+   映射 `link type="primary"→type="text"`；danger/success/info 配 `.mm-text-*` 颜色类。
+3. **Vue2 scoped slot 必须单根**：5 处多根列模板（ResultsView/TasksView×2/TaskWorkspaceBase×2）
+   补 span/div 包裹（此前因表格未渲染而未暴露）。
+4. 顺带修复 STEP4"生成中"盲区并双分支同步（main PR#217 / XP da2c4e0+731f0d4）：
+   重新生成（有旧文件）时同样显示"生成中"+行内"新版生成中，此为上一版"提示。
+
+**终验截图（全部正常，pageerror=0）**：STEP4 历史清单（生成中/已完成两行+横幅）、STEP3 人工调整
+（历史计算记录 5 行+汇总卡+调参区）、STEP2 任务列表、Profiles、登录页；后端 pytest 307 全绿。
