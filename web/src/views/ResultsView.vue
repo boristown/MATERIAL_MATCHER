@@ -108,7 +108,7 @@ function resultCompletedAt(task: TaskRow): string {
 }
 
 function isGenerating(task: TaskRow): boolean {
-  return Boolean(task.exporting) && !task.result_file_id
+  return Boolean(task.exporting)
 }
 
 const generatedResults = computed(() => tasks.value
@@ -774,21 +774,22 @@ onMounted(load)
       </div>
       <div v-if="generatingResults.length" class="results-generating-banner">
         <strong>{{ generatingResults.length }} 个任务的正式结果正在后台生成</strong>
-        <span>数据量大时可能需要 10–30 分钟；清单中标为"生成中"的行完成前不可下载，下方其它条目仍是最近一次已完成的版本。生成完成后会自动出现在清单中，本页无需手动刷新。</span>
+        <span>数据量大时可能需要 10–30 分钟；标为"生成中"的行正在后台生成新版，其现有文件为上一版而非最新结果。生成完成后会自动刷新入列，本页无需手动操作。</span>
       </div>
       <el-table :data="generatedResults" size="default" empty-text="暂无历史结果">
         <el-table-column label="方案名称" min-width="230"><template #default="scope"><a v-if="!isGenerating(scope.row)" class="row-link" @click="openTask(scope.row)">{{ scope.row.scheme_name }}</a><span v-else>{{ scope.row.scheme_name }}</span></template></el-table-column>
         <el-table-column label="任务开始时间" width="180"><template #default="scope">{{ formatTime(scope.row.started_at) }}</template></el-table-column>
         <el-table-column label="自动计算耗时" width="170"><template #default="scope">{{ formatDurationMs(scope.row.compute_duration_ms) }}</template></el-table-column>
-        <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ isGenerating(scope.row) ? '—' : formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
+        <el-table-column label="结果生成时间" width="180"><template #default="scope">{{ isGenerating(scope.row) && !scope.row.result_file_id ? '—' : formatTime(resultCompletedAt(scope.row)) }}</template></el-table-column>
         <el-table-column label="源数据总数" width="120"><template #default="scope">{{ scope.row.total_rows ? formatCount(scope.row.total_rows) : '—' }}</template></el-table-column>
         <el-table-column label="状态" width="105"><template #default="scope"><el-tag v-if="isGenerating(scope.row)" size="small" type="warning">生成中</el-tag><el-tag v-else size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="操作" min-width="190"><template #default="scope">
-          <span v-if="isGenerating(scope.row)" class="results-generating-hint">完成后自动出现在此清单</span>
-          <template v-else>
+          <span v-if="isGenerating(scope.row) && !scope.row.result_file_id" class="results-generating-hint">完成后自动出现在此清单</span>
+          <span v-else class="results-row-actions">
             <el-button link type="primary" @click="openTask(scope.row)">查看</el-button>
             <el-button link type="primary" :loading="downloadingTaskId===scope.row.id" @click="download(scope.row)">下载正式结果</el-button>
-          </template>
+            <span v-if="isGenerating(scope.row)" class="results-generating-hint">新版生成中，此为上一版</span>
+          </span>
         </template></el-table-column>
       </el-table>
     </div>
