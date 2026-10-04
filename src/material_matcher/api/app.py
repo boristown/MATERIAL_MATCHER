@@ -623,7 +623,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return ready
         if task_id in _EXPORTING:
             return {"task_id": task_id, "status": "EXPORTING"}
-        app.state.result_exporter.submit(_run_result_export, task_id, payload.force_regenerate)
+        # 同步预标记：消除"路由已返回 EXPORTING、线程尚未 add"的窗口，
+        # 否则 UI 立刻轮询 /api/tasks 会看到 exporting=False（STEP4 生成中不可见的根因之一）。
+        _EXPORTING.add(task_id)
+        try:
+            app.state.result_exporter.submit(_run_result_export, task_id, payload.force_regenerate)
+        except Exception:
+            _EXPORTING.discard(task_id)
+            raise
         return {"task_id": task_id, "status": "EXPORTING"}
 
     def _run_result_export(task_id: str, force_regenerate: bool = False) -> None:
@@ -632,6 +639,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 task_id,
                 allow_unresolved_review=True,
                 force_regenerate=force_regenerate,
+                _premarked=True,
             )
         except Exception:  # noqa: BLE001 - recorded by the service registry
             pass

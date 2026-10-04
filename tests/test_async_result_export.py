@@ -121,22 +121,17 @@ def test_reused_result_returns_synchronously(authed):
 
 def test_task_list_marks_exporting_so_step4_can_show_generating(authed, monkeypatch):
     """现场 bug：后台生成期间 STEP4 历史清单看不到该任务，完成后"突然出现"，
-    用户误把旧结果当最新。GET /api/tasks 必须带 exporting=true（供前端渲染生成中占位行）。"""
+    用户误把旧结果当最新。GET /api/tasks 必须带 exporting=true（供前端渲染生成中占位行）。
+    竞态回归：finalize 返回后**立即**轮询必须已见 exporting=true（路由同步预标记，无线程启动窗口）。"""
     prepared = _completed_task(authed)
     task_id = str(prepared["task"]["task_id"])
     _slow_export(monkeypatch, seconds=2.5)
     started = authed.post(f"/api/tasks/{task_id}/finalize", json={"allow_unresolved_review": True, "force_regenerate": True})
     assert started.status_code == 202, started.text
 
-    exporting_seen = False
-    for _ in range(30):
-        row = next((item for item in authed.get("/api/tasks").json() if str(item["task_id"]) == task_id), None)
-        assert row is not None
-        if row.get("exporting") is True:
-            exporting_seen = True
-            break
-        time.sleep(0.1)
-    assert exporting_seen, "task never reported exporting=true in /api/tasks"
+    row = next((item for item in authed.get("/api/tasks").json() if str(item["task_id"]) == task_id), None)
+    assert row is not None
+    assert row.get("exporting") is True, "exporting must be visible immediately after finalize returns (no thread-start race)"
 
     settled = _wait_export_settled(authed, task_id)
     assert settled.get("result_file_id")
