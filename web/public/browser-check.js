@@ -9,13 +9,13 @@
   if (match) {
     browser = 'firefox';
     version = parseInt(match[1], 10) || 0;
-    minimum = 79;
+    minimum = 52;
   } else {
     match = /(?:Chrome|Chromium)\/(\d+)/.exec(ua);
     if (match && !/(?:Edg|Edge|OPR)\//.test(ua)) {
       browser = 'chrome';
       version = parseInt(match[1], 10) || 0;
-      minimum = 87;
+      minimum = 49;
     }
   }
 
@@ -38,12 +38,14 @@
   }
 
   /*
-   * The main application is an ES module application. Browsers without
-   * `nomodule` support are too old to execute the production bundle safely.
-   * Known Firefox/Chrome versions are handled above so the upgrade page can
-   * show the exact product-specific minimum version.
+   * XP baseline: the production build ships an ESM track and a legacy
+   * SystemJS/nomodule track (chrome >= 49 / firefox >= 52 ESR). Legacy
+   * engines execute the nomodule track, so ES module support is NOT
+   * required. Instead require the ES2015 runtime baseline that both
+   * tracks depend on (Promise + Proxy + Symbol, covered by core-js
+   * polyfills on the ESM track and natively on the XP browsers).
    */
-  if (!('noModule' in document.createElement('script'))) {
+  if (typeof Promise === 'undefined' || typeof Proxy === 'undefined' || typeof Symbol === 'undefined') {
     block('', 0);
   }
 })();

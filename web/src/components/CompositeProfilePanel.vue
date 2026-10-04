@@ -22,9 +22,9 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'update:children': [value: CompositeChildView[]]
-  'source-parsed': [payload: { file: FileRecord; columns: ColumnInfo[]; inspection: Inspection }]
-  'update:sourceIdColumn': [value: string]
+  (e: 'update:children', value: CompositeChildView[]): void
+  (e: 'source-parsed', payload: { file: FileRecord; columns: ColumnInfo[]; inspection: Inspection }): void
+  (e: 'update:sourceIdColumn', value: string): void
 }>()
 
 const uploading = ref(false)
@@ -95,7 +95,7 @@ const candidates = computed(() =>
           <div><b>SAP 客户模板</b><p>只识别 A007 自己的源文件字段，不需要集团模板。</p></div>
           <el-tag v-if="sourceColumns.length" type="success" size="small">已识别 {{ sourceColumns.length }} 字段</el-tag>
         </div>
-        <el-upload
+        <el-upload action=""
           drag
           :auto-upload="false"
           :show-file-list="false"
@@ -111,10 +111,10 @@ const candidates = computed(() =>
         <label v-if="sourceColumns.length">
           <span>客户物料编码字段</span>
           <el-select
-            :model-value="sourceIdColumn"
+            :value="sourceIdColumn"
             filterable
             placeholder="请选择源数据唯一标识字段"
-            @update:model-value="(value: unknown) => emit('update:sourceIdColumn', String(value ?? ''))"
+            @input="emit('update:sourceIdColumn', String( $event ?? ''))"
           >
             <el-option v-for="column in sourceColumns" :key="column.header" :label="column.header" :value="column.header"/>
           </el-select>

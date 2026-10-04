@@ -295,6 +295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return str(item["updated_at"] or "")
 
     _drop_route(app, "/api/task-drafts/{draft_id}/start", "POST")
+    _drop_route(app, "/api/tasks", "GET")
     _drop_route(app, "/api/tasks/{task_id}/re-decide", "POST")
     _drop_route(app, "/api/tasks/{task_id}/finalize", "POST")
     _drop_route(app, "/api/tasks/{task_id}/result", "GET")
@@ -352,6 +353,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.input_freezer.submit(_run_input_freeze, str(task["task_id"]), draft_id)
         return app.state.tasks.get_task(str(task["task_id"]))
+
+    @app.get("/api/tasks")
+    def list_tasks_with_exporting() -> list[dict[str, object]]:
+        from material_matcher.services.versioned_result_service import export_state
+
+        items = app.state.tasks.list_tasks()
+        for item in items:
+            task_id = str(item.get("task_id") or "")
+            exporting, error = export_state(task_id)
+            item["exporting"] = exporting
+            if error:
+                item["export_error"] = error
+        return items
 
     @app.get("/api/tasks/{task_id}")
     def task_detail(task_id: str) -> dict[str, object]:

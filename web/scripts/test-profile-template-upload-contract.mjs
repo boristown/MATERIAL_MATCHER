@@ -92,8 +92,8 @@ console.log('profile template upload contract checks passed')
 
 const canvas = read('src/components/FieldMappingCanvas.vue')
 for (const token of [
-  'connect: [sourceField: string, targetField: string]',
-  'removeLine: [payload: RemoveLinePayload]',
+  '(e: \'connect\', sourceField: string, targetField: string): void',
+  '(e: \'removeLine\', payload: RemoveLinePayload): void',
   ':draggable="column.header !== sourceIdColumn"',
   '@dragstart="startSourceDrag(column.header, $event)"',
   '@drop="dropOnTarget(column.header, $event)"',

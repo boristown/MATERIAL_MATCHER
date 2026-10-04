@@ -22,8 +22,8 @@ const support = [
 const roleLabels: Record<string, string> = { admin: '管理员', operator: '操作员', reviewer: '复核员', viewer: '只读' }
 
 const activeStep = computed<number | null>(() => {
-  if (route.meta.workspace && activeWorkspaceStep.value) return activeWorkspaceStep.value
-  const fromRoute = Number(route.meta.navStep)
+  if (route.meta?.workspace && activeWorkspaceStep.value) return activeWorkspaceStep.value
+  const fromRoute = Number((route.meta as any)?.navStep)
   return Number.isInteger(fromRoute) && fromRoute >= 1 && fromRoute <= 4 ? fromRoute : null
 })
 

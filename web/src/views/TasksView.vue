@@ -108,17 +108,19 @@ onBeforeUnmount(() => { if (liveTimer) window.clearInterval(liveTimer) })
 
     <div class="panel">
       <div class="section-head"><h3 style="margin:0">历史运行与草稿</h3></div>
-      <el-table :data="rows" size="default">
-        <el-table-column label="方案名称" min-width="240"><template #default="scope"><a class="row-link" @click="open(scope.row)">{{ scope.row.schemeName }}</a><div v-if="scope.row.kind === 'task'" class="row-sub">第 {{ scope.row.runNumber }} 次计算</div></template></el-table-column>
+      <el-table :data="rows">
+        <el-table-column label="方案名称" min-width="240"><template #default="scope"><span><a class="row-link" @click="open(scope.row)">{{ scope.row.schemeName }}</a><span v-if="scope.row.kind === 'task'" class="row-sub">第 {{ scope.row.runNumber }} 次计算</span></span></template></el-table-column>
         <el-table-column prop="stage" label="阶段" width="120"/>
         <el-table-column label="进度" width="170"><template #default="scope"><el-progress :percentage="Math.round(Number(scope.row.progress ?? 0))" :stroke-width="8" :status="scope.row.status==='FAILED'?'exception':scope.row.status==='COMPLETED'?'success':undefined"/></template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="scope"><el-tag size="small" :type="statusTagType(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="任务开始时间" width="180"><template #default="scope">{{ scope.row.kind === 'task' ? formatTimePoint(scope.row.startedAt) : '—' }}</template></el-table-column>
         <el-table-column label="自动计算耗时" width="170"><template #default="scope">{{ scope.row.kind === 'task' ? formatDurationMs(scope.row.computeDurationMs) : '—' }}</template></el-table-column>
         <el-table-column label="操作" min-width="170"><template #default="scope">
-          <el-button link type="primary" @click="open(scope.row)">{{ scope.row.status === 'COMPLETED' ? '查看' : '继续' }}</el-button>
-          <el-button v-if="scope.row.kind==='task' && scope.row.status === 'RUNNING'" link type="primary" @click="open(scope.row)">实时看板</el-button>
-          <el-button v-if="scope.row.kind==='task' && scope.row.status==='COMPLETED'" link type="success" @click="evaluate(scope.row)">准确率验收</el-button>
+          <span class="row-actions">
+            <el-button type="text" @click="open(scope.row)">{{ scope.row.status === 'COMPLETED' ? '查看' : '继续' }}</el-button>
+            <el-button v-if="scope.row.kind==='task' && scope.row.status === 'RUNNING'" type="text" @click="open(scope.row)">实时看板</el-button>
+            <el-button v-if="scope.row.kind==='task' && scope.row.status==='COMPLETED'" type="text" class="mm-text-success" @click="evaluate(scope.row)">准确率验收</el-button>
+          </span>
         </template></el-table-column>
       </el-table>
     </div>

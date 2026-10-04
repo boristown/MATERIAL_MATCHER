@@ -173,6 +173,7 @@ watch(taskId, () => void loadCalibration())
 </script>
 
 <template>
+  <div class="xp-single-root">
   <section v-if="taskId && stats" class="calibration-panel" v-loading="loading">
     <div class="calibration-title-row">
       <div>
@@ -257,7 +258,7 @@ watch(taskId, () => void loadCalibration())
           <el-table-column prop="review_threshold" label="人工下限" width="90" />
           <el-table-column prop="operator" label="操作人" min-width="110" />
           <el-table-column label="时间" min-width="170"><template #default="scope">{{ formatTime(scope.row.created_at) }}</template></el-table-column>
-          <el-table-column label="操作" width="90"><template #default="scope"><el-button link type="primary" @click="rollback(scope.row)">恢复</el-button></template></el-table-column>
+          <el-table-column label="操作" width="90"><template #default="scope"><el-button type="text" @click="rollback(scope.row)">恢复</el-button></template></el-table-column>
         </el-table>
       </div>
 
@@ -274,7 +275,9 @@ watch(taskId, () => void loadCalibration())
   </section>
 
   <TaskWorkspaceBase :key="baseKey" />
+  </div>
 </template>
+
 
 <style scoped>
 .calibration-panel { margin: 16px 20px 0; padding: 16px 18px; border: 1px solid #d9e2ef; border-radius: 10px; background: #fff; box-shadow: 0 1px 4px rgba(15, 23, 42, .05); }

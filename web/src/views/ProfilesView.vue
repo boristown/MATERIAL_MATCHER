@@ -43,7 +43,8 @@ async function openVersions(row: ProfileRow): Promise<void> {
   versions.value = (await api.get(`/profiles/${row.profile_id}/versions`)).data ?? []
   versionsVisible.value = true
 }
-async function rollback(row: ProfileRow, versionNo: number): Promise<void> {
+async function rollback(row: ProfileRow | null, versionNo: number): Promise<void> {
+  if (!row) return
   try {
     await ElMessageBox.confirm(`将基于 v${versionNo} 复制生成新的发布版本(历史版本保持不变),确认回滚?`, '回滚方案', { type: 'warning' })
     await api.post(`/profiles/${row.profile_id}/rollback/${versionNo}`)
@@ -91,14 +92,14 @@ onMounted(async () => {
         </div>
       </div>
     </div>
-    <el-dialog v-model="versionsVisible" :title="`版本历史 · ${versionsOf?.name ?? ''}`" width="640px">
+    <el-dialog :visible.sync="versionsVisible" :title="`版本历史 · ${versionsOf?.name ?? ''}`" width="640px">
       <el-table :data="versions" size="small">
         <el-table-column prop="version_no" label="版本" width="70"/>
         <el-table-column label="状态" width="100"><template #default="scope"><el-tag size="small" :type="scope.row.status==='PUBLISHED'?'success':'info'">{{ scope.row.status }}</el-tag></template></el-table-column>
         <el-table-column label="SHA-256" min-width="160"><template #default="scope"><code>{{ String(scope.row.sha256).slice(0, 16) }}…</code></template></el-table-column>
         <el-table-column prop="created_at" label="时间" min-width="150"><template #default="scope">{{ String(scope.row.created_at).slice(0, 19).replace('T', ' ') }}</template></el-table-column>
         <el-table-column label="来源" min-width="140"><template #default="scope">{{ String(scope.row.document?.advanced?.origin ?? '') }}</template></el-table-column>
-        <el-table-column label="" width="80"><template #default="scope"><el-button v-if="scope.row.status==='PUBLISHED'" link size="small" @click="rollback(versionsOf!, scope.row.version_no)">回滚</el-button></template></el-table-column>
+        <el-table-column label="" width="80"><template #default="scope"><el-button v-if="scope.row.status==='PUBLISHED'" type="text" size="small" @click="rollback(versionsOf, scope.row.version_no)">回滚</el-button></template></el-table-column>
       </el-table>
     </el-dialog>
   </div>
