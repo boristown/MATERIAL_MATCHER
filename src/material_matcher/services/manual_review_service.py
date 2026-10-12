@@ -598,7 +598,10 @@ class ManualReviewService:
 
         def write_cell(row: int, col: int, value: object, fmt=None) -> None:
             if value is None or value == "":
-                sheet.write_blank(row, col, None, fmt or text_format)
+                # constant_memory 模式允许跳过单元格；无视觉样式的空格直接跳过
+                # （profile：90k 次 write_blank 占导出耗时 ~58%）。
+                if fmt is not None and fmt is not text_format:
+                    sheet.write_blank(row, col, None, fmt)
             elif isinstance(value, bool):
                 sheet.write_string(row, col, str(value), fmt or text_format)
             elif isinstance(value, (int, float)):

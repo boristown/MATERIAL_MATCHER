@@ -44,6 +44,13 @@ class EmbeddingCache:
     def key(text: str, text_signature: str) -> str:
         return hashlib.sha256((text_signature + "\0" + text).encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def model_key(text: str) -> str:
+        # Model-scoped text key: the cache root is already separated by the
+        # provider fingerprint, so (model, text) fully determines the vector.
+        # Plan/signature changes no longer invalidate unchanged texts.
+        return hashlib.sha256(("\0" + text).encode("utf-8")).hexdigest()
+
     def _read(self, vector_index: int) -> np.ndarray:
         item_bytes = self.provider.spec.dimensions * np.dtype(np.float16).itemsize
         with self.vector_path.open("rb") as stream:
@@ -102,17 +109,25 @@ class EmbeddingCache:
     def get_or_embed(self, texts: Sequence[str], text_signature: str, batch_size: int) -> tuple[np.ndarray, CacheStats]:
         if not texts:
             return np.empty((0, self.provider.spec.dimensions), dtype=np.float32), CacheStats(0, 0)
-        keys = [self.key(text, text_signature) for text in texts]
+        model_keys = [self.model_key(text) for text in texts]
         unique_order: list[str] = []
         text_by_key: dict[str, str] = {}
-        for key, text in zip(keys, texts):
-            if key not in text_by_key:
-                unique_order.append(key); text_by_key[key] = text
+        for mk, text in zip(model_keys, texts):
+            if mk not in text_by_key:
+                unique_order.append(mk); text_by_key[mk] = text
         cached = self.get_many(unique_order)
-        missing = [key for key in unique_order if key not in cached]
         produced: list[tuple[str, np.ndarray]] = []
+        legacy_missing = [mk for mk in unique_order if mk not in cached]
+        if legacy_missing:
+            legacy_keys = {mk: self.key(text_by_key[mk], text_signature) for mk in legacy_missing}
+            legacy_cached = self.get_many(list(legacy_keys.values()))
+            for mk, legacy_key in legacy_keys.items():
+                if legacy_key in legacy_cached:
+                    cached[mk] = legacy_cached[legacy_key]
+                    produced.append((mk, legacy_cached[legacy_key]))
+        missing = [mk for mk in unique_order if mk not in cached]
         if missing:
-            missing_texts = [text_by_key[key] for key in missing]
+            missing_texts = [text_by_key[mk] for mk in missing]
             budget = self.token_budget or max(1, int(batch_size)) * self.provider.spec.max_length
             embed_batched = getattr(self.provider, "embed_batched", None)
             if callable(embed_batched):
@@ -124,9 +139,11 @@ class EmbeddingCache:
                 vectors = np.concatenate(parts, axis=0)
             if vectors.shape != (len(missing), self.provider.spec.dimensions):
                 raise ValueError("embedding provider returned unexpected shape")
-            for key, vector in zip(missing, vectors):
-                cached[key] = vector
-                produced.append((key, vector))
+            for mk, vector in zip(missing, vectors):
+                cached[mk] = vector
+                produced.append((mk, vector))
+                # Dual-write the legacy key so older releases keep hitting cache.
+                produced.append((self.key(text_by_key[mk], text_signature), vector))
         self.put_many(produced)
-        result = np.stack([cached[key] for key in keys]).astype(np.float32, copy=False)
+        result = np.stack([cached[mk] for mk in model_keys]).astype(np.float32, copy=False)
         return normalize_embeddings(result), CacheStats(hits=len(unique_order) - len(missing), misses=len(missing))

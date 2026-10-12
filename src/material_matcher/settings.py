@@ -44,6 +44,7 @@ class Settings:
     embedding_batch_size: int = 128
     embedding_token_budget: int = 16_384
     embedding_intra_threads: int = 0
+    embedding_workers: int = 1
     index_scan_block_rows: int = 8192
     index_scan_workers: int = 0
     match_workers: int = 4
@@ -111,6 +112,7 @@ class Settings:
             embedding_batch_size=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_BATCH_SIZE", "128")),
             embedding_token_budget=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_TOKEN_BUDGET", "16384")),
             embedding_intra_threads=int(os.getenv("MATERIAL_MATCHER_EMBEDDING_INTRA_THREADS", "0")),
+            embedding_workers=max(1, int(os.getenv("MATERIAL_MATCHER_EMBEDDING_WORKERS", "1"))),
             index_scan_block_rows=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_BLOCK_ROWS", "8192")),
             index_scan_workers=int(os.getenv("MATERIAL_MATCHER_INDEX_SCAN_WORKERS", "0")),
             match_workers=max(1, int(os.getenv("MATERIAL_MATCHER_MATCH_WORKERS", "4"))),
