@@ -94,14 +94,25 @@ class EmbeddingCache:
             self.vector_path.touch(exist_ok=True)
             start_index = self.vector_path.stat().st_size // item_bytes
             rows: list[tuple[str, int]] = []
+            # 批内去重：双写（model_key+legacy key）共享同一向量偏移，向量文件不翻倍。
+            seen_vector_index: dict[bytes, int] = {}
+            write_items: list[tuple[str, np.ndarray]] = []
+            for key, vector in pending:
+                normalized = normalize_embeddings(np.asarray(vector, dtype=np.float32).reshape(1, -1))[0]
+                if normalized.shape[0] != self.provider.spec.dimensions:
+                    raise ValueError("embedding cache dimension mismatch")
+                payload = normalized.astype(np.float16).tobytes(order="C")
+                shared = seen_vector_index.get(payload)
+                if shared is not None:
+                    rows.append((key, shared))
+                    continue
+                seen_vector_index[payload] = start_index + len(write_items)
+                write_items.append((key, payload))
             with self.vector_path.open("ab") as stream:
-                for offset, (key, vector) in enumerate(pending):
-                    normalized = normalize_embeddings(np.asarray(vector, dtype=np.float32).reshape(1, -1))[0]
-                    if normalized.shape[0] != self.provider.spec.dimensions:
-                        raise ValueError("embedding cache dimension mismatch")
-                    stream.write(normalized.astype(np.float16).tobytes(order="C"))
-                    rows.append((key, start_index + offset))
+                for key, payload in write_items:
+                    stream.write(payload)
                 stream.flush()
+            rows.extend((key, index) for index, (key, _) in enumerate(write_items, start=start_index))
             with self._connect() as connection:
                 connection.executemany("INSERT OR IGNORE INTO entries(cache_key,vector_index) VALUES(?,?)", rows)
                 connection.commit()

@@ -324,3 +324,30 @@ def test_redecide_preview_is_side_effect_free_and_threshold_only(tmp_path: Path)
         ).fetchone()
     assert after_apply == {"r1": "MATCHED", "r2": "MATCHED", "r3": "MATCHED", "r4": "UNMATCHED", "r5": "UNMATCHED", "r6": "CONFIRMED"}
     assert json.loads(str(audit["payload"]))["success_threshold"] == 70
+
+
+def test_use_vector_scan_mode_still_enabled_for_semantic_rules(tmp_path):
+    """召回方式=扫描 且规则含智能匹配时，必须走向量路径（否则 semantic 无分数直接 409）。"""
+    import json as _json
+    from material_matcher.domain.models import MatchingConfig
+    from material_matcher.settings import Settings
+    from material_matcher.storage.metadata import MetadataRepository
+    from material_matcher.services.match_service import MatchService
+
+    settings = Settings(data_dir=tmp_path / "d", config_dir=tmp_path / "e", log_dir=tmp_path / "l", admin_password="x")
+    service = MatchService(MetadataRepository(settings.metadata_db_path), None, settings)  # type: ignore[arg-type]
+    target = tmp_path / "t.xlsx"
+    target.write_bytes(b"x")
+
+    def cfg(mode, matcher):
+        return MatchingConfig.model_validate({
+            "rules": [{"id": "n", "source": {"fields": ["a"]}, "target": {"fields": ["a"]}, "matcher": matcher, "weight": 100}],
+            "decision": {"success_threshold": 80, "review_enabled": True, "review_threshold": 50, "top_n": 5},
+            "retrieval": {"mode": mode, "retrieval_top_k": 10, "oversample": 2},
+            "advanced": {},
+        })
+
+    assert service._use_vector(cfg("scan", "semantic"), target) is True
+    assert service._use_vector(cfg("auto", "semantic"), target) is True
+    assert service._use_vector(cfg("vector", "exact"), target) is True
+    assert service._use_vector(cfg("scan", "exact"), target) is False

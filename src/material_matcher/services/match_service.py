@@ -154,10 +154,12 @@ class MatchService:
     def _use_vector(self, config: MatchingConfig, target_path: Path) -> bool:
         if config.retrieval.mode == "vector":
             return True
+        if any(rule.matcher == "semantic" or (rule.matcher == "hybrid" and bool(rule.matcher_options.get("include_semantic"))) for rule in config.rules):
+            # 语义计分必须有查询/目标向量：召回方式选"扫描"也不能关闭向量路径，
+            # 否则 semantic 规则在无索引路径会直接 SEMANTIC_PROVIDER_NOT_READY。
+            return True
         if config.retrieval.mode == "scan":
             return False
-        if any(rule.matcher == "semantic" or (rule.matcher == "hybrid" and bool(rule.matcher_options.get("include_semantic"))) for rule in config.rules):
-            return True
         return detect_layout(target_path).row_count_estimate > self.settings.baseline_max_target_rows
 
     def _run_rows(

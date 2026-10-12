@@ -198,6 +198,14 @@ class ParallelEmbeddingProvider:
             initializer=_worker_init,
             initargs=(self._kwargs,),
         )
+        # Pre-spawn workers and load their ORT sessions now, so the first
+        # embedding batch does not pay process + model warm-up cost.
+        try:
+            warm = [self._executor.submit(_worker_embed_batched, [], 8, 1024) for _ in range(self.workers)]
+            for future in warm:
+                future.result(timeout=600)
+        except Exception:  # noqa: BLE001 - warm-up is best effort
+            pass
 
     @property
     def spec(self):
