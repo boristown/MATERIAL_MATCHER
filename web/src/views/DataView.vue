@@ -122,6 +122,74 @@ async function removeCheckedRows(): Promise<void> {
   if (!rows.value.length) rows.value.push({ source: '', target: '' })
 }
 
+const importVisible = ref(false)
+const importBusy = ref(false)
+const importFileId = ref('')
+const importFileName = ref('')
+const importColumns = ref<string[]>([])
+const importSourceColumn = ref('')
+const importTargetColumn = ref('')
+const importMode = ref<'merge' | 'replace'>('merge')
+
+function openImportDialog(): void {
+  importFileId.value = ''
+  importFileName.value = ''
+  importColumns.value = []
+  importSourceColumn.value = ''
+  importTargetColumn.value = ''
+  importMode.value = 'merge'
+  importVisible.value = true
+}
+
+async function onImportFileSelected(file: { raw?: File }): Promise<void> {
+  const raw = file.raw
+  if (!raw) return
+  importBusy.value = true
+  try {
+    const form = new FormData()
+    form.append('role', 'supplement')
+    form.append('file', raw, raw.name)
+    const data = (await api.post('/files/upload', form)).data
+    importFileId.value = String(data.file.file_id)
+    importFileName.value = String(data.file.original_name ?? raw.name)
+    importColumns.value = ((data.inspection?.columns ?? []) as Array<Record<string, unknown>>).map(column => String(column.header))
+    importSourceColumn.value = importColumns.value.find(header => /源|原始|写法|同义/.test(header)) ?? importColumns.value[0] ?? ''
+    importTargetColumn.value = importColumns.value.find(header => /标准|目标|规范/.test(header)) ?? importColumns.value.find(header => header !== importSourceColumn.value) ?? ''
+  } catch (error) {
+    ElMessage.error((error as Error).message || '导入文件解析失败')
+  } finally {
+    importBusy.value = false
+  }
+}
+
+async function runSynonymImport(): Promise<void> {
+  if (!importFileId.value || !importSourceColumn.value || !importTargetColumn.value) {
+    ElMessage.warning('请先上传文件并选择源列与标准词列')
+    return
+  }
+  if (importSourceColumn.value === importTargetColumn.value) {
+    ElMessage.warning('源列与标准词列不能相同')
+    return
+  }
+  importBusy.value = true
+  try {
+    const result = (await api.post(`/dictionaries/${selectedId.value}/synonyms/import`, {
+      file_id: importFileId.value,
+      source_column: importSourceColumn.value,
+      target_column: importTargetColumn.value,
+      mode: importMode.value,
+      base_version_no: currentVersion.value || undefined,
+    })).data
+    ElMessage.success(`导入完成：新增 ${result.added} 条、更新 ${result.updated} 条、跳过 ${result.skipped} 条，已保存为 v${result.version_no}`)
+    importVisible.value = false
+    if (selected.value) await openForEdit(selected.value)
+  } catch (error) {
+    ElMessage.error((error as Error).message || '导入失败')
+  } finally {
+    importBusy.value = false
+  }
+}
+
 function serializeRows(): string {
   return JSON.stringify(rows.value.map(row => [row.source.trim(), row.target.trim()]))
 }
@@ -415,6 +483,7 @@ onMounted(async () => {
       <div class="syn-toolbar">
         <el-input v-model="searchKeyword" clearable placeholder="搜索同义词（其他写法或标准写法）" class="syn-search" />
         <div class="syn-toolbar__actions">
+          <el-button v-if="canMaintain" plain :disabled="!selectedId || creatingNew" @click="openImportDialog">Excel 批量导入</el-button>
           <el-button v-if="canMaintain" type="danger" plain :disabled="!checkedCount" @click="removeCheckedRows">删除已选 {{ checkedCount }} 条</el-button>
           <el-button v-if="canMaintain" :disabled="!dirty" @click="revertChanges">放弃修改</el-button>
           <el-button v-if="canMaintain" type="primary" plain @click="addMappingRow">+ 添加一条</el-button>
@@ -529,6 +598,39 @@ onMounted(async () => {
         <el-table-column label="创建账号" min-width="120"><template #default="scope">{{ scope.row.created_by || '-' }}</template></el-table-column>
         <el-table-column label="创建时间" min-width="170"><template #default="scope">{{ formatDateTime(scope.row.created_at) }}</template></el-table-column>
       </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="importVisible" title="Excel 批量导入同义词" width="640px">
+      <p class="history-explain">上传包含「其他写法」与「标准写法」两列的 Excel/CSV，选择对应列后批量导入。导入结果直接保存为新的不可变版本，可在版本历史中回看。</p>
+      <div class="import-row">
+        <el-upload :auto-upload="false" :show-file-list="false" accept=".xlsx,.xlsm,.csv" :on-change="onImportFileSelected">
+          <el-button :loading="importBusy">选择文件</el-button>
+        </el-upload>
+        <span v-if="importFileName" class="import-file">已选：{{ importFileName }}（{{ importColumns.length }} 列）</span>
+      </div>
+      <template v-if="importColumns.length">
+        <div class="import-row">
+          <span class="import-label">写法列（源）</span>
+          <el-select v-model="importSourceColumn" filterable placeholder="选择源列" class="import-select">
+            <el-option v-for="column in importColumns" :key="column" :label="column" :value="column"/>
+          </el-select>
+          <span class="import-label">标准列（目标）</span>
+          <el-select v-model="importTargetColumn" filterable placeholder="选择标准词列" class="import-select">
+            <el-option v-for="column in importColumns" :key="column" :label="column" :value="column"/>
+          </el-select>
+        </div>
+        <div class="import-row">
+          <span class="import-label">导入方式</span>
+          <el-radio-group v-model="importMode">
+            <el-radio-button value="merge">合并（保留现有，新增/更新）</el-radio-button>
+            <el-radio-button value="replace">替换（以文件为准）</el-radio-button>
+          </el-radio-group>
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="importVisible = false">取消</el-button>
+        <el-button type="primary" :loading="importBusy" :disabled="!importFileId" @click="runSynonymImport">导入并保存新版本</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>

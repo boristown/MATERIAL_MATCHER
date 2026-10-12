@@ -56,3 +56,42 @@ def test_tie_break_default_auto_selects_first_candidate():
     from material_matcher.domain.models import DecisionConfig
     assert DecisionConfig().tie_break == "top1"
     assert DecisionConfig(tie_break="review").tie_break == "review"
+
+
+def _veto_config(veto_threshold):
+    rule = {'id': 'spec', 'source': {'fields': ['s_spec']}, 'target': {'fields': ['t_spec']}, 'matcher': 'exact', 'weight': 10}
+    if veto_threshold is not None:
+        rule['veto_threshold'] = veto_threshold
+    return MatchingConfig.model_validate({'rules': [
+        {'id': 'name', 'source': {'fields': ['s_name']}, 'target': {'fields': ['t_name']}, 'matcher': 'exact', 'weight': 90},
+        rule,
+    ], 'decision': {'success_threshold': 80, 'review_enabled': True, 'review_threshold': 50, 'top_n': 5}})
+
+
+def test_veto_threshold_zeroes_total_similarity_when_field_below_threshold():
+    config = _veto_config(60)
+    score = score_candidate({'s_name': '电阻', 's_spec': '0805'}, {'t_name': '电阻', 't_spec': '1206'}, config)
+    assert score.display_score == 0.0
+    assert any(item.vetoed for item in score.field_scores)
+    assert not score.auto_match_safe
+    assert decide_status(score.display_score, config) != 'MATCHED'
+
+
+def test_veto_threshold_not_triggered_when_field_meets_threshold():
+    config = _veto_config(60)
+    score = score_candidate({'s_name': '电阻', 's_spec': '0805'}, {'t_name': '电阻', 't_spec': '0805'}, config)
+    assert score.display_score == 100.0
+    assert not any(item.vetoed for item in score.field_scores)
+
+
+def test_veto_threshold_boundary_equal_is_not_below():
+    config = _veto_config(0)
+    score = score_candidate({'s_name': '电阻', 's_spec': 'A'}, {'t_name': '电阻', 't_spec': 'B'}, config)
+    assert not any(item.vetoed for item in score.field_scores)
+    assert score.display_score == 90.0
+
+
+def test_veto_disabled_by_default_keeps_legacy_weighted_score():
+    config = _veto_config(None)
+    score = score_candidate({'s_name': '电阻', 's_spec': '0805'}, {'t_name': '电阻', 't_spec': '1206'}, config)
+    assert score.display_score == 90.0

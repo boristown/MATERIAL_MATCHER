@@ -24,7 +24,7 @@ type FileRecord = { file_id: string; original_name: string; sha256?: string; rol
 type ColumnInfo = { header: string; business_hint?: string | null; datatype?: string | null; unique_count?: number | null; samples?: string[]; sample_values?: unknown[]; top_values?: unknown[]; enum_candidate?: boolean }
 type ParsedWorkbookPayload = { kind: 'source' | 'target'; file: FileRecord; inspection: any; columns: ColumnInfo[] }
 type FieldSide = { fields: string[]; fixed_value?: string | null; combine: 'concat' | 'coalesce' | 'best_of'; separator: string; pipeline: Array<Record<string, unknown>> }
-type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; __apiMatcher?: string; weight: number; critical: boolean; matcher_options: Record<string, unknown>; value_mapping: Record<string, string>; value_mapping_source_values: string[]; value_mapping_target_values: string[] }
+type Rule = { id: string; source: FieldSide; target: FieldSide; matcher: string; __apiMatcher?: string; weight: number; critical: boolean; veto_threshold?: number | null; matcher_options: Record<string, unknown>; value_mapping: Record<string, string>; value_mapping_source_values: string[]; value_mapping_target_values: string[] }
 type ProfileRow = { profile_id: string; name: string; latest_published_version?: number | null; updated_at?: string }
 type ProfileVersion = { version_no: number; status: string; sha256?: string; document: Record<string, any> }
 type ProfileDetail = { profile_id: string; name: string; draft?: ProfileVersion | null; latest_published?: ProfileVersion | null }
@@ -217,8 +217,24 @@ function makeRule(sourceFields: string[], targetFields: string[], matcher: strin
     id: `rule_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     source: { fields: sourceFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
     target: { fields: targetFields, fixed_value: null, combine: 'concat', separator: ' ', pipeline: [] },
-    matcher, __apiMatcher: matcher, weight, critical, matcher_options: {}, value_mapping: {}, value_mapping_source_values: [], value_mapping_target_values: [],
+    matcher, __apiMatcher: matcher, weight, critical, veto_threshold: null, matcher_options: {}, value_mapping: {}, value_mapping_source_values: [], value_mapping_target_values: [],
   }
+}
+
+function setRuleCombine(rule: Rule, mode: string): void {
+  const combine = mode === 'best_of' || mode === 'coalesce' ? mode : 'concat'
+  rule.source = { ...rule.source, combine }
+  rule.target = { ...rule.target, combine }
+}
+
+function setRuleSeparator(rule: Rule, value: string): void {
+  const separator = value === '' ? ' ' : value
+  rule.source = { ...rule.source, separator }
+  rule.target = { ...rule.target, separator }
+}
+
+function toggleRuleVeto(rule: Rule, enabled: boolean): void {
+  rule.veto_threshold = enabled ? 60 : null
 }
 
 function normalizeWeights(): void {
@@ -1588,6 +1604,32 @@ onBeforeUnmount(() => {
             </el-select>
           </template></el-table-column>
           <el-table-column label="权重" width="116" align="center"><template #default="scope"><el-input-number v-model="scope.row.weight" class="rule-weight-input" size="small" :min="0" :max="100" controls-position="right"/></template></el-table-column>
+          <el-table-column v-if="isProfileEditorMode" width="150" align="center">
+            <template #header>
+              <el-tooltip content="该规则关联多个字段时的组合方式：拼接比对=两边字段各按分隔符拼成一个值再比对；取最高分=各字段分别比对取最高；取首个非空=用第一个有值的字段。" placement="top">
+                <span class="critical-header">多字段组合 ⓘ</span>
+              </el-tooltip>
+            </template>
+            <template #default="scope">
+              <el-select :model-value="scope.row.source.combine" size="small" @update:model-value="setRuleCombine(scope.row, String($event))">
+                <el-option label="拼接比对" value="concat"/>
+                <el-option label="取最高分" value="best_of"/>
+                <el-option label="取首个非空" value="coalesce"/>
+              </el-select>
+              <el-input v-if="scope.row.source.combine === 'concat'" :model-value="scope.row.source.separator" size="small" maxlength="8" placeholder="分隔符" class="rule-separator-input" @update:model-value="setRuleSeparator(scope.row, String($event ?? ''))"/>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="isProfileEditorMode" width="150" align="center">
+            <template #header>
+              <el-tooltip content="一票否决：开启后，该字段得分低于否决阈值时，整个候选总相似度直接记 0（不再自动通过，转人工或不匹配）；与冲突阻断可同时开启。" placement="top">
+                <span class="critical-header">一票否决 ⓘ</span>
+              </el-tooltip>
+            </template>
+            <template #default="scope">
+              <el-switch :model-value="scope.row.veto_threshold != null" size="small" @update:model-value="toggleRuleVeto(scope.row, Boolean($event))"/>
+              <el-input-number v-if="scope.row.veto_threshold != null" v-model="scope.row.veto_threshold" size="small" :min="0" :max="100" :step="5" controls-position="right" class="rule-veto-input"/>
+            </template>
+          </el-table-column>
           <el-table-column v-if="isProfileEditorMode" width="94" align="center">
             <template #header>
               <el-tooltip content="开启后，该字段得分为 0 时标记冲突，候选不会自动通过，将转人工确认；总相似度不会直接归零。" placement="top">
