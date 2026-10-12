@@ -10,7 +10,7 @@
 2. **改方案之前**，对现网每个"将调整字段逻辑"的方案先做一次缓存迁移（只读+登记，几分钟内完成，不跑模型）：
    ```bash
    /opt/material_matcher/current/runtime/bin/python3 -m material_matcher.cli embedding-rekey \
-     --profile <方案ID> [--version <调整前的版本号>] [--dry-run]
+     --profile A001  # 支持业务编号或 profile_id；--version 指定调整前版本，--dry-run 只统计
    ```
    输出 `migrated` = 迁移登记的文本数；`legacy_vectors_missing` 大 → 说明该方案索引较旧，迁移收益有限。
 3. 配置多进程向量化（128 核机器）：在 `/etc/material_matcher/server.env` 追加后重启服务：

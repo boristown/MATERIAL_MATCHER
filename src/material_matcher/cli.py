@@ -122,15 +122,23 @@ def main() -> None:
 
         settings, metadata = _services()
         with metadata.connect() as connection:
+            profile_row = connection.execute(
+                "SELECT profile_id FROM profiles WHERE profile_id=? OR name=? OR name LIKE ? LIMIT 1",
+                (args.profile, args.profile, f"{args.profile} %"),
+            ).fetchone()
+            if profile_row is None:
+                _print({"error": {"code": "PROFILE_NOT_FOUND", "message": f"找不到方案：{args.profile}（可用 profile_id 或业务编号/名称前缀，如 A001）"}})
+                raise SystemExit(2)
+            profile_id = str(profile_row["profile_id"])
             if args.version is not None:
                 row = connection.execute(
                     "SELECT document FROM profile_versions WHERE profile_id=? AND version_no=?",
-                    (args.profile, int(args.version)),
+                    (profile_id, int(args.version)),
                 ).fetchone()
             else:
                 row = connection.execute(
                     "SELECT document FROM profile_versions WHERE profile_id=? ORDER BY version_no DESC LIMIT 1",
-                    (args.profile,),
+                    (profile_id,),
                 ).fetchone()
         if row is None:
             _print({"error": {"code": "PROFILE_VERSION_NOT_FOUND", "message": f"找不到方案版本 {args.profile} @ {args.version or 'latest'}"}})
