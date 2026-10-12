@@ -33,6 +33,9 @@ def _print(value: object) -> None:
 
 
 def _serve(host: str, port: int) -> None:
+    # Worker thread runs Python-heavy rerank/persist loops; the default 5ms GIL
+    # switch interval starves the API event loop and the UI feels frozen.
+    sys.setswitchinterval(0.0005)
     settings = Settings.load()
     app = create_app(settings)
     attach_frontend(app, settings.web_dist_dir)
@@ -69,6 +72,14 @@ def main() -> None:
     vector.add_argument("--dimensions", type=int, default=128)
     vector.add_argument("--top-k", type=int, default=50)
 
+    rekey = subparsers.add_parser(
+        "embedding-rekey",
+        help="把旧“方案签名+文本”缓存键迁移为“模型+文本”键：调整比对规则后，未变化的目标文本不再重算向量",
+    )
+    rekey.add_argument("--profile", required=True, help="变更前方案的 profile_id")
+    rekey.add_argument("--version", type=int, default=None, help="变更前方案版本号（默认取该方案最新版本）")
+    rekey.add_argument("--dry-run", action="store_true", help="只统计，不写入")
+
     args = parser.parse_args()
     if args.command in {None, "serve"}:
         host = getattr(args, "host", "0.0.0.0")
@@ -99,6 +110,43 @@ def main() -> None:
         except DomainError as exc:
             _print({"error": {"code": exc.code, "message": exc.message, "details": exc.details}})
             raise SystemExit(2) from exc
+        return
+
+    if args.command == "embedding-rekey":
+        import json as _json
+
+        from material_matcher.domain.models import MatchingConfig
+        from material_matcher.embedding.cache import EmbeddingCache
+        from material_matcher.embedding.migrate import embedding_rekey
+        from material_matcher.embedding.providers import create_embedding_provider
+
+        settings, metadata = _services()
+        with metadata.connect() as connection:
+            if args.version is not None:
+                row = connection.execute(
+                    "SELECT document FROM profile_versions WHERE profile_id=? AND version_no=?",
+                    (args.profile, int(args.version)),
+                ).fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT document FROM profile_versions WHERE profile_id=? ORDER BY version_no DESC LIMIT 1",
+                    (args.profile,),
+                ).fetchone()
+        if row is None:
+            _print({"error": {"code": "PROFILE_VERSION_NOT_FOUND", "message": f"找不到方案版本 {args.profile} @ {args.version or 'latest'}"}})
+            raise SystemExit(2)
+        config = MatchingConfig.model_validate(_json.loads(str(row["document"])))
+        provider = create_embedding_provider(settings)
+        report = embedding_rekey(
+            index_dir=settings.index_dir,
+            cache=EmbeddingCache(settings.embedding_cache_dir, provider),
+            config=config,
+            dry_run=bool(args.dry_run),
+        )
+        _print({"profile_id": args.profile, **report})
+        if not report["ok"]:
+            raise SystemExit(2)
+        return
         return
 
     if args.command == "acceptance":

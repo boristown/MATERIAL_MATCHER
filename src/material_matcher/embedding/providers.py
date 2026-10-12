@@ -148,18 +148,109 @@ class OnnxLocalEmbeddingProvider:
         return self.embed_batched(texts, max_batch_size=count, token_budget=self.token_budget)
 
 
+def _worker_init(kwargs: dict[str, object]) -> None:
+    global _WORKER_PROVIDER
+    _WORKER_PROVIDER = OnnxLocalEmbeddingProvider(**kwargs)  # type: ignore[arg-type]
+
+
+def _worker_embed_batched(texts: list[str], max_batch_size: int, token_budget: int):
+    return _WORKER_PROVIDER.embed_batched(texts, max_batch_size=max_batch_size, token_budget=token_budget)
+
+
+class ParallelEmbeddingProvider:
+    """Shards embed_batched across worker processes to fill many-core CPUs.
+
+    A single ORT session with intra-op threads contends past ~40 threads;
+    separate processes (each with its own session) scale to the full machine.
+    Output order is preserved; the parent stays the only cache writer and
+    never loads a model itself (spec is computed from file hashes only).
+    """
+
+    def __init__(self, *, kwargs: dict[str, object], workers: int) -> None:
+        from concurrent.futures import ProcessPoolExecutor
+        import multiprocessing
+        import os
+
+        self._kwargs = dict(kwargs)
+        self.workers = max(2, int(workers))
+        self._kwargs["intra_threads"] = max(1, int(self._kwargs.get("intra_threads") or 0) or (int(os.cpu_count() or 8) // self.workers))
+        model_dir = Path(str(self._kwargs["model_dir"]))
+        precision = str(self._kwargs.get("precision", "int8"))
+        candidates = [model_dir / "model_int8.onnx", model_dir / "model.onnx"] if precision == "int8" else [model_dir / "model.onnx", model_dir / "model_int8.onnx"]
+        model_path = next((path for path in candidates if path.exists()), None)
+        tokenizer_path = model_dir / "tokenizer.json"
+        if model_path is None or not tokenizer_path.exists():
+            raise DomainError("EMBEDDING_MODEL_NOT_INSTALLED", f"多进程 Embedding 需要本地模型：{model_dir}", status_code=409)
+        self._spec = EmbeddingSpec(
+            provider="onnx_local",
+            model_id=str(self._kwargs["model_id"]),
+            dimensions=int(self._kwargs["dimensions"]),
+            model_sha256=_sha256_files([model_path, tokenizer_path]),
+            max_length=int(self._kwargs["max_length"]),
+            normalize=True,
+            precision=precision,
+        )
+        self.token_budget = int(self._kwargs.get("token_budget", 16_384) or 16_384)
+        context = multiprocessing.get_context("fork")
+        self._executor = ProcessPoolExecutor(
+            max_workers=self.workers,
+            mp_context=context,
+            initializer=_worker_init,
+            initargs=(self._kwargs,),
+        )
+
+    @property
+    def spec(self):
+        return self._spec
+
+    def embed(self, texts):
+        return self.embed_batched(texts, max_batch_size=128, token_budget=self.token_budget)
+
+    def embed_batched(self, texts, *, max_batch_size: int, token_budget: int):
+        import numpy as np
+
+        items = list(texts)
+        if not items:
+            return np.empty((0, self._spec.dimensions), dtype=np.float32)
+        chunk_count = min(self.workers, max(1, len(items) // max(1, int(max_batch_size))))
+        chunk_size = -(-len(items) // chunk_count)
+        chunks = [items[start:start + chunk_size] for start in range(0, len(items), chunk_size)]
+        futures = [self._executor.submit(_worker_embed_batched, chunk, int(max_batch_size), int(token_budget)) for chunk in chunks]
+        parts = [future.result() for future in futures]
+        return np.concatenate(parts, axis=0)
+
+    def shutdown(self) -> None:
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def shutdown(self) -> None:
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def create_embedding_provider(settings: object, provider_name: str | None = None, model_id: str | None = None, dimensions: int | None = None, max_length: int | None = None, precision: str | None = None):
     provider = provider_name or str(getattr(settings, "embedding_provider"))
     if provider == "onnx_local":
-        return OnnxLocalEmbeddingProvider(
-            model_dir=Path(getattr(settings, "embedding_model_root")) / (model_id or str(getattr(settings, "embedding_model_id"))),
-            model_id=model_id or str(getattr(settings, "embedding_model_id")),
-            dimensions=dimensions or int(getattr(settings, "embedding_dimensions")),
-            max_length=max_length or int(getattr(settings, "embedding_max_length")),
-            precision=precision or str(getattr(settings, "embedding_precision")),
-            intra_threads=int(getattr(settings, "embedding_intra_threads", 0)),
-            token_budget=int(getattr(settings, "embedding_token_budget", 16_384)),
-        )
+        kwargs = {
+            "model_dir": Path(getattr(settings, "embedding_model_root")) / (model_id or str(getattr(settings, "embedding_model_id"))),
+            "model_id": model_id or str(getattr(settings, "embedding_model_id")),
+            "dimensions": dimensions or int(getattr(settings, "embedding_dimensions")),
+            "max_length": max_length or int(getattr(settings, "embedding_max_length")),
+            "precision": precision or str(getattr(settings, "embedding_precision")),
+            "intra_threads": int(getattr(settings, "embedding_intra_threads", 0)),
+            "token_budget": int(getattr(settings, "embedding_token_budget", 16_384)),
+        }
+        workers = int(getattr(settings, "embedding_workers", 1) or 1)
+        if workers > 1:
+            try:
+                return ParallelEmbeddingProvider(kwargs=kwargs, workers=workers)
+            except Exception:  # noqa: BLE001 - fall back to single process
+                pass
+        return OnnxLocalEmbeddingProvider(**kwargs)
     raise DomainError("EMBEDDING_PROVIDER_NOT_FOUND", f"不支持的 Embedding Provider：{provider}", status_code=422)
 
 
