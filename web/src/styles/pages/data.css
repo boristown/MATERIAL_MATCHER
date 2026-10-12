@@ -489,3 +489,8 @@
     gap: 3px;
   }
 }
+
+.import-row { display: flex; align-items: center; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+.import-label { color: #5b6b84; font-size: 13px; }
+.import-file { color: #1f6f43; font-size: 13px; }
+.import-select { width: 220px; }

@@ -90,4 +90,30 @@ if (!view.includes('el-input v-model="row.source"') || !view.includes('el-input 
   throw new Error('Mapping rows must be inline-editable on the main page (no modal editor)')
 }
 
+// 批量导入 + 批量勾选删除（客户诉求 #220/#221）
+for (const token of [
+  'Excel 批量导入',
+  'openImportDialog',
+  'onImportFileSelected',
+  'runSynonymImport',
+  '/synonyms/import',
+  'importMode',
+  '删除已选 {{ checkedCount }} 条',
+  'removeCheckedRows',
+]) {
+  if (!view.includes(token)) throw new Error(`Synonym batch contract missing: ${token}`)
+}
+
+const appApi = read('../src/material_matcher/api/app.py')
+for (const token of [
+  'class SynonymImportRequest(BaseModel):',
+  '@app.post("/api/dictionaries/{dictionary_id}/synonyms/import")',
+  'SYNONYM_IMPORT_COLUMNS_NOT_FOUND',
+  '"added": added',
+  '"updated": updated',
+  '"skipped": skipped',
+]) {
+  if (!appApi.includes(token)) throw new Error(`Synonym import API contract missing: ${token}`)
+}
+
 console.log('STEP synonym-ux + favicon contract checks passed')

@@ -38,6 +38,7 @@ class FieldRule(BaseModel):
     matcher: MatcherMode = "fuzzy"
     weight: int = Field(ge=0, le=100)
     critical: bool = False
+    veto_threshold: float | None = Field(default=None, ge=0, le=100)
     matcher_options: dict[str, object] = Field(default_factory=dict)
     value_mapping: dict[str, str] = Field(default_factory=dict)
     value_mapping_source_values: list[str] = Field(default_factory=list)

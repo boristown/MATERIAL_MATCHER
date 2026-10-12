@@ -27,6 +27,7 @@ class FieldScore:
     source_value_before_mapping: str = ""
     value_mapping_applied: bool = False
     unconfigured_source_values: tuple[str, ...] = ()
+    vetoed: bool = False
 
 
 @dataclass(frozen=True)
@@ -242,6 +243,8 @@ def score_field_rule(
                 best_target = target
     assert best_source is not None and best_target is not None
     conflict = bool(rule.critical and best_score <= 0.0)
+    # 一票否决：该字段得分低于阈值（客户口径 0-100，内部 0-1）时，本字段得分强制归 0。
+    vetoed = bool(rule.veto_threshold is not None and best_score < float(rule.veto_threshold) / 100.0)
     mapping = {str(key): str(value) for key, value in rule.value_mapping.items()}
     before_texts = [value.text or "" for value in source_values_before_mapping]
 
@@ -263,7 +266,7 @@ def score_field_rule(
     )
     return FieldScore(
         rule_id=rule.id,
-        score=_clamp01(float(best_score)),
+        score=0.0 if vetoed else _clamp01(float(best_score)),
         weight=rule.weight,
         source_value=best_source.text or "",
         target_value=best_target.text or "",
@@ -274,6 +277,7 @@ def score_field_rule(
         source_value_before_mapping=" / ".join(before_texts),
         value_mapping_applied=mapping_applied,
         unconfigured_source_values=unconfigured,
+        vetoed=vetoed,
     )
 
 
@@ -316,7 +320,10 @@ def score_candidate(
     coverage = compared_weight / configured_weight if configured_weight else 0.0
     minimum_fields, minimum_coverage = _matching_safety(config)
     critical_conflict = any(item.conflict for item in scores)
-    safe = len(scores) >= minimum_fields and coverage >= minimum_coverage and not critical_conflict
+    vetoed = any(item.vetoed for item in scores)
+    if vetoed:
+        raw = 0.0
+    safe = len(scores) >= minimum_fields and coverage >= minimum_coverage and not critical_conflict and not vetoed
     return CandidateScore(
         raw,
         round(raw * 100.0, 4),

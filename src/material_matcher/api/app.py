@@ -12,6 +12,7 @@ from material_matcher.api import _legacy_app
 from material_matcher.api._legacy_app import COOKIE_NAME, create_app as _legacy_create_app
 from material_matcher.domain.errors import DomainError
 from material_matcher.services.business_evaluation_service import BusinessEvaluationService
+from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.services.decision_calibration_service import DecisionCalibrationService
 from material_matcher.services.review_workbench_service import ReviewWorkbenchService
 from material_matcher.services.task_input_asset_service import TaskInputAssetService
@@ -22,6 +23,14 @@ from material_matcher.storage.metadata import MetadataRepository
 
 
 _ORIGINAL_REVIEWER_MUTATION_ALLOWED = _legacy_app._reviewer_mutation_allowed
+
+
+class SynonymImportRequest(BaseModel):
+    file_id: str
+    source_column: str = Field(min_length=1, max_length=200)
+    target_column: str = Field(min_length=1, max_length=200)
+    mode: Literal["merge", "replace"] = "merge"
+    base_version_no: int | None = Field(default=None, ge=1)
 
 
 class ReDecideRequest(BaseModel):
@@ -255,6 +264,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     versioned_results = VersionedResultService(metadata, files, cfg)
     evaluations = BusinessEvaluationService(metadata, files)
     reviews = ReviewWorkbenchService(metadata)
+    dictionaries = DictionaryService(metadata)
     task_input_assets = TaskInputAssetService(metadata, files)
 
     def legacy_expected_version(task_id: str, source_row_id: str, operator: str) -> str:
@@ -366,6 +376,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if error:
                 item["export_error"] = error
         return items
+
+    def _read_synonym_pairs(path: Path, source_column: str, target_column: str) -> list[tuple[str, str]]:
+        rows: list[list[str]] = []
+        if path.suffix.lower() in {".csv", ".txt"}:
+            import csv as _csv
+
+            with path.open(newline="", encoding="utf-8-sig", errors="replace") as handle:
+                for raw in _csv.reader(handle):
+                    rows.append([str(cell).strip() for cell in raw])
+        else:
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(path, read_only=True, data_only=True)
+            try:
+                for sheet in workbook.worksheets:
+                    for raw in sheet.iter_rows(values_only=True):
+                        rows.append(["" if cell is None else str(cell).strip() for cell in raw])
+                    break
+            finally:
+                workbook.close()
+        header_index = None
+        headers: list[str] = []
+        for index, row in enumerate(rows[:10]):
+            if source_column in row and target_column in row:
+                header_index = index
+                headers = row
+                break
+        if header_index is None:
+            raise DomainError("SYNONYM_IMPORT_COLUMNS_NOT_FOUND", f"文件前 10 行内未找到列：{source_column} / {target_column}", status_code=422)
+        source_index, target_index = headers.index(source_column), headers.index(target_column)
+        pairs: list[tuple[str, str]] = []
+        for row in rows[header_index + 1:]:
+            source = row[source_index] if source_index < len(row) else ""
+            target = row[target_index] if target_index < len(row) else ""
+            pairs.append((source, target))
+        return pairs
+
+    @app.post("/api/dictionaries/{dictionary_id}/synonyms/import")
+    def import_dictionary_synonyms(dictionary_id: str, payload: SynonymImportRequest, request: Request) -> dict[str, object]:
+        record = files.get(payload.file_id)
+        pairs = _read_synonym_pairs(Path(str(record["stored_path"])), payload.source_column, payload.target_column)
+        current = dictionaries.get(dictionary_id)
+        latest = current.get("latest") or {}
+        latest_document = latest.get("document") or {}
+        mapping: dict[str, str] = {} if payload.mode == "replace" else {str(key): str(value) for key, value in (latest_document.get("mapping") or {}).items()}
+        added = updated = skipped = 0
+        for source, target in pairs:
+            if not source or not target:
+                skipped += 1
+                continue
+            if source not in mapping:
+                mapping[source] = target
+                added += 1
+            elif mapping[source] == target:
+                skipped += 1
+            else:
+                mapping[source] = target
+                updated += 1
+        if not mapping:
+            raise DomainError("INVALID_DICTIONARY", "导入后同义词表为空，请检查文件两列内容", status_code=422)
+        result = dictionaries.add_version(
+            dictionary_id,
+            {"mapping": mapping, "case_sensitive": bool(latest_document.get("case_sensitive", True))},
+            operator=str(getattr(request.state, "username", "system")),
+            base_version_no=payload.base_version_no,
+        )
+        return {
+            "added": added,
+            "updated": updated,
+            "skipped": skipped,
+            "total_rows": len(pairs),
+            "version_no": result.get("version_no"),
+            "dictionary_id": dictionary_id,
+        }
 
     @app.get("/api/tasks/{task_id}")
     def task_detail(task_id: str) -> dict[str, object]:
