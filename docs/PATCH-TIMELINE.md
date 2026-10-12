@@ -77,4 +77,4 @@
 - #218 多字段拼接：引擎原生 combine=concat/best_of/coalesce + separator，本次把"多字段组合"下拉+分隔符输入暴露到规则卡（拼接比对/取最高分/取首个非空）。
 - #220 同义词 Excel 批量导入：POST /api/dictionaries/{id}/synonyms/import（xlsx/csv，选列，merge/replace，added/updated/skipped 报告，直接落不可变新版本可回溯）；DataView"Excel 批量导入"对话框（上传→自动识别写法/标准列→导入）。
 - #221 同义词批量勾选删除：核查后确认 9 月 UX 轮已交付（勾选列+全选+确认删除+存版本），本批仅补契约断言锁定。
-- 验证：pytest 318 全绿（veto×4、import×3）；契约测试×2 新增断言入 build 链；E2E 实测 veto 生效（90 分候选被否决归 0）；UI 截图对话框/工具栏正常。
+- 验证：pytest 314 全绿（veto×4、import×3）；契约测试×2 新增断言入 build 链；E2E 实测 veto 生效（90 分候选被否决归 0）；UI 截图对话框/工具栏正常。
