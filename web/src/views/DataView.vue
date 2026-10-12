@@ -152,9 +152,10 @@ async function onImportFileSelected(file: { raw?: File }): Promise<void> {
     const data = (await api.post('/files/upload', form)).data
     importFileId.value = String(data.file.file_id)
     importFileName.value = String(data.file.original_name ?? raw.name)
-    importColumns.value = ((data.inspection?.columns ?? []) as Array<Record<string, unknown>>).map(column => String(column.header))
+    importColumns.value = (((data.inspection?.sheets?.[0]?.columns ?? data.inspection?.columns) ?? []) as Array<Record<string, unknown>>).map(column => String(column.header))
     importSourceColumn.value = importColumns.value.find(header => /源|原始|写法|同义/.test(header)) ?? importColumns.value[0] ?? ''
     importTargetColumn.value = importColumns.value.find(header => /标准|目标|规范/.test(header)) ?? importColumns.value.find(header => header !== importSourceColumn.value) ?? ''
+    if (!importColumns.value.length) ElMessage.warning('未能读取文件列，请确认首行为表头且文件为 .xlsx/.xlsm/.csv')
   } catch (error) {
     ElMessage.error((error as Error).message || '导入文件解析失败')
   } finally {
