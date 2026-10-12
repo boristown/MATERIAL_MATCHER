@@ -78,3 +78,11 @@
 - #220 同义词 Excel 批量导入：POST /api/dictionaries/{id}/synonyms/import（xlsx/csv，选列，merge/replace，added/updated/skipped 报告，直接落不可变新版本可回溯）；DataView"Excel 批量导入"对话框（上传→自动识别写法/标准列→导入）。
 - #221 同义词批量勾选删除：核查后确认 9 月 UX 轮已交付（勾选列+全选+确认删除+存版本），本批仅补契约断言锁定。
 - 验证：pytest 314 全绿（veto×4、import×3）；契约测试×2 新增断言入 build 链；E2E 实测 veto 生效（90 分候选被否决归 0）；UI 截图对话框/工具栏正常。
+
+
+## 1.3.24 · 向量化免重算与性能批（2026-10-12，PR#223）
+- 缓存键解耦（模型+文本）+ embedding-rekey 迁移命令：调整比对规则不再触发 100 万行全量重算。
+- MATERIAL_MATCHER_EMBEDDING_WORKERS 多进程向量化：128 核 68min → 约 25-35min（真要算时）。
+- UI 卡顿：setswitchinterval(0.5ms)（worker 纯 Python 段不再饿死 API 事件循环）；人工 Excel 导出空格跳过 write_blank（实测 15000×5 纯计算 7s，#204 暂不后台化）。
+- 现场操作指引：docs/VECTOR_PERF_OPS.md（顺序：升级 → 先 rekey 旧方案 → 配 workers → 再改方案；最优=召回不动拼接只进计分规则 → 零重算）。
+- 增量包：1.3.20/1.3.21/1.3.22/1.3.23 → 1.3.24。
