@@ -30,7 +30,8 @@ const scorer = read('../../src/material_matcher/matching/scorer.py')
 for (const token of [
   'vetoed = bool(rule.veto_threshold is not None and best_score < float(rule.veto_threshold) / 100.0)',
   'score=0.0 if vetoed else _clamp01(float(best_score))',
-  'vetoed = any(item.vetoed for item in scores)',
+  'if result.vetoed:',
+  'vetoed = True',
   'if vetoed:\n        raw = 0.0',
   'and not vetoed',
 ]) {
