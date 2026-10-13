@@ -95,3 +95,20 @@ def test_veto_disabled_by_default_keeps_legacy_weighted_score():
     config = _veto_config(None)
     score = score_candidate({'s_name': '电阻', 's_spec': '0805'}, {'t_name': '电阻', 't_spec': '1206'}, config)
     assert score.display_score == 90.0
+
+
+def test_veto_works_on_zero_weight_pure_veto_rule():
+    """weight=0 的纯否决规则必须生效（此前被 weight<=0 continue 静默跳过）。"""
+    config = MatchingConfig.model_validate({
+        "rules": [
+            {"id": "name", "source": {"fields": ["s_name"]}, "target": {"fields": ["t_name"]}, "matcher": "exact", "weight": 100},
+            {"id": "pkg", "source": {"fields": ["s_pkg"]}, "target": {"fields": ["t_pkg"]}, "matcher": "exact", "weight": 0, "veto_threshold": 50},
+        ],
+        "decision": {"success_threshold": 80, "review_enabled": True, "review_threshold": 50, "top_n": 5},
+    })
+    ok = score_candidate({"s_name": "电阻", "s_pkg": "0805"}, {"t_name": "电阻", "t_pkg": "0805"}, config)
+    assert ok.display_score == 100.0 and not any(i.vetoed for i in ok.field_scores)
+    veto = score_candidate({"s_name": "电阻", "s_pkg": "1206"}, {"t_name": "电阻", "t_pkg": "0805"}, config)
+    assert veto.display_score == 0.0
+    assert any(i.vetoed and i.rule_id == "pkg" for i in veto.field_scores)
+    assert not veto.auto_match_safe

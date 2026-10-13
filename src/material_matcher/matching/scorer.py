@@ -309,9 +309,17 @@ def score_candidate(
     weighted = 0.0
     compared_weight = 0
     configured_weight = sum(rule.weight for rule in config.rules if rule.weight > 0)
+    vetoed = False
     for rule in config.rules:
         result = score_field_rule(source_row, target_row, rule, semantic_score=semantic_score)
-        if result is None or rule.weight <= 0:
+        if result is None:
+            continue
+        if result.vetoed:
+            # 一票否决与权重无关：weight=0 的纯否决规则同样生效，并进明细供审计。
+            vetoed = True
+            scores.append(result)
+            continue
+        if rule.weight <= 0:
             continue
         scores.append(result)
         weighted += result.score * rule.weight
@@ -320,7 +328,6 @@ def score_candidate(
     coverage = compared_weight / configured_weight if configured_weight else 0.0
     minimum_fields, minimum_coverage = _matching_safety(config)
     critical_conflict = any(item.conflict for item in scores)
-    vetoed = any(item.vetoed for item in scores)
     if vetoed:
         raw = 0.0
     safe = len(scores) >= minimum_fields and coverage >= minimum_coverage and not critical_conflict and not vetoed
