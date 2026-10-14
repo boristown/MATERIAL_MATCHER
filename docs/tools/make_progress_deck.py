@@ -124,7 +124,25 @@ text(s, 0.7, 5.6, 11.9, 1.2, [
     [("运行环境：", {"bold": True, "color": NAVY}), ("集团内网离线运行，物料数据不出域；浏览器访问，支持既有内网终端。", {})],
 ], size=13.5, leading=1.45)
 
-# ============ 4 初步匹配结果 ============
+# ============ 4 已完成的工作 ============
+s = slide(); header(s, "已完成的工作", "从平台交付到首批数据实跑，全部在集团内网闭环完成", None)
+done_rows = [
+    ("平台交付与部署", "离线介质制作与内网部署（服务器 + 业务终端浏览器访问）；数据全程不出域；已完成三轮现场升级（9/24、9/28、10/14），当前版本 v1.3.24"),
+    ("匹配方案体系", "按物料类别建立 6 套标准匹配方案（元器件/标准件/金属材料/非金属材料/复合材料/物资类其它），字段映射、值映射、同义词库、阈值全部按业务口径配置并版本化留痕"),
+    ("引擎能力落地", "AI 语义召回（10 万～百万级集团标准库）+ 逐字段规则打分 + 拼接比对 + 一票否决约束；SAP元器件已实装「质量等级不一致即否决」，并同步比对供应商、型号规格、封装形式"),
+    ("人工复核闭环", "第三步批量复核 + Excel 工作簿导出/回填；操作留痕、结果版本可追溯可回退；同义词支持 Excel 批量导入与批量维护"),
+    ("首批实际数据验证", "6 大类 71,478 行真实物料完成匹配初筛，16,795 行自动给出结论，其余输出 Top5 候选进入人工复核队列"),
+]
+y = 1.85
+for t, d in done_rows:
+    box(s, 0.7, y, 11.9, 0.9, fill=WHITE, line=LIGHT, round_=True)
+    box(s, 0.7, y, 0.14, 0.9, fill=GREEN)
+    text(s, 1.1, y + 0.04, 2.75, 0.82, t, size=14, color=NAVY, bold=True, anchor=MSO_ANCHOR.MIDDLE, leading=1.12)
+    text(s, 4.0, y + 0.04, 8.45, 0.82, d, size=11.5, color=DARK, anchor=MSO_ANCHOR.MIDDLE, leading=1.2)
+    y += 0.98
+text(s, 0.72, 6.72, 11.9, 0.3, "以上能力均已在现场环境经真实数据验证可用。", size=12.5, color=GREEN, bold=True)
+
+# ============ 5 初步匹配结果 ============
 s = slide(); header(s, "初步匹配结果（首批实际数据）", "自动匹配为系统直接给出结论的行；其余系统输出最相似候选，交人工复核", None)
 res_rows = [("物料类别", "自动匹配", "总条数", "自动匹配占比"),
             ("SAP元器件", "4,968", "40,888", "12.2%"),
@@ -150,14 +168,14 @@ diffs = [
     ("人工核对工作量大", "首批约 5.5 万行未自动匹配，需业务员逐批核对候选并给出结论；核对质量直接决定最终映射准确率。", AMBER),
     ("基础对照数据缺失", "供应商曾用名 / 简称、厂家与品牌对应关系等基础对照表尚未系统整理，同类差异目前只能逐行人工判断。", NAVY),
 ]
-y = 1.62
+y = 1.85
 for t, d, c in diffs:
-    box(s, 0.7, y, 11.9, 1.28, fill=WHITE, line=LIGHT, round_=True)
-    box(s, 0.7, y, 0.14, 1.28, fill=c)
-    text(s, 1.1, y + 0.08, 3.15, 1.12, t, size=15, color=c, bold=True, anchor=MSO_ANCHOR.MIDDLE, leading=1.2)
-    text(s, 4.4, y + 0.08, 8.0, 1.14, d, size=12.5, color=DARK, anchor=MSO_ANCHOR.MIDDLE, leading=1.28)
-    y += 1.4
-text(s, 0.72, 7.02 - 0.62, 11.9, 0.5, "结论：系统已完成「能自动判定的全部自动判定」，剩余差异需要业务数据治理与人工核对共同解决。", size=13, color=NAVY, bold=True)
+    box(s, 0.7, y, 11.9, 1.08, fill=WHITE, line=LIGHT, round_=True)
+    box(s, 0.7, y, 0.14, 1.08, fill=c)
+    text(s, 1.1, y + 0.05, 3.15, 0.96, t, size=14, color=c, bold=True, anchor=MSO_ANCHOR.MIDDLE, leading=1.12)
+    text(s, 4.4, y + 0.05, 8.0, 0.98, d, size=11, color=DARK, anchor=MSO_ANCHOR.MIDDLE, leading=1.2)
+    y += 1.17
+text(s, 0.72, 6.58, 11.9, 0.4, "结论：系统已完成「能自动判定的全部自动判定」，剩余差异需要业务数据治理与人工核对共同解决。", size=13, color=NAVY, bold=True)
 
 # ============ 6 下一步计划 ============
 s = slide(); header(s, "下一步计划", "两条线并行：基础数据治理（提升自动率）+ 人工核对（保证准确率）", None)
@@ -167,15 +185,15 @@ plans = [
     ("约束规则按类别推广", "参照 SAP元器件「质量等级一票否决」实践，其余类别由业务确定关键属性与约束后配置", "业务 + 实施"),
     ("方案固化与后续批次", "首批核对完成后的方案作为标准版本，后续新到物料直接复用；匹配率与工作量数据按批汇报", "实施"),
 ]
-y = 1.72
+y = 1.85
 for i, (t, d, who) in enumerate(plans):
-    box(s, 0.7, y, 11.9, 1.16, fill=WHITE, line=LIGHT, round_=True)
-    text(s, 0.95, y + 0.1, 0.8, 0.95, str(i + 1), size=25, color=BLUE, bold=True, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, 1.75, y + 0.1, 2.95, 0.95, t, size=15, color=NAVY, bold=True, anchor=MSO_ANCHOR.MIDDLE, leading=1.15)
-    text(s, 4.8, y + 0.08, 6.1, 1.0, d, size=12, color=DARK, anchor=MSO_ANCHOR.MIDDLE, leading=1.25)
-    text(s, 11.0, y + 0.1, 1.5, 0.95, who, size=11.5, color=GRAY, anchor=MSO_ANCHOR.MIDDLE, leading=1.2)
-    y += 1.3
-text(s, 0.72, 6.98, 11.9, 0.45, "近期以供应商对照表整理与首批候选核对为重点，进展按批次同步。", size=13, color=NAVY, bold=True)
+    box(s, 0.7, y, 11.9, 1.05, fill=WHITE, line=LIGHT, round_=True)
+    text(s, 0.95, y + 0.06, 0.8, 0.92, str(i + 1), size=24, color=BLUE, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, 1.75, y + 0.06, 2.95, 0.92, t, size=14, color=NAVY, bold=True, anchor=MSO_ANCHOR.MIDDLE, leading=1.12)
+    text(s, 4.8, y + 0.05, 6.1, 0.94, d, size=11, color=DARK, anchor=MSO_ANCHOR.MIDDLE, leading=1.2)
+    text(s, 11.0, y + 0.06, 1.5, 0.92, who, size=11, color=GRAY, anchor=MSO_ANCHOR.MIDDLE, leading=1.2)
+    y += 1.15
+text(s, 0.72, 6.52, 11.9, 0.4, "近期以供应商对照表整理与首批候选核对为重点，进展按批次同步。", size=13, color=NAVY, bold=True)
 
 # ============ 7 结束 ============
 s = slide()
