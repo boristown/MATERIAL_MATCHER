@@ -128,7 +128,6 @@ box(s, 0, 4.9, W, 0.07, fill=YELL)
 text(s, 0.9, 1.7, 11.5, 1.2, "物料集团码智能匹配平台", size=52, color=RGBColor(0xFF, 0xFF, 0xFF), bold=True)
 text(s, 0.95, 3.0, 11.5, 0.7, "SAP 物料与集团编码的批量匹配 · 人工复核 · 全程留痕", size=24, color=YELL)
 text(s, 0.95, 3.85, 11.5, 0.6, "产品介绍 · 功能说明 · 使用向导", size=17, color=LIGHT)
-placeholder(s, 8.6, 5.35, 4.0, 1.5, "此处可替换：单位 LOGO / 主视觉")
 text(s, 0.95, 5.5, 7, 0.5, "小罡 AI · 版本 v1.3.24", size=15, color=LIGHT)
 text(s, 0.95, 6.1, 7, 0.5, "离线内网部署 · 数据不出域", size=15, color=LIGHT)
 
@@ -246,7 +245,6 @@ bullets(s, 0.8, 1.7, 11.7, [
     ("操作方式", "上传一份待匹配源数据 + 各子方案对应的集团码文件，系统按子方案自动路由"),
     ("结果统一", "五表版式不变，候选列标注来源子方案，复核与定稿一次完成"),
 ], size=17, gap=1.05)
-placeholder(s, 0.8, 4.6, 11.7, 1.9, "此处可替换：跨类目绑定界面截图")
 img_slide("业务维护 · 同义词配置", A / "05-data.png", "同义词按实体类型（名称/厂家/规格）维护，带版本历史与生效时间；修改即时生效，不影响历史任务口径", "03 核心功能")
 img_slide("任务四步向导", A / "07-task-progress.png", "第一步上传 → 第二步进度 → 第三步人工调整 → 第四步输出，全程状态实时（冻结中/排队中/运行中）", "03 核心功能")
 s = slide(); header(s, "进度监控与大数据性能", None, "03 核心功能")
@@ -294,7 +292,7 @@ res_rows = [("物料类别", "自动匹配", "总条数", "自动匹配占比"),
             ("物资类其它", "236", "15,249", "1.5%"),
             ("合计", "16,795", "71,478", "23.5%")]
 from pptx.util import Inches as I
-gt = s.shapes.add_table(len(res_rows), 4, I(0.7), I(1.85), I(8.3), I(0.5 * len(res_rows))).table
+gt = s.shapes.add_table(len(res_rows), 4, I(0.7), I(1.8), I(8.3), I(0.42 * len(res_rows))).table
 for ci, cw in enumerate([2.6, 1.9, 1.9, 1.9]): gt.columns[ci].width = I(cw)
 for ri, row in enumerate(res_rows):
     for ci, val in enumerate(row):
@@ -306,14 +304,29 @@ for ri, row in enumerate(res_rows):
                 r.font.bold = (ri == 0 or ri == len(res_rows) - 1)
                 r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF) if ri == 0 else DARK
         cell.fill.solid(); cell.fill.fore_color.rgb = NAVY if ri == 0 else (LIGHT if ri == len(res_rows) - 1 else (RGBColor(0xFF, 0xFF, 0xFF) if ri % 2 else RGBColor(0xEF, 0xF4, 0xFA)))
-        cell.margin_left = I(0.12); cell.margin_top = I(0.04); cell.margin_bottom = I(0.04)
-box(s, 9.35, 1.85, 3.3, 1.9, fill=RGBColor(0xFF, 0xFF, 0xFF), line=LIGHT, round_=True)
-kpi(s, 9.55, 2.0, 2.9, 0.9, "16,795 / 71,478", "首批自动匹配行 / 总行数", color=NAVY)
-text(s, 9.55, 3.05, 3.0, 0.6, "自动匹配行可直接采用，其余按候选复核", size=11, color=GRAY)
-text(s, 0.75, 6.05, 11.9, 0.9, [
-    [("说明：", {"bold": True, "color": NAVY}), ("① SAP元器件的匹配以质量等级一致为必要条件（不一致即否决），并同步比对供应商、型号规格、封装形式；其余类别未启用该项约束。", {})],
-    [("② 表中占比取决于各类别源数据与集团标准库的重叠程度，未匹配部分均由系统给出最相似候选供人工复核。", {})],
-], size=12, color=DARK, leading=1.3)
+        cell.margin_left = I(0.12); cell.margin_top = I(0.03); cell.margin_bottom = I(0.03)
+box(s, 9.35, 1.8, 3.3, 2.1, fill=RGBColor(0xFF, 0xFF, 0xFF), line=LIGHT, round_=True)
+text(s, 9.45, 2.05, 3.1, 0.75, "16,795", size=34, color=NAVY, bold=True, align=PP_ALIGN.CENTER)
+text(s, 9.45, 2.85, 3.1, 0.45, "行自动匹配 / 共 71,478 行", size=13, color=DARK, align=PP_ALIGN.CENTER)
+text(s, 9.45, 3.3, 3.1, 0.45, "其余输出最相似候选供人工复核", size=11, color=GRAY, align=PP_ALIGN.CENTER)
+text(s, 0.75, 5.7, 11.9, 0.5, [[("说明：", {"bold": True, "color": NAVY}), ("① SAP元器件的匹配以质量等级一致为必要条件（不一致即否决），并同步比对供应商、型号规格、封装形式；其余类别未启用该项约束。", {})]], size=12, color=DARK, leading=1.2)
+text(s, 0.75, 6.25, 11.9, 0.5, "② 各类别占比取决于该批源数据与集团标准库的重叠程度，占比高低不代表匹配质量差异。", size=12, color=DARK, leading=1.2)
+
+# 下一步工作
+s = slide(); header(s, "下一步工作", "系统完成批量初筛，业务侧完成最后确认，两阶段共同保证映射质量", "03 核心功能")
+next_rows = [
+    ("整理供应商对照表", "由业务梳理供应商不同写法与标准名称的对应关系（如简称、曾用名），通过系统「值映射 / 同义词批量导入」维护，此后匹配自动对齐，无需逐行人工处理"),
+    ("人工核对匹配候选", "首批未自动匹配的约 5.5 万行，业务人员在第三步按「候选 1～5 / 均不匹配」批量核对；核对结果形成新版本记录，可追溯、可回退"),
+    ("评估约束规则扩展", "质量等级「不一致即否决」目前仅用于 SAP元器件；其余类别是否采用同类约束，由业务按数据质量情况确定后在方案中配置"),
+    ("方案固化与后续复用", "首批核对完成后的方案（字段映射、阈值、约束）作为标准版本保存，后续新到物料直接沿用，重复批量处理"),
+]
+y = 1.75
+for i, (t, d) in enumerate(next_rows):
+    box(s, 0.7, y, 11.9, 1.12, fill=RGBColor(0xFF, 0xFF, 0xFF), line=LIGHT, round_=True)
+    text(s, 0.95, y + 0.10, 0.8, 0.9, str(i + 1), size=26, color=BLUE, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, 1.75, y + 0.10, 3.1, 0.9, t, size=16, color=NAVY, bold=True, anchor=MSO_ANCHOR.MIDDLE)
+    text(s, 5.0, y + 0.10, 7.4, 0.95, d, size=12.5, color=DARK, anchor=MSO_ANCHOR.MIDDLE, leading=1.25)
+    y += 1.28
 
 # 章节四
 divider("04", "使用向导", "六步完成一次匹配任务")
@@ -324,21 +337,18 @@ bullets(s, 0.8, 1.7, 11.7, [
     "为每条映射设置匹配器与权重（合计 100%），必要时开启关键冲突",
     "配置值映射与同义词，发布方案供任务引用",
 ], size=17, gap=1.0)
-placeholder(s, 0.8, 4.6, 11.7, 1.9, "此处可替换：方案配置界面大图（演示环境截图）")
 s = slide(); header(s, "第 2 步 · 上传数据并发起任务", None, "04 使用向导")
 bullets(s, 0.8, 1.7, 11.7, [
     "第一步上传：待匹配 SAP 文件 + 集团码标准文件（跨类目方案则一源多目标）",
     "确认字段解析与行数估算后点击“开始匹配”，任务即时进入队列",
     "大文件（数十万行）上传期间界面可持续操作，可并行处理其它任务",
 ], size=17, gap=1.0)
-placeholder(s, 0.8, 4.6, 11.7, 1.9, "此处可替换：上传页截图（拖拽上传状态）")
 s = slide(); header(s, "第 3 步 · 监控进度", None, "04 使用向导")
 bullets(s, 0.8, 1.7, 11.7, [
     "第二步实时看板：阶段、速率、预计完成时间持续刷新",
     "已匹配结果滚动可见，无需等待任务结束",
     "服务重启后，运行中任务自动恢复续算，无需人工干预",
 ], size=17, gap=1.0)
-placeholder(s, 0.8, 4.6, 11.7, 1.9, "此处可替换：运行中任务看板截图")
 s = slide(); header(s, "第 4 步 · 人工调整", None, "04 使用向导")
 bullets(s, 0.8, 1.7, 11.7, [
     "在线：卡片逐条处理（确认/改选/标记不匹配），或批量确认高置信 Top1",
@@ -371,7 +381,6 @@ box(s, 0, 0, W, H, fill=NAVY)
 box(s, 0, 4.3, W, 0.06, fill=YELL)
 text(s, 0.9, 2.5, 11.5, 1.2, "批量计算 · 人工复核 · 全程留痕 · 数据不出域", size=36, color=RGBColor(0xFF, 0xFF, 0xFF), bold=True)
 text(s, 0.92, 4.7, 11.5, 0.6, "小罡 AI · 物料集团码智能匹配平台 v1.3.24", size=18, color=LIGHT)
-placeholder(s, 8.9, 5.4, 3.7, 1.3, "此处可替换：联系方式 / 二维码")
 text(s, 0.92, 5.5, 7.5, 0.5, "谢谢", size=22, color=YELL, bold=True)
 
 out = Path("/oracle/codex/work/MATERIAL/media/物料集团码智能匹配平台-产品介绍-v1.3.24.pptx")
