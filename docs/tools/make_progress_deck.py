@@ -148,15 +148,15 @@ s = slide(); header(s, "平台技术架构", "全栈离线运行，无外网依�
 layers = [
     ("访问层", BLUE, ["浏览器 B/S 访问（内网 HTTP）", "旧终端兼容：ES5 / ESM 双轨前端构建", "Excel 工作簿导入导出批量作业"]),
     ("应用层", NAVY, ["前端 Vue 3 + Element Plus", "服务端 Python FastAPI（REST）", "任务状态机 + 后台工作线程", "四级角色权限 · 操作全程留痕"]),
-    ("匹配引擎层", GREEN, ["规则打分：精确 / 模糊 / 包含 / 数值 / 权重", "多字段拼接比对 · 值映射(同义词) · 一票否决", "语义向量：bge-base 中文模型（768 维，int8 ONNX，CPU 推理）", "向量索引：BBQ 量化 + LSH 召回（百万级，内存映射）"]),
+    ("匹配引擎层", GREEN, ["规则打分：精确 / 模糊 / 包含 / 数值 / 权重", "多字段拼接比对 · 值映射(同义词) · 一票否决", "语义向量：bge-base 中文模型（768 维 int8）", "向量索引：BBQ 量化 + LSH 召回（百万级）"]),
     ("数据层", AMBER, ["SQLite（WAL）元数据与审计", "文件库：原始清单 / 结果 Excel", "不可变版本：方案 · 同义词 · 结果", "向量索引与嵌入缓存文件"]),
 ]
-y = 1.42
+y = 1.78
 for name, color, chips in layers:
     rows = [[]]
     width = 0
     for c in chips:
-        cw = 0.3 + len(c) * 0.132
+        cw = 0.3 + len(c) * 0.14
         if width + cw > 10.2 and rows[-1]:
             rows.append([]); width = 0
         rows[-1].append((c, cw)); width += cw + 0.1
@@ -171,10 +171,10 @@ for name, color, chips in layers:
             text(s, x + 0.04, cy + 0.005, cw - 0.08, 0.36, c, size=9.5, color=DARK, align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE, leading=1.0)
             x += cw + 0.1
         cy += 0.45
-    y += layer_h + 0.05
+    y += layer_h + 0.26
     if name != "数据层":
-        text(s, 1.18, y - 0.12, 0.55, 0.22, "▼", size=9, color=GRAY, align=PP_ALIGN.CENTER)
-text(s, 0.72, y + 0.06, 11.9, 0.36, "运行环境：银河麒麟 V10 / x86_64 服务器，Docker 或原生离线一键部署；自包含 Python 运行时与离线模型介质。", size=11.5, color=NAVY, bold=True)
+        text(s, 1.18, y - 0.27, 0.55, 0.26, "▼", size=10, color=GRAY, align=PP_ALIGN.CENTER)
+text(s, 0.72, y - 0.02, 11.9, 0.36, "运行环境：银河麒麟 V10 / x86_64 服务器，Docker 或原生离线一键部署；自包含 Python 运行时与离线模型介质。", size=11.5, color=NAVY, bold=True)
 
 # ============ 4.5 平台实际界面 ============
 s = slide(); header(s, "平台实际界面", "以下截图取自内网部署系统的真实运行界面（演示数据）", None)
