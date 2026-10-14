@@ -129,7 +129,7 @@ text(s, 0.9, 1.7, 11.5, 1.2, "物料集团码智能匹配平台", size=52, color
 text(s, 0.95, 3.0, 11.5, 0.7, "SAP 物料与集团编码的批量匹配 · 人工复核 · 全程留痕", size=24, color=YELL)
 text(s, 0.95, 3.85, 11.5, 0.6, "产品介绍 · 功能说明 · 使用向导", size=17, color=LIGHT)
 placeholder(s, 8.6, 5.35, 4.0, 1.5, "此处可替换：单位 LOGO / 主视觉")
-text(s, 0.95, 5.5, 7, 0.5, "小罡 AI · 版本 v1.3.21", size=15, color=LIGHT)
+text(s, 0.95, 5.5, 7, 0.5, "小罡 AI · 版本 v1.3.24", size=15, color=LIGHT)
 text(s, 0.95, 6.1, 7, 0.5, "离线内网部署 · 数据不出域", size=15, color=LIGHT)
 
 # 2 目录
@@ -283,6 +283,38 @@ rows = [["工作表", "内容"],
         ["未匹配清单", "无结论行集中复核清单"]]
 table_slide("结果追溯与审计", rows, "03 核心功能", col_w=[3.2, 8.6])
 
+# 初步匹配结果（首批）——仅列事实，不做评价
+s = slide(); header(s, "初步匹配结果（首批实际数据）", "自动匹配为系统直接给出结论的行；其余系统输出最相似候选，交人工复核", "03 核心功能")
+res_rows = [("物料类别", "自动匹配", "总条数", "自动匹配占比"),
+            ("SAP元器件", "4,968", "40,888", "12.2%"),
+            ("标准件", "4,100", "4,417", "92.8%"),
+            ("金属材料", "4,975", "6,655", "74.8%"),
+            ("非金属材料", "2,180", "3,750", "58.1%"),
+            ("复合材料", "336", "519", "64.7%"),
+            ("物资类其它", "236", "15,249", "1.5%"),
+            ("合计", "16,795", "71,478", "23.5%")]
+from pptx.util import Inches as I
+gt = s.shapes.add_table(len(res_rows), 4, I(0.7), I(1.85), I(8.3), I(0.5 * len(res_rows))).table
+for ci, cw in enumerate([2.6, 1.9, 1.9, 1.9]): gt.columns[ci].width = I(cw)
+for ri, row in enumerate(res_rows):
+    for ci, val in enumerate(row):
+        cell = gt.cell(ri, ci); cell.text = val
+        for pr in cell.text_frame.paragraphs:
+            pr.alignment = PP_ALIGN.LEFT if ci == 0 else PP_ALIGN.RIGHT
+            for r in pr.runs:
+                r.font.name = FONT; r.font.size = Pt(13 if ri else 14)
+                r.font.bold = (ri == 0 or ri == len(res_rows) - 1)
+                r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF) if ri == 0 else DARK
+        cell.fill.solid(); cell.fill.fore_color.rgb = NAVY if ri == 0 else (LIGHT if ri == len(res_rows) - 1 else (RGBColor(0xFF, 0xFF, 0xFF) if ri % 2 else RGBColor(0xEF, 0xF4, 0xFA)))
+        cell.margin_left = I(0.12); cell.margin_top = I(0.04); cell.margin_bottom = I(0.04)
+box(s, 9.35, 1.85, 3.3, 1.9, fill=RGBColor(0xFF, 0xFF, 0xFF), line=LIGHT, round_=True)
+kpi(s, 9.55, 2.0, 2.9, 0.9, "16,795 / 71,478", "首批自动匹配行 / 总行数", color=NAVY)
+text(s, 9.55, 3.05, 3.0, 0.6, "自动匹配行可直接采用，其余按候选复核", size=11, color=GRAY)
+text(s, 0.75, 6.05, 11.9, 0.9, [
+    [("说明：", {"bold": True, "color": NAVY}), ("① SAP元器件的匹配以质量等级一致为必要条件（不一致即否决），并同步比对供应商、型号规格、封装形式；其余类别未启用该项约束。", {})],
+    [("② 表中占比取决于各类别源数据与集团标准库的重叠程度，未匹配部分均由系统给出最相似候选供人工复核。", {})],
+], size=12, color=DARK, leading=1.3)
+
 # 章节四
 divider("04", "使用向导", "六步完成一次匹配任务")
 img_slide("第 0 步 · 登录", A / "01-login.png", "浏览器打开 http://服务器地址:18080，使用管理员分配的账号登录", "04 使用向导")
@@ -338,10 +370,10 @@ s = slide()
 box(s, 0, 0, W, H, fill=NAVY)
 box(s, 0, 4.3, W, 0.06, fill=YELL)
 text(s, 0.9, 2.5, 11.5, 1.2, "批量计算 · 人工复核 · 全程留痕 · 数据不出域", size=36, color=RGBColor(0xFF, 0xFF, 0xFF), bold=True)
-text(s, 0.92, 4.7, 11.5, 0.6, "小罡 AI · 物料集团码智能匹配平台 v1.3.21", size=18, color=LIGHT)
+text(s, 0.92, 4.7, 11.5, 0.6, "小罡 AI · 物料集团码智能匹配平台 v1.3.24", size=18, color=LIGHT)
 placeholder(s, 8.9, 5.4, 3.7, 1.3, "此处可替换：联系方式 / 二维码")
 text(s, 0.92, 5.5, 7.5, 0.5, "谢谢", size=22, color=YELL, bold=True)
 
-out = Path("/oracle/codex/work/MATERIAL/media/物料集团码智能匹配平台-产品介绍-v1.3.21.pptx")
+out = Path("/oracle/codex/work/MATERIAL/media/物料集团码智能匹配平台-产品介绍-v1.3.24.pptx")
 prs.save(out)
 print("SLIDES:", total[0], "->", out)
