@@ -8,7 +8,7 @@ from typing import Any
 import uuid
 
 from material_matcher.domain.errors import DomainError
-from material_matcher.domain.models import MatchingConfig, strip_legacy_review_threshold
+from material_matcher.domain.models import assert_veto_rules_supported, MatchingConfig, strip_legacy_review_threshold
 from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -757,6 +757,7 @@ class TaskService:
         draft = self.get_draft(draft_id)
         bound_document = strip_legacy_review_threshold(self.dictionaries.bind_references(document))
         MatchingConfig.model_validate(bound_document)
+        assert_veto_rules_supported(MatchingConfig.model_validate(bound_document))
         template_profile_id = draft.get("template_profile_id")
         template_profile_version = draft.get("template_profile_version")
         advanced = bound_document.get("advanced")

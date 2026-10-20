@@ -25,6 +25,7 @@ DEFAULT_EXPORT_PROFILE_DOCUMENT: dict[str, Any] = {
         "top_candidates": "Top5候选",
         "audit": "人工操作记录",
         "unmatched": "未匹配清单",
+        "veto_compare": "否决对照",
     },
     "groups": {
         "source": "源数据区",

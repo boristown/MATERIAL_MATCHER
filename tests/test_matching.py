@@ -1,3 +1,5 @@
+import pytest
+
 from material_matcher.domain.models import MatchingConfig
 from material_matcher.matching.scorer import score_candidate, decide_status
 
@@ -112,3 +114,39 @@ def test_veto_works_on_zero_weight_pure_veto_rule():
     assert veto.display_score == 0.0
     assert any(i.vetoed and i.rule_id == "pkg" for i in veto.field_scores)
     assert not veto.auto_match_safe
+
+
+def test_semantic_rule_ignores_veto_threshold():
+    """语义规则得分是全局召回相似度，不是字段独立分——执行期必须忽略其否决阈值（现场96%归零根因）。"""
+    config = MatchingConfig.model_validate({
+        "rules": [{"id": "grade", "source": {"fields": ["s_g"]}, "target": {"fields": ["t_g"]},
+                   "matcher": "semantic", "weight": 100, "veto_threshold": 99}],
+        "decision": {"success_threshold": 80, "review_enabled": True, "review_threshold": 50, "top_n": 5},
+    })
+    score = score_candidate({"s_g": "A107"}, {"t_g": "A108"}, config, semantic_score=0.88)
+    assert any(not item.vetoed for item in score.field_scores) or score.field_scores == []
+    assert not any(item.vetoed for item in score.field_scores)
+    assert score.display_score == 88.0
+    assert score.auto_match_safe
+
+
+def test_save_validation_rejects_semantic_rule_with_veto(tmp_path):
+    """保存期拦截：语义规则 + 一票否决 必须报 422 明确错误，防止现场继续配出误杀方案。"""
+    from material_matcher.domain.errors import DomainError
+    from material_matcher.domain.models import assert_veto_rules_supported
+
+    bad = MatchingConfig.model_validate({
+        "rules": [{"id": "grade", "source": {"fields": ["g"]}, "target": {"fields": ["g"]},
+                   "matcher": "semantic", "weight": 100, "veto_threshold": 93}],
+        "decision": {"success_threshold": 80, "review_enabled": True, "review_threshold": 50, "top_n": 5},
+    })
+    with pytest.raises(DomainError) as excinfo:
+        assert_veto_rules_supported(bad)
+    assert excinfo.value.code == "VETO_SEMANTIC_UNSUPPORTED"
+
+    ok = MatchingConfig.model_validate({
+        "rules": [{"id": "grade", "source": {"fields": ["g"]}, "target": {"fields": ["g"]},
+                   "matcher": "exact", "weight": 100, "veto_threshold": 99}],
+        "decision": {"success_threshold": 80, "review_enabled": True, "review_threshold": 50, "top_n": 5},
+    })
+    assert_veto_rules_supported(ok)  # 精确匹配 + 否决 合法

@@ -135,3 +135,28 @@ class MatchingConfig(BaseModel):
         if self.retrieval.retrieval_top_k < self.decision.top_n:
             raise ValueError("向量召回 TopK 不能小于最终候选 TopN")
         return self
+
+
+def assert_veto_rules_supported(config: MatchingConfig) -> None:
+    """保存期校验：语义规则不支持一票否决。
+
+    语义规则（semantic / hybrid+include_semantic）的得分是整条召回文本的全局相似度，
+    并非该字段本身的独立相似度；对其套用否决阈值会把名称/规格等其它字段的正常差异
+    一并计入，导致大面积误杀（现场 96% 归零事故根因）。执行期也会兜底忽略语义规则的
+    否决，此处拦截用于防止继续配置出该类方案。
+    """
+    from material_matcher.domain.errors import DomainError
+
+    for rule in config.rules:
+        if rule.veto_threshold is None:
+            continue
+        semantic_like = rule.matcher == "semantic" or (
+            rule.matcher == "hybrid" and bool(rule.matcher_options.get("include_semantic"))
+        )
+        if semantic_like:
+            raise DomainError(
+                "VETO_SEMANTIC_UNSUPPORTED",
+                f"规则「{rule.id}」为智能匹配（语义）且开启了一票否决：语义得分是整条召回文本的全局相似度，"
+                "对其否决会大面积误杀。请将该规则改为精确匹配（必要时配置大小写/空白归一化），或关闭一票否决。",
+                status_code=422,
+            )

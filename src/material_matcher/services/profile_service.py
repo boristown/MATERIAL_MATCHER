@@ -8,7 +8,7 @@ import uuid
 from pydantic import ValidationError
 
 from material_matcher.domain.errors import DomainError
-from material_matcher.domain.models import MatchingConfig, strip_legacy_review_threshold
+from material_matcher.domain.models import MatchingConfig, assert_veto_rules_supported, strip_legacy_review_threshold
 from material_matcher.services.dictionary_service import DictionaryService
 from material_matcher.storage.metadata import MetadataRepository
 
@@ -168,7 +168,8 @@ class ProfileService:
                 advanced.get("composite_children"),
             )
             config.advanced = advanced
-            return config
+            assert_veto_rules_supported(config)
+        return config
 
         if "profile_kind" in advanced:
             advanced = dict(advanced)

@@ -336,6 +336,11 @@ function removeRule(ruleId: string): void {
 }
 function onRuleMatcherChange(rule: Rule, value: string): void {
   setBusinessMatchMode(rule, value)
+  // 语义规则得分是整条召回文本的全局相似度，做一票否决会大面积误杀——切到智能匹配时自动清除否决
+  if (value === 'semantic' && rule.veto_threshold != null) {
+    rule.veto_threshold = null
+    ElMessage.warning('智能匹配（语义）不支持一票否决，已自动关闭该项；如需按字段否决请改用精确匹配')
+  }
 }
 function ruleSideLabel(side: FieldSide): string {
   if (side.fixed_value !== null && side.fixed_value !== undefined) return `固定值：${side.fixed_value}`
@@ -1626,8 +1631,13 @@ onBeforeUnmount(() => {
               </el-tooltip>
             </template>
             <template #default="scope">
-              <el-switch :model-value="scope.row.veto_threshold != null" size="small" @update:model-value="toggleRuleVeto(scope.row, Boolean($event))"/>
-              <el-input-number v-if="scope.row.veto_threshold != null" v-model="scope.row.veto_threshold" size="small" :min="0" :max="100" :step="5" controls-position="right" class="rule-veto-input"/>
+              <el-tooltip v-if="scope.row.matcher === 'semantic'" content="智能匹配（语义）的得分是整条召回文本的全局相似度，做一票否决会大面积误杀，已禁用；如需按字段否决请改用精确匹配" placement="top">
+                <el-switch :model-value="false" size="small" disabled/>
+              </el-tooltip>
+              <template v-else>
+                <el-switch :model-value="scope.row.veto_threshold != null" size="small" @update:model-value="toggleRuleVeto(scope.row, Boolean($event))"/>
+                <el-input-number v-if="scope.row.veto_threshold != null" v-model="scope.row.veto_threshold" size="small" :min="0" :max="100" :step="5" controls-position="right" class="rule-veto-input"/>
+              </template>
             </template>
           </el-table-column>
           <el-table-column v-if="isProfileEditorMode" width="94" align="center">

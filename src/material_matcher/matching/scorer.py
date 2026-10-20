@@ -28,6 +28,7 @@ class FieldScore:
     value_mapping_applied: bool = False
     unconfigured_source_values: tuple[str, ...] = ()
     vetoed: bool = False
+    score_before_veto: float | None = None
 
 
 @dataclass(frozen=True)
@@ -244,7 +245,18 @@ def score_field_rule(
     assert best_source is not None and best_target is not None
     conflict = bool(rule.critical and best_score <= 0.0)
     # 一票否决：该字段得分低于阈值（客户口径 0-100，内部 0-1）时，本字段得分强制归 0。
-    vetoed = bool(rule.veto_threshold is not None and best_score < float(rule.veto_threshold) / 100.0)
+    # 注意：语义规则（semantic / hybrid+include_semantic）的得分是整条召回文本的全局相似度，
+    # 并非本字段的独立相似度；对其套用否决阈值会大面积误杀（现场 96% 归零事故根因），
+    # 因此语义规则不启用一票否决（保存时也会被 API 拒绝，此处为兜底执行语义）。
+    semantic_matcher = bool(
+        rule.matcher == "semantic"
+        or (rule.matcher == "hybrid" and bool(rule.matcher_options.get("include_semantic")))
+    )
+    vetoed = bool(
+        rule.veto_threshold is not None
+        and not semantic_matcher
+        and best_score < float(rule.veto_threshold) / 100.0
+    )
     mapping = {str(key): str(value) for key, value in rule.value_mapping.items()}
     before_texts = [value.text or "" for value in source_values_before_mapping]
 
@@ -278,6 +290,7 @@ def score_field_rule(
         value_mapping_applied=mapping_applied,
         unconfigured_source_values=unconfigured,
         vetoed=vetoed,
+        score_before_veto=_clamp01(float(best_score)) if vetoed else None,
     )
 
 

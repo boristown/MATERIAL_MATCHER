@@ -74,6 +74,13 @@ def _is_missing(value: object) -> bool:
     return value is None or str(value).strip() == ""
 
 
+def _float_or_zero(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def _ordered_fields(payloads: Iterable[Mapping[str, object]]) -> list[str]:
     fields: OrderedDict[str, None] = OrderedDict()
     for payload in payloads:
@@ -783,6 +790,104 @@ class ResultExportService:
             unmatched_excel_row += 1
         flat_un = [h for _g, hs, _f in unmatched_groups for h in hs]
         self._autofit(unmatched, {index: _result_width(str(header)) for index, header in enumerate(flat_un)}, len(flat_un))
+
+        # ===== 否决对照（一票否决中间结果：保留排除前/后，便于核对与规则调优）=====
+        try:
+            snapshot = json.loads(str(task.get("config_snapshot") or "{}"))
+        except Exception:  # noqa: BLE001
+            snapshot = {}
+        raw_rules = snapshot.get("rules") if isinstance(snapshot.get("rules"), list) else []
+        veto_rules = {str((rule or {}).get("id")): rule for rule in raw_rules if isinstance(rule, dict) and rule.get("veto_threshold") is not None}
+        if veto_rules:
+            decision = snapshot.get("decision") if isinstance(snapshot.get("decision"), dict) else {}
+            success_threshold = _float_or_zero(decision.get("success_threshold"))
+            veto_name = str((profile.document.get("sheets") or {}).get("veto_compare") or "否决对照")
+            veto_sheet = workbook.add_worksheet(veto_name)
+            veto_sheet.hide_gridlines(2)
+            veto_group_title = "否决对照（保留否决前/后结果；不改变正式结果）"
+            groups = [
+                (profile.group("source"), [profile.header("source_row_number"), "源数据标识"], "group_source_fill"),
+                (veto_group_title, ["TOP1集团码", "否决前相似度", "否决前应判定", "否决后状态", "被否决规则", "字段比较（源 → 目标）", "否决阈值"], "group_result_fill"),
+            ]
+            veto_sheet.set_column(0, 7, 16)
+            ranges = self._xl_group_headers(veto_sheet, formats, groups)
+            sc = ranges[profile.group("source")][0]
+            rc = ranges[veto_group_title][0]
+            excel_row = 2
+            vetoed_rows = 0
+            matched_before = 0
+            review_before = 0
+            for item in items:
+                source_key = str(item.get("source_row_id") or "")
+                row_candidates = candidate_by_source.get(source_key, [])
+                if not row_candidates:
+                    continue
+                # 否决会把多个候选一并清零，事后 TOP1 可能是并列取首条的结果；
+                # 因此"否决前"必须在该行全部候选中取最优，才是真实对照值。
+                pre_score: float | None = None
+                vetoed_fields: list[dict[str, object]] = []
+                best_code = ""
+                for candidate in row_candidates:
+                    entries = [entry for entry in (candidate.get("field_scores") or []) if isinstance(entry, dict)]
+                    numerator = denominator = 0.0
+                    for entry in entries:
+                        weight = _float_or_zero(entry.get("weight"))
+                        if weight <= 0:
+                            continue
+                        score = _float_or_zero(entry.get("score"))
+                        if entry.get("vetoed"):
+                            before = entry.get("score_before_veto")
+                            score = _float_or_zero(before) if before is not None else 0.0
+                        numerator += score * weight
+                        denominator += weight
+                    candidate_pre = (numerator / denominator * 100.0) if denominator else None
+                    if candidate_pre is not None and (pre_score is None or candidate_pre > pre_score):
+                        pre_score = candidate_pre
+                        best_code = self._cell_text(candidate.get("target_group_code"))
+                        vetoed_fields = [entry for entry in entries if entry.get("vetoed")]
+                if not vetoed_fields:
+                    continue
+                vetoed_rows += 1
+                pre_label = "—"
+                if pre_score is not None:
+                    # 1.3.22 起决策为"阈值唯一门"：达到自动阈值即自动匹配，否则转人工
+                    pre_status = "MATCHED" if pre_score >= success_threshold else "REVIEW"
+                    pre_label = profile.status_label(pre_status)
+                    if pre_status == "MATCHED":
+                        matched_before += 1
+                    else:
+                        review_before += 1
+                current_status = str(item.get("current_status") or "")
+                veto_sheet.write_number(excel_row, sc, _float_or_zero(item.get("source_row_number")), formats.text())
+                veto_sheet.write_string(excel_row, sc + 1, self._cell_text(item.get("source_id")), formats.text())
+                veto_sheet.write_string(excel_row, rc, best_code or self._cell_text(item.get("top1_group_code")), formats.text())
+                if pre_score is None:
+                    veto_sheet.write_string(excel_row, rc + 1, "（旧任务无否决前记录）", formats.text())
+                else:
+                    veto_sheet.write_number(excel_row, rc + 1, round(pre_score, 1), formats.number())
+                veto_sheet.write_string(excel_row, rc + 2, pre_label, formats.text())
+                veto_sheet.write_string(excel_row, rc + 3, profile.status_label(current_status), formats.status(profile.status_color(current_status)))
+                veto_sheet.write_string(excel_row, rc + 4, " / ".join(sorted({str(entry.get("rule_id") or "") for entry in vetoed_fields if entry.get("rule_id")})), formats.text())
+                veto_sheet.write_string(
+                    excel_row, rc + 5,
+                    " ；".join(f"{self._cell_text(entry.get('source_value'))} → {self._cell_text(entry.get('target_value'))}" for entry in vetoed_fields),
+                    formats.text(),
+                )
+                veto_sheet.write_string(
+                    excel_row, rc + 6,
+                    " / ".join(str((veto_rules.get(str(entry.get("rule_id") or "")) or {}).get("veto_threshold")) for entry in vetoed_fields),
+                    formats.text(),
+                )
+                excel_row += 1
+            note_row = excel_row + 1
+            veto_sheet.merge_range(
+                note_row, 0, note_row, 7,
+                f"合计：被否决 {vetoed_rows} 行；若不启用该否决规则，其中 {matched_before} 行将自动匹配、{review_before} 行进入人工处理。"
+                f"本页仅作对照，正式结果不受影响；请确认被否决行是否符合业务预期。",
+                formats.text(),
+            )
+            flat_veto = [h for _g, hs, _f in groups for h in hs]
+            self._autofit(veto_sheet, {index: _result_width(str(header)) for index, header in enumerate(flat_veto)}, len(flat_veto))
 
         workbook.close()
         output.seek(0)
